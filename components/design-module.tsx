@@ -363,6 +363,9 @@ export function DesignModule({ configMissing }: Props) {
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     <TableHead className="font-semibold">Folio / Modelo</TableHead>
+                    <TableHead className="font-semibold">Familia</TableHead>
+                    <TableHead className="font-semibold">Categoría</TableHead>
+                    <TableHead className="font-semibold">Tipo</TableHead>
                     <TableHead className="font-semibold">Diseñadora</TableHead>
                     <TableHead className="font-semibold text-right">Plan Diseño</TableHead>
                     <TableHead className="font-semibold">Costurera</TableHead>
@@ -375,21 +378,21 @@ export function DesignModule({ configMissing }: Props) {
                   {loading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 7 }).map((__, j) => (
+                        {Array.from({ length: 10 }).map((__, j) => (
                           <TableCell key={j}><Skeleton className="h-4 rounded" /></TableCell>
                         ))}
                       </TableRow>
                     ))
                   ) : error ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-24 text-center text-destructive">
+                      <TableCell colSpan={10} className="h-24 text-center text-destructive">
                         <AlertCircle className="inline size-4 mr-1.5 align-text-bottom" />
                         {error}
                       </TableCell>
                     </TableRow>
                   ) : filteredRecords.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                      <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
                         {records.length === 0 ? "Sin registros en diseño." : "Sin registros para la semana seleccionada."}
                       </TableCell>
                     </TableRow>
@@ -399,6 +402,13 @@ export function DesignModule({ configMissing }: Props) {
                         <TableCell>
                           <p className="font-mono text-xs font-semibold text-foreground">{row.folio ?? "—"}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{row.modelo ?? "—"}</p>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.familia ?? "—"}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.categoria ?? "—"}</TableCell>
+                        <TableCell>
+                          {row.tipo
+                            ? <span className="inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium">{row.tipo}</span>
+                            : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="text-sm">{row.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm font-medium text-indigo-700">
