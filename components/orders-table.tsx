@@ -262,13 +262,13 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                         ) : (
                           <Button
                             size="sm"
+                            variant="outline"
                             onClick={() => {
                               if (row.id == null) return
                               setScheduleId(row.id)
                               setScheduleOpen(true)
                             }}
                             disabled={row.id == null}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
                           >
                             Programar en Diseño
                           </Button>
