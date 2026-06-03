@@ -12,6 +12,7 @@ import { ConfigCatalogs } from "@/components/config-catalogs"
 import { AnalyticsDashboard } from "@/components/analytics-dashboard"
 import { OperationsOverview } from "@/components/operations-overview"
 import { DesignModule } from "@/components/design-module"
+import { ColaboradoresModule } from "@/components/colaboradores-module"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Toaster } from "@/components/ui/sonner"
 
@@ -22,6 +23,7 @@ const TITLES: Record<ModuleKey, string> = {
   seguimiento: "Seguimiento de Producción",
   operacion: "Resumen General de Operación",
   riesgos: "Seguimiento de Ordenes",
+  colaboradores: "Registro de Colaboradores",
   configuracion: "Configuración",
 }
 
@@ -205,6 +207,10 @@ export default function Page() {
                 <AnalyticsDashboard configMissing={configMissing} />
               </section>
             </div>
+          )}
+
+          {active === "colaboradores" && (
+            <ColaboradoresModule configMissing={configMissing} />
           )}
 
           {active === "configuracion" && (

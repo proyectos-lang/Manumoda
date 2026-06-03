@@ -66,16 +66,16 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           return
         }
 
-        // 2. Fetch folios existentes con su maquilero actual
+        // 2. Fetch folios existentes con su maquilero y fecha_aprobacion_diseno actual
         const allFolios = Array.from(new Set(allRows.map((r) => r.folio)))
-        const existingMap = new Map<string, { id: number | string; maquilero: string | null }>()
+        const existingMap = new Map<string, { id: number | string; maquilero: string | null; fecha_aprobacion_diseno: string | null }>()
         const FOLIO_BATCH = 500
 
         for (let i = 0; i < allFolios.length; i += FOLIO_BATCH) {
           const slice = allFolios.slice(i, i + FOLIO_BATCH)
           const { data, error } = await supabase
             .from("ordenes_produccion")
-            .select("id, folio, maquilero")
+            .select("id, folio, maquilero, fecha_aprobacion_diseno")
             .eq("idempresa", IDEMPRESA)
             .in("folio", slice)
 
@@ -91,9 +91,14 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             id: number | string
             folio: string
             maquilero: string | null
+            fecha_aprobacion_diseno: string | null
           }[]) {
             if (row?.folio) {
-              existingMap.set(row.folio, { id: row.id, maquilero: row.maquilero ?? null })
+              existingMap.set(row.folio, {
+                id: row.id,
+                maquilero: row.maquilero ?? null,
+                fecha_aprobacion_diseno: row.fecha_aprobacion_diseno ?? null,
+              })
             }
           }
         }
@@ -101,13 +106,16 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
         // 3. Separar en: nuevos para insertar / existentes para actualizar maquilero
         const toInsert = allRows.filter((r) => !existingMap.has(r.folio))
 
-        // Solo actualiza si: DB no tiene maquilero Y el Excel trae uno
+        // Actualiza si: DB no tiene maquilero Y Excel trae uno,
+        // O si: DB no tiene fecha_aprobacion_diseno Y Excel trae una
         const toUpdateCandidates = allRows.filter((r) => {
           const existing = existingMap.get(r.folio)
           if (!existing) return false
           const dbHasMaq = !!(existing.maquilero?.trim())
           const excelHasMaq = !!r.maquilero_nombre?.trim()
-          return !dbHasMaq && excelHasMaq
+          const dbHasFecha = existing.fecha_aprobacion_diseno != null
+          const excelHasFecha = !!r.fecha_aprobacion_diseno
+          return (!dbHasMaq && excelHasMaq) || (!dbHasFecha && excelHasFecha)
         })
 
         // Folios existentes que ya tenían maquilero (no se tocan)
@@ -200,16 +208,27 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           setProgress(Math.min(pct, 70))
         }
 
-        // 5b. UPDATE maquilero en filas existentes que no tenían uno
+        // 5b. UPDATE campos faltantes en filas existentes (maquilero y/o fecha_aprobacion_diseno)
         for (let i = 0; i < toUpdateCandidates.length; i++) {
           const r = toUpdateCandidates[i]
           const existing = existingMap.get(r.folio)
           if (!existing) continue
 
-          // maquilero_nombre garantizado no vacío por el filtro toUpdateCandidates
+          const updatePayload: Record<string, unknown> = {}
+
+          if (!existing.maquilero?.trim() && r.maquilero_nombre?.trim()) {
+            updatePayload.maquilero = r.maquilero_nombre
+            updatePayload.fase_actual = "S1"
+          }
+          if (!existing.fecha_aprobacion_diseno && r.fecha_aprobacion_diseno) {
+            updatePayload.fecha_aprobacion_diseno = r.fecha_aprobacion_diseno
+          }
+
+          if (Object.keys(updatePayload).length === 0) continue
+
           const { error } = await supabase
             .from("ordenes_produccion")
-            .update({ maquilero: r.maquilero_nombre, fase_actual: "S1" })
+            .update(updatePayload)
             .eq("id", existing.id)
             .eq("idempresa", IDEMPRESA)
 
@@ -336,7 +355,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           )}
           {stats.updatedMaquilero > 0 && (
             <span className="text-blue-600">
-              {stats.updatedMaquilero} maquilero asignado
+              {stats.updatedMaquilero} registro(s) actualizado(s)
             </span>
           )}
           {stats.skippedExisting > 0 && (

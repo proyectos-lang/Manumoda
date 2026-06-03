@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, Calendar, RefreshCw, CheckCircle2 } from "lucide-react"
+import { Loader2, Search, Calendar, RefreshCw, CheckCircle2, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -17,6 +18,16 @@ import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 type Props = {
   refreshKey: number
@@ -64,6 +75,29 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const [page, setPage] = useState(1)
   const [scheduleId, setScheduleId] = useState<number | string | null>(null)
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<OrdenProduccion | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget?.id) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setDeleting(true)
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .delete()
+      .eq("id", deleteTarget.id)
+      .eq("idempresa", IDEMPRESA)
+    setDeleting(false)
+    if (error) {
+      console.error("[v0] delete folio error:", error)
+      toast.error("No se pudo eliminar el folio", { description: error.message })
+    } else {
+      setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id))
+      toast.success(`Folio ${deleteTarget.folio} eliminado.`)
+    }
+    setDeleteTarget(null)
+  }
 
   const fetchOrders = async () => {
     if (configMissing) return
@@ -246,6 +280,15 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                         >
                           Programar en Corte
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setDeleteTarget(row)}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 px-2"
+                          title="Eliminar folio"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -298,6 +341,29 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
         }}
         onScheduled={fetchOrders}
       />
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar folio?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará permanentemente la orden con folio{" "}
+              <span className="font-mono font-medium">{deleteTarget?.folio ?? ""}</span>.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+            >
+              {deleting ? "Eliminando…" : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

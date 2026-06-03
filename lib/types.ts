@@ -29,6 +29,7 @@ export type OrdenProduccion = {
   comentarios_generales?: string | null
   fecha_ultima_revision?: string | null
   diseno_programado?: boolean | null
+  fecha_aprobacion_diseno?: string | null
 }
 
 export type ParsedRow = Pick<
@@ -46,6 +47,7 @@ export type ParsedRow = Pick<
   | "piezas"
   | "corte_origen"
   | "fase_actual"
+  | "fecha_aprobacion_diseno"
 > & {
   /** Raw maquilero name from the Excel; resolved to idmaquilero on upload. */
   maquilero_nombre: string | null

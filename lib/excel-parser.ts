@@ -105,6 +105,7 @@ export async function parseExcelFile(file: File): Promise<ParsedRow[]> {
       piezas: toInt(normalized["PIEZAS"]),
       corte_origen: toText(normalized["CORTE"]),
       fase_actual: "Por Programar",
+      fecha_aprobacion_diseno: excelDateToISO(normalized["FECHA_STATUS2"]),
       maquilero_nombre: toText(normalized["MAQUILERO"]),
     }
 

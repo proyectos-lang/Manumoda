@@ -18,9 +18,29 @@ import {
   UserMinus,
   Download,
   FileSpreadsheet,
+  Trash2,
+  MoreHorizontal,
+  CalendarClock,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import {
   Sheet,
@@ -90,6 +110,7 @@ type DisenoProgramacion = {
   cumplimiento_diseno: boolean
   cumplimiento_costura: boolean
   rechazo_orden: boolean
+  fecha_aprobacion_diseno?: string | null
   disenadoras: { nombre: string } | null
   costureras: { nombre: string } | null
 }
@@ -147,8 +168,9 @@ export function DesignModule({ configMissing }: Props) {
   // Modales
   const [evalRecord, setEvalRecord] = useState<DisenoProgramacion | null>(null)
   const [evalOpen, setEvalOpen] = useState(false)
-  const [tiempoFueraOpen, setTiempoFueraOpen] = useState(false)
-  const [ausentismoOpen, setAusentismoOpen] = useState(false)
+  const [reprogramarRecord, setReprogramarRecord] = useState<DisenoProgramacion | null>(null)
+  const [reprogramarOpen, setReprogramarOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<DisenoProgramacion | null>(null)
 
   // ── Derivados ────────────────────────────────────────────────────────────────
 
@@ -203,14 +225,46 @@ export function DesignModule({ configMissing }: Props) {
     if (!supabase) return
     setLoading(true)
     setError(null)
+
     const { data, error: e } = await supabase
       .from("diseno_programacion")
       .select("*, disenadoras(nombre), costureras(nombre)")
       .eq("idempresa", IDEMPRESA)
       .order("semana", { ascending: true })
       .order("fecha", { ascending: true })
-    if (e) { console.error("[v0] diseno fetch:", e); setError(e.message) }
-    else setRecords((data ?? []) as DisenoProgramacion[])
+
+    if (e) {
+      console.error("[v0] diseno fetch:", e)
+      setError(e.message)
+      setLoading(false)
+      return
+    }
+
+    const rows = (data ?? []) as DisenoProgramacion[]
+
+    // Enriquecer con fecha_aprobacion_diseno desde ordenes_produccion por folio
+    const folios = [...new Set(rows.map((r) => r.folio).filter((f): f is string => !!f))]
+    const aprobMap = new Map<string, string | null>()
+
+    if (folios.length > 0) {
+      const { data: aprobData } = await supabase
+        .from("ordenes_produccion")
+        .select("folio, fecha_aprobacion_diseno")
+        .in("folio", folios)
+        .eq("idempresa", IDEMPRESA)
+
+      for (const a of (aprobData ?? []) as {
+        folio: string
+        fecha_aprobacion_diseno: string | null
+      }[]) {
+        if (a.folio) aprobMap.set(a.folio, a.fecha_aprobacion_diseno ?? null)
+      }
+    }
+
+    setRecords(rows.map((r) => ({
+      ...r,
+      fecha_aprobacion_diseno: r.folio ? (aprobMap.get(r.folio) ?? null) : null,
+    })))
     setLoading(false)
   }, [configMissing])
 
@@ -246,6 +300,24 @@ export function DesignModule({ configMissing }: Props) {
     [],
   )
 
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("diseno_programacion")
+      .delete()
+      .eq("id", deleteTarget.id)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudo eliminar", { description: error.message })
+    } else {
+      setRecords((prev) => prev.filter((r) => r.id !== deleteTarget.id))
+      toast.success("Registro de diseño eliminado.")
+    }
+    setDeleteTarget(null)
+  }, [deleteTarget])
+
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
@@ -261,34 +333,18 @@ export function DesignModule({ configMissing }: Props) {
           <TabsTrigger value="impresion" className="flex-1 sm:flex-none">
             Hoja de Impresión
           </TabsTrigger>
+          <TabsTrigger value="tiempos-fuera" className="flex-1 sm:flex-none">
+            Tiempos Fuera
+          </TabsTrigger>
+          <TabsTrigger value="vacaciones" className="flex-1 sm:flex-none">
+            Vacaciones / Permisos
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Tab 1: Seguimiento Semanal ── */}
         <TabsContent value="seguimiento" className="space-y-5 mt-0">
           {/* Toolbar */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setTiempoFueraOpen(true)}
-                disabled={configMissing || loadingCatalogs}
-                className="gap-1.5 bg-transparent"
-              >
-                <MapPin className="size-3.5" />
-                Registrar Tiempo Fuera
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAusentismoOpen(true)}
-                disabled={configMissing || loadingCatalogs}
-                className="gap-1.5 bg-transparent"
-              >
-                <UserMinus className="size-3.5" />
-                Registrar Ausentismo
-              </Button>
-            </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
             <div className="flex flex-wrap items-center gap-2">
               <Select
                 value={selectedMonth || "__all__"}
@@ -363,6 +419,8 @@ export function DesignModule({ configMissing }: Props) {
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     <TableHead className="font-semibold">Folio / Modelo</TableHead>
+                    <TableHead className="font-semibold text-right">Semana</TableHead>
+                    <TableHead className="font-semibold text-right">Sem. Orig.</TableHead>
                     <TableHead className="font-semibold">Familia</TableHead>
                     <TableHead className="font-semibold">Categoría</TableHead>
                     <TableHead className="font-semibold">Tipo</TableHead>
@@ -370,6 +428,7 @@ export function DesignModule({ configMissing }: Props) {
                     <TableHead className="font-semibold text-right">Plan Diseño</TableHead>
                     <TableHead className="font-semibold">Costurera</TableHead>
                     <TableHead className="font-semibold text-right">Plan Costura</TableHead>
+                    <TableHead className="font-semibold">Aprobación Cliente</TableHead>
                     <TableHead className="font-semibold">Estatus</TableHead>
                     <TableHead className="font-semibold text-right">Acción</TableHead>
                   </TableRow>
@@ -378,21 +437,21 @@ export function DesignModule({ configMissing }: Props) {
                   {loading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 10 }).map((__, j) => (
+                        {Array.from({ length: 13 }).map((__, j) => (
                           <TableCell key={j}><Skeleton className="h-4 rounded" /></TableCell>
                         ))}
                       </TableRow>
                     ))
                   ) : error ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-24 text-center text-destructive">
+                      <TableCell colSpan={13} className="h-24 text-center text-destructive">
                         <AlertCircle className="inline size-4 mr-1.5 align-text-bottom" />
                         {error}
                       </TableCell>
                     </TableRow>
                   ) : filteredRecords.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                      <TableCell colSpan={13} className="h-32 text-center text-muted-foreground">
                         {records.length === 0 ? "Sin registros en diseño." : "Sin registros para la semana seleccionada."}
                       </TableCell>
                     </TableRow>
@@ -402,6 +461,12 @@ export function DesignModule({ configMissing }: Props) {
                         <TableCell>
                           <p className="font-mono text-xs font-semibold text-foreground">{row.folio ?? "—"}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{row.modelo ?? "—"}</p>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm font-medium">
+                          {row.semana ?? <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
+                          {row.semana_original ?? "—"}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">{row.familia ?? "—"}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{row.categoria ?? "—"}</TableCell>
@@ -418,12 +483,34 @@ export function DesignModule({ configMissing }: Props) {
                         <TableCell className="text-right tabular-nums text-sm font-medium text-violet-700">
                           {fmtH(row.horas_plan_costura)} <span className="text-muted-foreground text-xs font-normal">h</span>
                         </TableCell>
+                        <TableCell><AprobacionBadge fecha={row.fecha_aprobacion_diseno} /></TableCell>
                         <TableCell><StatusBadge row={row} /></TableCell>
                         <TableCell className="text-right">
-                          <Button size="sm" variant="outline" onClick={() => { setEvalRecord(row); setEvalOpen(true) }} className="gap-1.5">
-                            <ClipboardCheck className="size-3.5" />
-                            Evaluar
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="sm" variant="outline" className="size-8 p-0">
+                                <MoreHorizontal className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => { setEvalRecord(row); setEvalOpen(true) }}>
+                                <ClipboardCheck className="size-4" />
+                                Evaluar
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => { setReprogramarRecord(row); setReprogramarOpen(true) }}>
+                                <CalendarClock className="size-4" />
+                                Reprogramar
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => setDeleteTarget(row)}
+                              >
+                                <Trash2 className="size-4" />
+                                Eliminar
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     ))
@@ -443,27 +530,62 @@ export function DesignModule({ configMissing }: Props) {
         <TabsContent value="impresion" className="mt-0">
           <HojaImpresionTab configMissing={configMissing} />
         </TabsContent>
+
+        {/* ── Tab 4: Historial Tiempos Fuera ── */}
+        <TabsContent value="tiempos-fuera" className="mt-0">
+          <TiemposFueraTab
+            disenadoras={disenadoras}
+            loadingCatalogs={loadingCatalogs}
+            configMissing={configMissing}
+          />
+        </TabsContent>
+
+        {/* ── Tab 5: Historial Vacaciones / Permisos ── */}
+        <TabsContent value="vacaciones" className="mt-0">
+          <VacacionesPermisosTab
+            disenadoras={disenadoras}
+            tiposAusentismos={tiposAusentismos}
+            loadingCatalogs={loadingCatalogs}
+            configMissing={configMissing}
+          />
+        </TabsContent>
       </Tabs>
 
       {/* Modales — fuera del árbol de Tabs para evitar problemas de z-index */}
+      <ReprogramarDialog
+        record={reprogramarRecord}
+        open={reprogramarOpen}
+        onOpenChange={(o) => { setReprogramarOpen(o); if (!o) setReprogramarRecord(null) }}
+        onReprogramado={handleRecordUpdated}
+      />
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar registro de diseño?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará permanentemente el registro del folio{" "}
+              <span className="font-mono font-medium">{deleteTarget?.folio ?? ""}</span>.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              onClick={handleConfirmDelete}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <EvalSheet
         record={evalRecord}
         open={evalOpen}
         onOpenChange={(o) => { setEvalOpen(o); if (!o) setEvalRecord(null) }}
         onUpdated={handleRecordUpdated}
-      />
-      <TiempoFueraDialog
-        open={tiempoFueraOpen}
-        onOpenChange={setTiempoFueraOpen}
-        disenadoras={disenadoras}
-        loadingCatalogs={loadingCatalogs}
-      />
-      <AusentismoDialog
-        open={ausentismoOpen}
-        onOpenChange={setAusentismoOpen}
-        disenadoras={disenadoras}
-        tiposAusentismos={tiposAusentismos}
-        loadingCatalogs={loadingCatalogs}
       />
     </>
   )
@@ -677,39 +799,178 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
   )
 }
 
-// ── Modal 1: Tiempo Fuera de Área ─────────────────────────────────────────────
+// ── Reprogramar Dialog ────────────────────────────────────────────────────────
 
-type TiempoFueraForm = {
-  fecha: Date | undefined
-  iddisenadora: string
-  area_foranea: string
-  tiempo_af: string
-  comentarios: string
-}
-
-const INITIAL_TIEMPO_FUERA: TiempoFueraForm = {
-  fecha: undefined,
-  iddisenadora: "",
-  area_foranea: "",
-  tiempo_af: "",
-  comentarios: "",
-}
-
-function TiempoFueraDialog({
-  open, onOpenChange, disenadoras, loadingCatalogs,
+function ReprogramarDialog({
+  record,
+  open,
+  onOpenChange,
+  onReprogramado,
 }: {
+  record: DisenoProgramacion | null
   open: boolean
   onOpenChange: (v: boolean) => void
+  onReprogramado: (updated: DisenoProgramacion) => void
+}) {
+  const [nuevaSemana, setNuevaSemana] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => { if (!open) setNuevaSemana("") }, [open])
+
+  const handleSubmit = async () => {
+    if (!record || !nuevaSemana) return
+    const supabase = getSupabase()
+    if (!supabase) return
+
+    setSubmitting(true)
+    try {
+      const { data, error } = await supabase
+        .from("diseno_programacion")
+        .update({
+          semana: Number(nuevaSemana),
+          semana_original: record.semana, // la semana actual pasa a ser la original
+        })
+        .eq("id", record.id)
+        .eq("idempresa", IDEMPRESA)
+        .select("*, disenadoras(nombre), costureras(nombre)")
+        .single()
+
+      if (error) {
+        console.error("[v0] reprogramar error:", error)
+        toast.error("No se pudo reprogramar", { description: error.message })
+        return
+      }
+
+      toast.success("Orden reprogramada", {
+        description: `Semana ${record.semana ?? "—"} → Semana ${nuevaSemana}`,
+      })
+      onReprogramado(data as DisenoProgramacion)
+      onOpenChange(false)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 ring-1 ring-violet-200">
+              <CalendarClock className="size-4 text-violet-600" />
+            </div>
+            <div>
+              <DialogTitle>Reprogramar Orden</DialogTitle>
+              <DialogDescription>
+                Folio: <span className="font-mono font-medium">{record?.folio ?? "—"}</span>
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm space-y-1">
+            <p className="text-muted-foreground">
+              Semana actual:{" "}
+              <span className="font-semibold text-foreground">{record?.semana ?? "—"}</span>
+            </p>
+            {record?.semana_original != null && (
+              <p className="text-muted-foreground">
+                Semana original:{" "}
+                <span className="font-semibold text-foreground">{record.semana_original}</span>
+              </p>
+            )}
+          </div>
+
+          <FormRow label="Nueva Semana" required>
+            <Input
+              type="number"
+              min={1}
+              max={53}
+              placeholder="Nº de semana"
+              value={nuevaSemana}
+              onChange={(e) => setNuevaSemana(e.target.value)}
+              className="w-36"
+              autoFocus
+            />
+          </FormRow>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={submitting || !nuevaSemana}
+            className="bg-violet-600 hover:bg-violet-700 text-white"
+          >
+            {submitting ? (
+              <><Loader2 className="size-4 animate-spin" />Reprogramando…</>
+            ) : (
+              "Reprogramar"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Tab 4: Historial Tiempos Fuera ────────────────────────────────────────────
+
+type TiempoFueraRecord = {
+  id: number
+  fecha: string | null
+  semana: number | null
+  iddisenadora: number | null
+  area_foranea: string | null
+  tiempo_af: number | null
+  comentarios: string | null
+  disenadoras: { nombre: string } | null
+}
+
+const INIT_TF = { fecha: undefined as Date | undefined, iddisenadora: "", area_foranea: "", tiempo_af: "", comentarios: "" }
+
+function TiemposFueraTab({
+  disenadoras, loadingCatalogs, configMissing,
+}: {
   disenadoras: Catalog[]
   loadingCatalogs: boolean
+  configMissing: boolean
 }) {
+  const [form, setForm] = useState({ ...INIT_TF })
   const [submitting, setSubmitting] = useState(false)
-  const [form, setForm] = useState<TiempoFueraForm>({ ...INITIAL_TIEMPO_FUERA })
+  const [records, setRecords] = useState<TiempoFueraRecord[]>([])
+  const [loadingRecords, setLoadingRecords] = useState(false)
+  const [editTarget, setEditTarget] = useState<TiempoFueraRecord | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState({ ...INIT_TF })
+  const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<TiempoFueraRecord | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  useEffect(() => { if (!open) setForm({ ...INITIAL_TIEMPO_FUERA }) }, [open])
-
-  const set = <K extends keyof TiempoFueraForm>(k: K, v: TiempoFueraForm[K]) =>
+  const set = <K extends keyof typeof INIT_TF>(k: K, v: (typeof INIT_TF)[K]) =>
     setForm((p) => ({ ...p, [k]: v }))
+  const setE = <K extends keyof typeof INIT_TF>(k: K, v: (typeof INIT_TF)[K]) =>
+    setEditForm((p) => ({ ...p, [k]: v }))
+
+  const fetchHistory = useCallback(async () => {
+    if (configMissing) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setLoadingRecords(true)
+    const { data, error } = await supabase
+      .from("tiempos_fuera_area")
+      .select("id, fecha, semana, iddisenadora, area_foranea, tiempo_af, comentarios, disenadoras(nombre)")
+      .eq("idempresa", IDEMPRESA)
+      .order("fecha", { ascending: false })
+    if (!error) setRecords((data ?? []) as unknown as TiempoFueraRecord[])
+    else console.error("[v0] tiempos_fuera fetch:", error)
+    setLoadingRecords(false)
+  }, [configMissing])
+
+  useEffect(() => { fetchHistory() }, [fetchHistory])
 
   const handleSubmit = async () => {
     if (!form.fecha) { toast.error("Campo requerido", { description: "Selecciona una fecha." }); return }
@@ -726,108 +987,302 @@ function TiempoFueraDialog({
         tiempo_af: form.tiempo_af ? Number(form.tiempo_af) : null,
         comentarios: form.comentarios.trim() || null,
       })
-      if (error) { console.error("[v0] tiempo_fuera:", error); toast.error("No se pudo registrar", { description: error.message }); return }
+      if (error) { toast.error("No se pudo registrar", { description: error.message }); return }
       toast.success("Tiempo fuera de área registrado.")
-      onOpenChange(false)
+      setForm({ ...INIT_TF })
+      fetchHistory()
     } finally { setSubmitting(false) }
   }
 
+  const openEdit = (r: TiempoFueraRecord) => {
+    setEditTarget(r)
+    setEditForm({
+      fecha: r.fecha ? new Date(`${r.fecha}T00:00:00`) : undefined,
+      iddisenadora: r.iddisenadora ? String(r.iddisenadora) : "",
+      area_foranea: r.area_foranea ?? "",
+      tiempo_af: r.tiempo_af != null ? String(r.tiempo_af) : "",
+      comentarios: r.comentarios ?? "",
+    })
+    setEditOpen(true)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editTarget || !editForm.fecha) { toast.error("Campo requerido", { description: "Selecciona una fecha." }); return }
+    if (!editForm.iddisenadora) { toast.error("Campo requerido", { description: "Selecciona una diseñadora." }); return }
+    const supabase = getSupabase()
+    if (!supabase) return
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from("tiempos_fuera_area")
+        .update({
+          fecha: format(editForm.fecha, "yyyy-MM-dd"),
+          iddisenadora: Number(editForm.iddisenadora),
+          area_foranea: editForm.area_foranea.trim() || null,
+          tiempo_af: editForm.tiempo_af ? Number(editForm.tiempo_af) : null,
+          comentarios: editForm.comentarios.trim() || null,
+        })
+        .eq("id", editTarget.id)
+        .eq("idempresa", IDEMPRESA)
+      if (error) { toast.error("No se pudo actualizar", { description: error.message }); return }
+      toast.success("Registro actualizado.")
+      setEditOpen(false)
+      fetchHistory()
+    } finally { setSaving(false) }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setDeleting(true)
+    try {
+      const { error } = await supabase
+        .from("tiempos_fuera_area")
+        .delete()
+        .eq("id", deleteTarget.id)
+        .eq("idempresa", IDEMPRESA)
+      if (error) { toast.error("No se pudo eliminar", { description: error.message }); return }
+      setRecords((prev) => prev.filter((r) => r.id !== deleteTarget.id))
+      toast.success("Registro eliminado.")
+      setDeleteTarget(null)
+    } finally { setDeleting(false) }
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 ring-1 ring-amber-200">
+    <>
+      <div className="space-y-5">
+        {/* ── Formulario en línea ── */}
+        <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-2.5">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 ring-1 ring-amber-200">
               <MapPin className="size-4 text-amber-600" />
             </div>
             <div>
-              <DialogTitle>Registrar Tiempo Fuera de Área</DialogTitle>
-              <DialogDescription>La semana se calculará automáticamente desde la fecha.</DialogDescription>
+              <p className="text-sm font-semibold text-foreground">Registrar Tiempo Fuera de Área</p>
+              <p className="text-xs text-muted-foreground">La semana se calcula automáticamente desde la fecha.</p>
             </div>
           </div>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          <FormRow label="Fecha" required>
-            <DatePicker value={form.fecha} onChange={(d) => set("fecha", d)} />
-          </FormRow>
-          <FormRow label="Diseñadora" required>
-            <CatalogSelect
-              value={form.iddisenadora}
-              onValueChange={(v) => set("iddisenadora", v)}
-              items={disenadoras}
-              loading={loadingCatalogs}
-              placeholder="Selecciona una diseñadora"
-            />
-          </FormRow>
-          <FormRow label="Área Foránea">
-            <Input placeholder="Nombre del área o departamento" value={form.area_foranea} onChange={(e) => set("area_foranea", e.target.value)} />
-          </FormRow>
-          <FormRow label="Tiempo en AF (horas)">
-            <Input type="number" min={0} step={0.5} placeholder="0.0" value={form.tiempo_af} onChange={(e) => set("tiempo_af", e.target.value)} className="w-32" />
-          </FormRow>
-          <FormRow label="Comentarios">
-            <Textarea rows={3} placeholder="Observaciones opcionales…" value={form.comentarios} onChange={(e) => set("comentarios", e.target.value)} className="resize-none" />
-          </FormRow>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Fecha <span className="text-destructive">*</span></Label>
+              <DatePicker value={form.fecha} onChange={(d) => set("fecha", d)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Diseñadora <span className="text-destructive">*</span></Label>
+              <CatalogSelect value={form.iddisenadora} onValueChange={(v) => set("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Área Foránea</Label>
+              <Input placeholder="Nombre del área" value={form.area_foranea} onChange={(e) => set("area_foranea", e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Tiempo AF (h)</Label>
+              <Input type="number" min={0} step={0.5} placeholder="0.0" value={form.tiempo_af} onChange={(e) => set("tiempo_af", e.target.value)} />
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-end gap-3">
+            <div className="flex-1 space-y-1.5">
+              <Label className="text-xs font-medium">Comentarios</Label>
+              <Input placeholder="Observaciones opcionales…" value={form.comentarios} onChange={(e) => set("comentarios", e.target.value)} />
+            </div>
+            <Button onClick={handleSubmit} disabled={submitting || configMissing} className="bg-amber-600 hover:bg-amber-700 text-white shrink-0">
+              {submitting ? <><Loader2 className="size-4 animate-spin" />Guardando…</> : "Guardar"}
+            </Button>
+          </div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Cancelar</Button>
-          <Button onClick={handleSubmit} disabled={submitting} className="bg-amber-600 hover:bg-amber-700 text-white">
-            {submitting ? <><Loader2 className="size-4 animate-spin" />Guardando…</> : "Guardar"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+
+        {/* ── Tabla de historial ── */}
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">Historial</p>
+            <Button variant="ghost" size="sm" onClick={fetchHistory} disabled={loadingRecords} className="gap-1.5 text-muted-foreground">
+              <RefreshCw className={cn("size-3.5", loadingRecords && "animate-spin")} />
+              Actualizar
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="font-semibold">Fecha</TableHead>
+                  <TableHead className="font-semibold text-right">Semana</TableHead>
+                  <TableHead className="font-semibold">Diseñadora</TableHead>
+                  <TableHead className="font-semibold">Área Foránea</TableHead>
+                  <TableHead className="font-semibold text-right">Tiempo (h)</TableHead>
+                  <TableHead className="font-semibold">Comentarios</TableHead>
+                  <TableHead className="font-semibold text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingRecords ? (
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <TableRow key={i}>{Array.from({ length: 7 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4" /></TableCell>)}</TableRow>
+                  ))
+                ) : records.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">Sin registros.</TableCell>
+                  </TableRow>
+                ) : records.map((r) => (
+                  <TableRow key={r.id} className="hover:bg-muted/30">
+                    <TableCell className="tabular-nums text-sm">{r.fecha ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">{r.semana ?? "—"}</TableCell>
+                    <TableCell className="text-sm">{r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{r.area_foranea ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm font-medium text-amber-700">{r.tiempo_af != null ? `${r.tiempo_af} h` : "—"}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{r.comentarios ?? "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(r)} className="gap-1 text-muted-foreground hover:text-foreground">
+                          <Pencil className="size-3.5" />
+                          Editar
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(r)} className="gap-1 text-destructive/60 hover:text-destructive hover:bg-destructive/10">
+                          <Trash2 className="size-3.5" />
+                          Eliminar
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Dialog Editar ── */}
+      <Dialog open={editOpen} onOpenChange={(o) => { if (!saving) setEditOpen(o) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Editar Tiempo Fuera de Área</DialogTitle>
+            <DialogDescription>Modifica los campos y guarda los cambios. La semana se recalcula automáticamente.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormRow label="Fecha" required>
+                <DatePicker value={editForm.fecha} onChange={(d) => setE("fecha", d)} />
+              </FormRow>
+              <FormRow label="Diseñadora" required>
+                <CatalogSelect value={editForm.iddisenadora} onValueChange={(v) => setE("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              </FormRow>
+              <FormRow label="Área Foránea">
+                <Input placeholder="Nombre del área" value={editForm.area_foranea} onChange={(e) => setE("area_foranea", e.target.value)} />
+              </FormRow>
+              <FormRow label="Tiempo AF (h)">
+                <Input type="number" min={0} step={0.5} placeholder="0.0" value={editForm.tiempo_af} onChange={(e) => setE("tiempo_af", e.target.value)} />
+              </FormRow>
+            </div>
+            <FormRow label="Comentarios">
+              <Textarea rows={2} placeholder="Observaciones opcionales…" value={editForm.comentarios} onChange={(e) => setE("comentarios", e.target.value)} className="resize-none" />
+            </FormRow>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>Cancelar</Button>
+            <Button onClick={handleSaveEdit} disabled={saving} className="bg-amber-600 hover:bg-amber-700 text-white">
+              {saving ? <><Loader2 className="size-4 animate-spin" />Guardando…</> : "Guardar cambios"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── AlertDialog Eliminar ── */}
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o && !deleting) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar registro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará el registro del{" "}
+              <span className="font-medium">{deleteTarget?.fecha ?? "—"}</span>.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} disabled={deleting} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
+              {deleting ? "Eliminando…" : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
-// ── Modal 2: Vacaciones o Permisos ────────────────────────────────────────────
+// ── Tab 5: Historial Vacaciones / Permisos ────────────────────────────────────
 
-type AusentismoForm = {
-  fecha_inicio: Date | undefined
-  iddisenadora: string
-  tipo_ausentismo: string
-  dias: string
-  horas_manuales: string
-  comentarios: string
+type VacacionPermiso = {
+  id: number
+  fecha_inicio: string | null
+  semana: number | null
+  iddisenadora: number | null
+  tipo_ausentismo: string | null
+  dias: number | null
+  horas_manuales: number | null
+  horas_totales: number | null
+  comentarios: string | null
+  disenadoras: { nombre: string } | null
 }
 
-const INITIAL_AUSENTISMO: AusentismoForm = {
-  fecha_inicio: undefined,
-  iddisenadora: "",
-  tipo_ausentismo: "",
-  dias: "",
-  horas_manuales: "",
-  comentarios: "",
-}
+const INIT_VP = { fecha_inicio: undefined as Date | undefined, iddisenadora: "", tipo_ausentismo: "", dias: "", horas_manuales: "", comentarios: "" }
 
-function AusentismoDialog({
-  open, onOpenChange, disenadoras, tiposAusentismos, loadingCatalogs,
+function VacacionesPermisosTab({
+  disenadoras, tiposAusentismos, loadingCatalogs, configMissing,
 }: {
-  open: boolean
-  onOpenChange: (v: boolean) => void
   disenadoras: Catalog[]
   tiposAusentismos: Catalog[]
   loadingCatalogs: boolean
+  configMissing: boolean
 }) {
+  const [form, setForm] = useState({ ...INIT_VP })
   const [submitting, setSubmitting] = useState(false)
-  const [form, setForm] = useState<AusentismoForm>({ ...INITIAL_AUSENTISMO })
+  const [records, setRecords] = useState<VacacionPermiso[]>([])
+  const [loadingRecords, setLoadingRecords] = useState(false)
+  const [editTarget, setEditTarget] = useState<VacacionPermiso | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState({ ...INIT_VP })
+  const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<VacacionPermiso | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  useEffect(() => { if (!open) setForm({ ...INITIAL_AUSENTISMO }) }, [open])
-
-  const set = <K extends keyof AusentismoForm>(k: K, v: AusentismoForm[K]) =>
+  const set = <K extends keyof typeof INIT_VP>(k: K, v: (typeof INIT_VP)[K]) =>
     setForm((p) => ({ ...p, [k]: v }))
+  const setE = <K extends keyof typeof INIT_VP>(k: K, v: (typeof INIT_VP)[K]) =>
+    setEditForm((p) => ({ ...p, [k]: v }))
 
   const tipoLower = form.tipo_ausentismo.toLowerCase()
   const showDias = tipoLower.includes("vacacion")
   const showHorasManuales = tipoLower.includes("permiso")
 
+  const editTipoLower = editForm.tipo_ausentismo.toLowerCase()
+  const editShowDias = editTipoLower.includes("vacacion")
+  const editShowHoras = editTipoLower.includes("permiso")
+
+  const fetchHistory = useCallback(async () => {
+    if (configMissing) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setLoadingRecords(true)
+    const { data, error } = await supabase
+      .from("vacaciones_permisos")
+      .select("id, fecha_inicio, semana, iddisenadora, tipo_ausentismo, dias, horas_manuales, horas_totales, comentarios, disenadoras(nombre)")
+      .eq("idempresa", IDEMPRESA)
+      .order("fecha_inicio", { ascending: false })
+    if (!error) setRecords((data ?? []) as unknown as VacacionPermiso[])
+    else console.error("[v0] vacaciones fetch:", error)
+    setLoadingRecords(false)
+  }, [configMissing])
+
+  useEffect(() => { fetchHistory() }, [fetchHistory])
+
   const handleSubmit = async () => {
     if (!form.fecha_inicio) { toast.error("Campo requerido", { description: "Selecciona la fecha de inicio." }); return }
     if (!form.iddisenadora) { toast.error("Campo requerido", { description: "Selecciona una diseñadora." }); return }
     if (!form.tipo_ausentismo) { toast.error("Campo requerido", { description: "Selecciona el tipo de ausentismo." }); return }
-    if (showDias && !form.dias) { toast.error("Campo requerido", { description: "Ingresa los días de vacaciones." }); return }
-    if (showHorasManuales && !form.horas_manuales) { toast.error("Campo requerido", { description: "Ingresa las horas del permiso." }); return }
-
+    if (showDias && !form.dias) { toast.error("Campo requerido", { description: "Ingresa los días." }); return }
+    if (showHorasManuales && !form.horas_manuales) { toast.error("Campo requerido", { description: "Ingresa las horas." }); return }
     const supabase = getSupabase()
     if (!supabase) return
     setSubmitting(true)
@@ -845,66 +1300,271 @@ function AusentismoDialog({
         })
         .select("*")
         .single()
-      if (error) { console.error("[v0] ausentismo:", error); toast.error("No se pudo registrar", { description: error.message }); return }
+      if (error) { toast.error("No se pudo registrar", { description: error.message }); return }
       const row = data as Record<string, unknown>
-      toast.success("Ausentismo registrado.", { description: `Horas totales calculadas: ${row.horas_totales ?? "—"} h` })
-      onOpenChange(false)
+      toast.success("Ausentismo registrado.", { description: `Horas totales: ${row.horas_totales ?? "—"} h` })
+      setForm({ ...INIT_VP })
+      fetchHistory()
     } finally { setSubmitting(false) }
   }
 
+  const openEdit = (r: VacacionPermiso) => {
+    setEditTarget(r)
+    setEditForm({
+      fecha_inicio: r.fecha_inicio ? new Date(`${r.fecha_inicio}T00:00:00`) : undefined,
+      iddisenadora: r.iddisenadora ? String(r.iddisenadora) : "",
+      tipo_ausentismo: r.tipo_ausentismo ?? "",
+      dias: r.dias != null ? String(r.dias) : "",
+      horas_manuales: r.horas_manuales != null ? String(r.horas_manuales) : "",
+      comentarios: r.comentarios ?? "",
+    })
+    setEditOpen(true)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editTarget || !editForm.fecha_inicio) { toast.error("Campo requerido", { description: "Selecciona la fecha de inicio." }); return }
+    if (!editForm.iddisenadora) { toast.error("Campo requerido", { description: "Selecciona una diseñadora." }); return }
+    if (!editForm.tipo_ausentismo) { toast.error("Campo requerido", { description: "Selecciona el tipo." }); return }
+    if (editShowDias && !editForm.dias) { toast.error("Campo requerido", { description: "Ingresa los días." }); return }
+    if (editShowHoras && !editForm.horas_manuales) { toast.error("Campo requerido", { description: "Ingresa las horas." }); return }
+    const supabase = getSupabase()
+    if (!supabase) return
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from("vacaciones_permisos")
+        .update({
+          fecha_inicio: format(editForm.fecha_inicio, "yyyy-MM-dd"),
+          iddisenadora: Number(editForm.iddisenadora),
+          tipo_ausentismo: editForm.tipo_ausentismo,
+          dias: editShowDias && editForm.dias ? Number(editForm.dias) : null,
+          horas_manuales: editShowHoras && editForm.horas_manuales ? Number(editForm.horas_manuales) : null,
+          comentarios: editForm.comentarios.trim() || null,
+        })
+        .eq("id", editTarget.id)
+        .eq("idempresa", IDEMPRESA)
+      if (error) { toast.error("No se pudo actualizar", { description: error.message }); return }
+      toast.success("Registro actualizado.")
+      setEditOpen(false)
+      fetchHistory()
+    } finally { setSaving(false) }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setDeleting(true)
+    try {
+      const { error } = await supabase
+        .from("vacaciones_permisos")
+        .delete()
+        .eq("id", deleteTarget.id)
+        .eq("idempresa", IDEMPRESA)
+      if (error) { toast.error("No se pudo eliminar", { description: error.message }); return }
+      setRecords((prev) => prev.filter((r) => r.id !== deleteTarget.id))
+      toast.success("Registro eliminado.")
+      setDeleteTarget(null)
+    } finally { setDeleting(false) }
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-rose-100 ring-1 ring-rose-200">
+    <>
+      <div className="space-y-5">
+        {/* ── Formulario en línea ── */}
+        <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-2.5">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-rose-100 ring-1 ring-rose-200">
               <UserMinus className="size-4 text-rose-600" />
             </div>
             <div>
-              <DialogTitle>Registrar Vacaciones o Permiso</DialogTitle>
-              <DialogDescription>La semana y horas totales se calculan automáticamente.</DialogDescription>
+              <p className="text-sm font-semibold text-foreground">Registrar Vacaciones o Permiso</p>
+              <p className="text-xs text-muted-foreground">La semana y horas totales se calculan automáticamente.</p>
             </div>
           </div>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          <FormRow label="Fecha de Inicio" required>
-            <DatePicker value={form.fecha_inicio} onChange={(d) => set("fecha_inicio", d)} />
-          </FormRow>
-          <FormRow label="Diseñadora" required>
-            <CatalogSelect value={form.iddisenadora} onValueChange={(v) => set("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Selecciona una diseñadora" />
-          </FormRow>
-          <FormRow label="Tipo de Ausentismo" required>
-            <CatalogSelect
-              value={form.tipo_ausentismo}
-              onValueChange={(v) => setForm((p) => ({ ...p, tipo_ausentismo: v, dias: "", horas_manuales: "" }))}
-              items={tiposAusentismos}
-              loading={loadingCatalogs}
-              placeholder="Selecciona un tipo"
-              useNombre
-            />
-          </FormRow>
-          {showDias && (
-            <FormRow label="Días de Vacaciones" required>
-              <Input type="number" min={1} placeholder="Nº de días" value={form.dias} onChange={(e) => set("dias", e.target.value)} className="w-36" />
-            </FormRow>
-          )}
-          {showHorasManuales && (
-            <FormRow label="Horas del Permiso" required>
-              <Input type="number" min={0} step={0.5} placeholder="0.0" value={form.horas_manuales} onChange={(e) => set("horas_manuales", e.target.value)} className="w-36" />
-            </FormRow>
-          )}
-          <FormRow label="Comentarios">
-            <Textarea rows={3} placeholder="Observaciones opcionales…" value={form.comentarios} onChange={(e) => set("comentarios", e.target.value)} className="resize-none" />
-          </FormRow>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Fecha de Inicio <span className="text-destructive">*</span></Label>
+              <DatePicker value={form.fecha_inicio} onChange={(d) => set("fecha_inicio", d)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Diseñadora <span className="text-destructive">*</span></Label>
+              <CatalogSelect value={form.iddisenadora} onValueChange={(v) => set("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Tipo de Ausentismo <span className="text-destructive">*</span></Label>
+              <CatalogSelect
+                value={form.tipo_ausentismo}
+                onValueChange={(v) => setForm((p) => ({ ...p, tipo_ausentismo: v, dias: "", horas_manuales: "" }))}
+                items={tiposAusentismos}
+                loading={loadingCatalogs}
+                placeholder="Seleccionar…"
+                useNombre
+              />
+            </div>
+            {showDias && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Días <span className="text-destructive">*</span></Label>
+                <Input type="number" min={1} placeholder="Nº de días" value={form.dias} onChange={(e) => set("dias", e.target.value)} />
+              </div>
+            )}
+            {showHorasManuales && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Hrs Manuales <span className="text-destructive">*</span></Label>
+                <Input type="number" min={0} step={0.5} placeholder="0.0" value={form.horas_manuales} onChange={(e) => set("horas_manuales", e.target.value)} />
+              </div>
+            )}
+          </div>
+
+          <div className="mt-3 flex items-end gap-3">
+            <div className="flex-1 space-y-1.5">
+              <Label className="text-xs font-medium">Comentarios</Label>
+              <Input placeholder="Observaciones opcionales…" value={form.comentarios} onChange={(e) => set("comentarios", e.target.value)} />
+            </div>
+            <Button onClick={handleSubmit} disabled={submitting || configMissing} className="bg-rose-600 hover:bg-rose-700 text-white shrink-0">
+              {submitting ? <><Loader2 className="size-4 animate-spin" />Guardando…</> : "Guardar"}
+            </Button>
+          </div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Cancelar</Button>
-          <Button onClick={handleSubmit} disabled={submitting} className="bg-rose-600 hover:bg-rose-700 text-white">
-            {submitting ? <><Loader2 className="size-4 animate-spin" />Guardando…</> : "Guardar"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+
+        {/* ── Tabla de historial ── */}
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">Historial</p>
+            <Button variant="ghost" size="sm" onClick={fetchHistory} disabled={loadingRecords} className="gap-1.5 text-muted-foreground">
+              <RefreshCw className={cn("size-3.5", loadingRecords && "animate-spin")} />
+              Actualizar
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="font-semibold">Fecha Inicio</TableHead>
+                  <TableHead className="font-semibold text-right">Semana</TableHead>
+                  <TableHead className="font-semibold">Diseñadora</TableHead>
+                  <TableHead className="font-semibold">Tipo</TableHead>
+                  <TableHead className="font-semibold text-right">Días</TableHead>
+                  <TableHead className="font-semibold text-right">Hrs Man.</TableHead>
+                  <TableHead className="font-semibold text-right">Hrs Totales</TableHead>
+                  <TableHead className="font-semibold">Comentarios</TableHead>
+                  <TableHead className="font-semibold text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingRecords ? (
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <TableRow key={i}>{Array.from({ length: 9 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4" /></TableCell>)}</TableRow>
+                  ))
+                ) : records.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">Sin registros.</TableCell>
+                  </TableRow>
+                ) : records.map((r) => (
+                  <TableRow key={r.id} className="hover:bg-muted/30">
+                    <TableCell className="tabular-nums text-sm">{r.fecha_inicio ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">{r.semana ?? "—"}</TableCell>
+                    <TableCell className="text-sm">{r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell>
+                      {r.tipo_ausentismo
+                        ? <span className="inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium">{r.tipo_ausentismo}</span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">{r.dias ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">{r.horas_manuales != null ? `${r.horas_manuales} h` : "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm font-semibold text-rose-700">{r.horas_totales != null ? `${r.horas_totales} h` : "—"}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{r.comentarios ?? "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(r)} className="gap-1 text-muted-foreground hover:text-foreground">
+                          <Pencil className="size-3.5" />
+                          Editar
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(r)} className="gap-1 text-destructive/60 hover:text-destructive hover:bg-destructive/10">
+                          <Trash2 className="size-3.5" />
+                          Eliminar
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Dialog Editar ── */}
+      <Dialog open={editOpen} onOpenChange={(o) => { if (!saving) setEditOpen(o) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Editar Vacaciones / Permiso</DialogTitle>
+            <DialogDescription>Modifica los campos y guarda. Las horas totales se recalculan automáticamente.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormRow label="Fecha de Inicio" required>
+                <DatePicker value={editForm.fecha_inicio} onChange={(d) => setE("fecha_inicio", d)} />
+              </FormRow>
+              <FormRow label="Diseñadora" required>
+                <CatalogSelect value={editForm.iddisenadora} onValueChange={(v) => setE("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              </FormRow>
+              <FormRow label="Tipo de Ausentismo" required>
+                <CatalogSelect
+                  value={editForm.tipo_ausentismo}
+                  onValueChange={(v) => setEditForm((p) => ({ ...p, tipo_ausentismo: v, dias: "", horas_manuales: "" }))}
+                  items={tiposAusentismos}
+                  loading={loadingCatalogs}
+                  placeholder="Seleccionar…"
+                  useNombre
+                />
+              </FormRow>
+              {editShowDias && (
+                <FormRow label="Días" required>
+                  <Input type="number" min={1} placeholder="Nº de días" value={editForm.dias} onChange={(e) => setE("dias", e.target.value)} />
+                </FormRow>
+              )}
+              {editShowHoras && (
+                <FormRow label="Hrs Manuales" required>
+                  <Input type="number" min={0} step={0.5} placeholder="0.0" value={editForm.horas_manuales} onChange={(e) => setE("horas_manuales", e.target.value)} />
+                </FormRow>
+              )}
+            </div>
+            <FormRow label="Comentarios">
+              <Textarea rows={2} placeholder="Observaciones opcionales…" value={editForm.comentarios} onChange={(e) => setE("comentarios", e.target.value)} className="resize-none" />
+            </FormRow>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>Cancelar</Button>
+            <Button onClick={handleSaveEdit} disabled={saving} className="bg-rose-600 hover:bg-rose-700 text-white">
+              {saving ? <><Loader2 className="size-4 animate-spin" />Guardando…</> : "Guardar cambios"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── AlertDialog Eliminar ── */}
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o && !deleting) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar registro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará el ausentismo de{" "}
+              <span className="font-medium">{deleteTarget?.disenadoras?.nombre ?? "—"}</span>{" "}
+              del <span className="font-medium">{deleteTarget?.fecha_inicio ?? "—"}</span>.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} disabled={deleting} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
+              {deleting ? "Eliminando…" : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
@@ -1150,6 +1810,31 @@ function CriterioBadge({ criterio }: { criterio: string | null }) {
       isSi ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-red-200 bg-red-100 text-red-700",
     )}>
       {criterio}
+    </span>
+  )
+}
+
+function AprobacionBadge({ fecha }: { fecha: string | null | undefined }) {
+  if (!fecha) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+        <Clock className="size-3" />
+        Pendiente
+      </span>
+    )
+  }
+  const formatted = (() => {
+    try {
+      const d = new Date(`${fecha}T00:00:00`)
+      return format(d, "dd/MM/yyyy")
+    } catch {
+      return fecha
+    }
+  })()
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 whitespace-nowrap">
+      <CheckCircle2 className="size-3" />
+      {formatted}
     </span>
   )
 }
