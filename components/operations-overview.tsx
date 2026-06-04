@@ -55,6 +55,8 @@ type ResumenRow = {
   fase_actual: string | null
   maquilero_nombre: string | null
   riesgo_entrega: string | null
+  calidad: number | null
+  familia: string | null
   fecha_s1: string | null
   fecha_s2: string | null
   fecha_s3: string | null
@@ -259,6 +261,58 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       .map(([nombre, count]) => ({ nombre, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 12)
+  }, [rows])
+
+  // Gráfico 1: órdenes por fase × riesgo_entrega (stacked)
+  const statusRiskData = useMemo(() => {
+    const map: Record<string, { fase: string; vencido: number; a_tiempo: number }> = {}
+    rows.forEach((r) => {
+      const fase = r.fase_actual ?? "Sin Fase"
+      if (!map[fase]) map[fase] = { fase, vencido: 0, a_tiempo: 0 }
+      if ((r.riesgo_entrega ?? "").toLowerCase().includes("vencid")) {
+        map[fase].vencido++
+      } else {
+        map[fase].a_tiempo++
+      }
+    })
+    const order = [...PHASE_BUCKETS, "Sin Fase"]
+    const ordered = order.filter((f) => map[f]).map((f) => map[f])
+    const rest = Object.keys(map)
+      .filter((f) => !order.includes(f))
+      .map((f) => map[f])
+    return [...ordered, ...rest]
+  }, [rows])
+
+  // Gráfico 2: calidad promedio por maquilero
+  const calidadData = useMemo(() => {
+    const map: Record<string, { sum: number; count: number }> = {}
+    rows.forEach((r) => {
+      const name = r.maquilero_nombre?.trim() || "Sin asignar"
+      const q = r.calidad
+      if (q != null && q > 0) {
+        if (!map[name]) map[name] = { sum: 0, count: 0 }
+        map[name].sum += q
+        map[name].count++
+      }
+    })
+    return Object.entries(map)
+      .map(([nombre, { sum, count }]) => ({
+        nombre,
+        promedio: Math.round((sum / count) * 10) / 10,
+      }))
+      .sort((a, b) => b.promedio - a.promedio)
+  }, [rows])
+
+  // Gráfico 3: volumen por familia
+  const familiaData = useMemo(() => {
+    const map: Record<string, number> = {}
+    rows.forEach((r) => {
+      const f = r.familia?.trim() || "Sin Familia"
+      map[f] = (map[f] ?? 0) + 1
+    })
+    return Object.entries(map)
+      .map(([familia, count]) => ({ familia, count }))
+      .sort((a, b) => b.count - a.count)
   }, [rows])
 
   if (configMissing) {
@@ -493,6 +547,164 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
+      </div>
+
+      {/* SECTION 2b: ANÁLISIS DE RIESGO, CALIDAD Y FAMILIA */}
+      <div className="grid gap-4">
+        {/* Gráfico 1 – Órdenes por Fase y Vencimiento (ancho completo) */}
+        <ChartCard
+          title="Órdenes por Fase y Vencimiento"
+          subtitle="Distribución apilada: A Tiempo vs Vencidas por fase"
+          loading={loading}
+          empty={statusRiskData.length === 0}
+        >
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart
+              data={statusRiskData}
+              margin={{ top: 8, right: 16, left: -10, bottom: 0 }}
+            >
+              <CartesianGrid stroke="oklch(0.92 0.02 280)" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="fase"
+                stroke="oklch(0.45 0.04 280)"
+                tick={{ fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                stroke="oklch(0.45 0.04 280)"
+                tick={{ fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                allowDecimals={false}
+              />
+              <RechartsTooltip
+                cursor={{ fill: "oklch(0.15 0.04 295 / 0.12)" }}
+                contentStyle={{
+                  background: "oklch(0.15 0.04 295)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  color: "rgba(255,255,255,0.9)",
+                }}
+                labelStyle={{ color: "rgba(255,255,255,0.55)", marginBottom: 4 }}
+                formatter={(v: number, name: string) => [
+                  `${v} órdenes`,
+                  name === "a_tiempo" ? "A Tiempo" : "Vencidas",
+                ]}
+              />
+              <Legend
+                verticalAlign="top"
+                align="right"
+                height={28}
+                iconSize={8}
+                wrapperStyle={{ fontSize: 11 }}
+                formatter={(v: string) => (v === "a_tiempo" ? "A Tiempo" : "Vencidas")}
+              />
+              <Bar dataKey="a_tiempo" stackId="a" fill="#22c55e" name="a_tiempo" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="vencido" stackId="a" fill="#ef4444" name="vencido" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* Gráficos 2 y 3 – dos columnas */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Gráfico 2 – Calidad Promedio por Maquilero */}
+          <ChartCard
+            title="Calidad Promedio por Maquilero"
+            subtitle="Promedio del indicador de calidad (escala 0–10)"
+            loading={loading}
+            empty={calidadData.length === 0}
+          >
+            <ResponsiveContainer width="100%" height={Math.max(260, calidadData.length * 36)}>
+              <BarChart
+                data={calidadData}
+                margin={{ top: 8, right: 16, left: -10, bottom: 0 }}
+              >
+                <CartesianGrid stroke="oklch(0.92 0.02 280)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="nombre"
+                  stroke="oklch(0.45 0.04 280)"
+                  tick={{ fontSize: 10 }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval={0}
+                  angle={-35}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis
+                  domain={[0, 10]}
+                  stroke="oklch(0.45 0.04 280)"
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <RechartsTooltip
+                  cursor={{ fill: "oklch(0.15 0.04 295 / 0.12)" }}
+                  contentStyle={{
+                    background: "oklch(0.15 0.04 295)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: "rgba(255,255,255,0.9)",
+                  }}
+                  labelStyle={{ color: "rgba(255,255,255,0.55)", marginBottom: 4 }}
+                  formatter={(v: number) => [`${v} / 10`, "Calidad promedio"]}
+                />
+                <Bar dataKey="promedio" radius={[6, 6, 0, 0]} fill="oklch(0.62 0.18 220)" />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Gráfico 3 – Volumen por Familia (horizontal) */}
+          <ChartCard
+            title="Volumen por Familia"
+            subtitle="Número de órdenes activas por familia de producto"
+            loading={loading}
+            empty={familiaData.length === 0}
+          >
+            <ResponsiveContainer width="100%" height={Math.max(260, familiaData.length * 32)}>
+              <BarChart
+                data={familiaData}
+                layout="vertical"
+                margin={{ top: 4, right: 16, left: 0, bottom: 4 }}
+              >
+                <CartesianGrid stroke="oklch(0.92 0.02 280)" strokeDasharray="3 3" horizontal={false} />
+                <XAxis
+                  type="number"
+                  stroke="oklch(0.45 0.04 280)"
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  allowDecimals={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="familia"
+                  stroke="oklch(0.45 0.04 280)"
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={110}
+                />
+                <RechartsTooltip
+                  cursor={{ fill: "oklch(0.15 0.04 295 / 0.12)" }}
+                  contentStyle={{
+                    background: "oklch(0.15 0.04 295)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: "rgba(255,255,255,0.9)",
+                  }}
+                  labelStyle={{ color: "rgba(255,255,255,0.55)", marginBottom: 4 }}
+                  formatter={(v: number) => [`${v} órdenes`, "Total"]}
+                />
+                <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="oklch(0.62 0.22 330)" />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
       </div>
 
       {/* SECTION 3: MASTER TRACKING */}
