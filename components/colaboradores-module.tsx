@@ -1,8 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { Loader2, Plus, Pencil, Trash2, Users } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Users, CalendarIcon, X } from "lucide-react"
 import { toast } from "sonner"
+import { format, parseISO } from "date-fns"
+import { es } from "date-fns/locale"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -34,91 +36,160 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Badge } from "@/components/ui/badge"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 
-// ── Constantes de estilo oscuro ────────────────────────────────────────────────
-
-const BG_MAIN = "oklch(0.16 0.04 295)"
-const BG_CARD = "oklch(0.19 0.05 295)"
-const BG_HEADER = "oklch(0.20 0.05 295)"
-const HEADER_GRADIENT =
-  "linear-gradient(135deg, oklch(0.18 0.09 295) 0%, oklch(0.22 0.12 305) 50%, oklch(0.18 0.1 320) 100%)"
-
-const DARK_INPUT =
-  "border-white/15 bg-white/10 text-white placeholder:text-white/30 focus-visible:ring-white/20 focus-visible:border-white/30"
-
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
-type Colaborador = { id: number; nombre: string }
+type Colaborador = {
+  id: number
+  nombre: string
+  area: string | null
+  puesto: string | null
+  sueldo_semanal: number | null
+  fecha_nacimiento: string | null
+  fecha_ingreso: string | null
+  fecha_baja: string | null
+}
+
+type FormState = {
+  nombre: string
+  area: string
+  puesto: string
+  sueldo_semanal: string
+  fecha_nacimiento: Date | null
+  fecha_ingreso: Date | null
+  fecha_baja: Date | null
+}
+
 type TableName = "disenadoras" | "costureras"
 type Props = { configMissing: boolean }
+
+const EMPTY_FORM: FormState = {
+  nombre: "",
+  area: "",
+  puesto: "",
+  sueldo_semanal: "",
+  fecha_nacimiento: null,
+  fecha_ingreso: null,
+  fecha_baja: null,
+}
+
+function toDateOrNull(iso: string | null): Date | null {
+  if (!iso) return null
+  try { return parseISO(iso) } catch { return null }
+}
+
+function toISOOrNull(d: Date | null): string | null {
+  if (!d) return null
+  return format(d, "yyyy-MM-dd")
+}
+
+function fmtDate(iso: string | null) {
+  if (!iso) return "—"
+  try { return format(parseISO(iso), "dd/MM/yyyy", { locale: es }) } catch { return iso }
+}
+
+function fmtCurrency(n: number | null) {
+  if (n == null) return "—"
+  return new Intl.NumberFormat("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    maximumFractionDigits: 0,
+  }).format(n)
+}
+
+// ── DatePicker (tema claro) ───────────────────────────────────────────────────
+
+function DatePicker({
+  value,
+  onChange,
+  placeholder,
+  clearable,
+}: {
+  value: Date | null
+  onChange: (d: Date | null) => void
+  placeholder?: string
+  clearable?: boolean
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className={cn(
+            "w-full justify-start gap-2 font-normal",
+            !value && "text-muted-foreground",
+          )}
+        >
+          <CalendarIcon className="size-3.5 shrink-0" />
+          <span className="flex-1 text-left">
+            {value ? format(value, "dd/MM/yyyy") : (placeholder ?? "Seleccionar fecha…")}
+          </span>
+          {clearable && value && (
+            <X
+              className="size-3.5 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={(e) => { e.stopPropagation(); onChange(null) }}
+            />
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0">
+        <Calendar
+          mode="single"
+          selected={value ?? undefined}
+          onSelect={(d) => onChange(d ?? null)}
+          locale={es}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 // ── Componente principal ───────────────────────────────────────────────────────
 
 export function ColaboradoresModule({ configMissing }: Props) {
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ background: BG_MAIN }}>
-      {/* ── Cabecera con degradado oscuro ── */}
-      <div
-        className="relative overflow-hidden p-6"
-        style={{ background: HEADER_GRADIENT }}
-      >
-        <div
-          className="pointer-events-none absolute inset-0 opacity-25"
-          style={{
-            backgroundImage: "radial-gradient(oklch(1 0 0 / 0.09) 1px, transparent 1px)",
-            backgroundSize: "18px 18px",
-          }}
-        />
-        <div className="relative flex items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/25">
-            <Users className="size-5 text-white" />
+    <div className="space-y-6">
+      <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
+        {/* Cabecera */}
+        <div className="mb-5 flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-violet-100 ring-1 ring-violet-200">
+            <Users className="size-4 text-violet-600" />
           </div>
           <div>
-            <h2 className="text-base font-semibold text-white">Registro de Colaboradores</h2>
-            <p className="text-xs text-white/55">
-              Administra diseñadoras y costureras · <code className="font-mono">manumoda.disenadoras / costureras</code>
+            <h2 className="text-base font-semibold text-foreground">Registro de Colaboradores</h2>
+            <p className="text-xs text-muted-foreground">
+              Administra diseñadoras y costureras ·{" "}
+              <code className="font-mono">manumoda.disenadoras / costureras</code>
             </p>
           </div>
         </div>
-      </div>
 
-      {/* ── Contenido con Tabs ── */}
-      <div className="p-5">
         <Tabs defaultValue="disenadoras">
-          <TabsList
-            className="mb-5 border border-white/10"
-            style={{ background: "oklch(0.20 0.05 295)" }}
-          >
-            <TabsTrigger
-              value="disenadoras"
-              className="text-white/60 data-[state=active]:bg-white/15 data-[state=active]:text-white"
-            >
-              Diseñadoras
-            </TabsTrigger>
-            <TabsTrigger
-              value="costureras"
-              className="text-white/60 data-[state=active]:bg-white/15 data-[state=active]:text-white"
-            >
-              Costureras
-            </TabsTrigger>
+          <TabsList className="mb-5">
+            <TabsTrigger value="disenadoras">Diseñadoras</TabsTrigger>
+            <TabsTrigger value="costureras">Costureras</TabsTrigger>
           </TabsList>
 
           <TabsContent value="disenadoras" className="mt-0">
             <CRUDTab table="disenadoras" label="Diseñadora" configMissing={configMissing} />
           </TabsContent>
-
           <TabsContent value="costureras" className="mt-0">
             <CRUDTab table="costureras" label="Costurera" configMissing={configMissing} />
           </TabsContent>
         </Tabs>
-      </div>
+      </section>
     </div>
   )
 }
 
-// ── Tab CRUD genérico (funciona para ambas tablas) ────────────────────────────
+// ── Tab CRUD genérico ──────────────────────────────────────────────────────────
 
 function CRUDTab({
   table,
@@ -132,13 +203,11 @@ function CRUDTab({
   const [records, setRecords] = useState<Colaborador[]>([])
   const [loading, setLoading] = useState(false)
 
-  // Dialog (crear / editar)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editRecord, setEditRecord] = useState<Colaborador | null>(null)
-  const [nombreInput, setNombreInput] = useState("")
+  const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
 
-  // AlertDialog (eliminar)
   const [deleteTarget, setDeleteTarget] = useState<Colaborador | null>(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -151,11 +220,10 @@ function CRUDTab({
     setLoading(true)
     const { data, error } = await supabase
       .from(table)
-      .select("id, nombre")
+      .select("id, nombre, area, puesto, sueldo_semanal, fecha_nacimiento, fecha_ingreso, fecha_baja")
       .eq("idempresa", IDEMPRESA)
       .order("nombre", { ascending: true })
     if (error) {
-      console.error(`[v0] ${table} fetch:`, error)
       toast.error(`Error al cargar ${label.toLowerCase()}s`, { description: error.message })
     } else {
       setRecords((data ?? []) as Colaborador[])
@@ -169,55 +237,61 @@ function CRUDTab({
 
   const openCreate = () => {
     setEditRecord(null)
-    setNombreInput("")
+    setForm(EMPTY_FORM)
     setDialogOpen(true)
   }
 
-  const openEdit = (record: Colaborador) => {
-    setEditRecord(record)
-    setNombreInput(record.nombre)
+  const openEdit = (r: Colaborador) => {
+    setEditRecord(r)
+    setForm({
+      nombre: r.nombre,
+      area: r.area ?? "",
+      puesto: r.puesto ?? "",
+      sueldo_semanal: r.sueldo_semanal != null ? String(r.sueldo_semanal) : "",
+      fecha_nacimiento: toDateOrNull(r.fecha_nacimiento),
+      fecha_ingreso: toDateOrNull(r.fecha_ingreso),
+      fecha_baja: toDateOrNull(r.fecha_baja),
+    })
     setDialogOpen(true)
   }
 
-  // ── Guardar (crear o actualizar) ───────────────────────────────────────────
+  const setField = <K extends keyof FormState>(k: K, v: FormState[K]) =>
+    setForm((prev) => ({ ...prev, [k]: v }))
+
+  // ── Guardar ────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
-    if (!nombreInput.trim()) {
-      toast.error("El nombre es requerido.")
-      return
-    }
+    if (!form.nombre.trim()) { toast.error("El nombre es requerido."); return }
     const supabase = getSupabase()
     if (!supabase) return
     setSaving(true)
     try {
+      const payload = {
+        nombre: form.nombre.trim(),
+        area: form.area.trim() || null,
+        puesto: form.puesto.trim() || null,
+        sueldo_semanal: form.sueldo_semanal !== "" ? Number(form.sueldo_semanal) : null,
+        fecha_nacimiento: toISOOrNull(form.fecha_nacimiento),
+        fecha_ingreso: toISOOrNull(form.fecha_ingreso),
+        fecha_baja: toISOOrNull(form.fecha_baja),
+      }
+
       if (editRecord) {
-        // UPDATE
         const { error } = await supabase
-          .from(table)
-          .update({ nombre: nombreInput.trim() })
-          .eq("id", editRecord.id)
-          .eq("idempresa", IDEMPRESA)
-        if (error) {
-          toast.error("No se pudo actualizar", { description: error.message })
-          return
-        }
+          .from(table).update(payload).eq("id", editRecord.id).eq("idempresa", IDEMPRESA)
+        if (error) { toast.error("No se pudo actualizar", { description: error.message }); return }
         setRecords((prev) =>
-          prev.map((r) =>
-            r.id === editRecord.id ? { ...r, nombre: nombreInput.trim() } : r,
-          ),
+          prev.map((r) => r.id === editRecord.id ? { ...r, ...payload } : r)
+            .sort((a, b) => a.nombre.localeCompare(b.nombre)),
         )
         toast.success(`${label} actualizada correctamente.`)
       } else {
-        // INSERT
         const { data, error } = await supabase
           .from(table)
-          .insert({ nombre: nombreInput.trim(), idempresa: IDEMPRESA })
-          .select("id, nombre")
+          .insert({ ...payload, idempresa: IDEMPRESA })
+          .select("id, nombre, area, puesto, sueldo_semanal, fecha_nacimiento, fecha_ingreso, fecha_baja")
           .single()
-        if (error) {
-          toast.error("No se pudo agregar", { description: error.message })
-          return
-        }
+        if (error) { toast.error("No se pudo agregar", { description: error.message }); return }
         setRecords((prev) =>
           [...prev, data as Colaborador].sort((a, b) => a.nombre.localeCompare(b.nombre)),
         )
@@ -238,18 +312,16 @@ function CRUDTab({
     setDeleting(true)
     try {
       const { error } = await supabase
-        .from(table)
-        .delete()
-        .eq("id", deleteTarget.id)
-        .eq("idempresa", IDEMPRESA)
+        .from(table).delete().eq("id", deleteTarget.id).eq("idempresa", IDEMPRESA)
       if (error) {
-        if (error.code === "23503") {
-          toast.error("No se puede eliminar", {
-            description: "Este colaborador tiene historial registrado en el sistema.",
-          })
-        } else {
-          toast.error("No se pudo eliminar", { description: error.message })
-        }
+        toast.error(
+          error.code === "23503" ? "No se puede eliminar" : "No se pudo eliminar",
+          {
+            description: error.code === "23503"
+              ? "Este colaborador tiene historial registrado en el sistema."
+              : error.message,
+          },
+        )
         return
       }
       setRecords((prev) => prev.filter((r) => r.id !== deleteTarget.id))
@@ -265,16 +337,16 @@ function CRUDTab({
   return (
     <>
       <div className="space-y-4">
-        {/* Cabecera de la tabla */}
+        {/* Barra superior */}
         <div className="flex items-center justify-between">
-          <p className="text-sm text-white/50">
+          <p className="text-sm text-muted-foreground">
             {loading ? "Cargando…" : `${records.length} registro(s)`}
           </p>
           <Button
             size="sm"
             onClick={openCreate}
             disabled={configMissing}
-            className="gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white border-0"
+            className="gap-1.5"
           >
             <Plus className="size-4" />
             Agregar {label}
@@ -282,57 +354,53 @@ function CRUDTab({
         </div>
 
         {/* Tabla */}
-        <div
-          className="overflow-hidden rounded-xl border border-white/10"
-          style={{ background: BG_CARD }}
-        >
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow
-                  className="hover:bg-transparent border-white/10"
-                  style={{ background: BG_HEADER }}
-                >
-                  <TableHead className="w-16 text-white/50 text-xs font-semibold uppercase tracking-wide">
-                    ID
-                  </TableHead>
-                  <TableHead className="text-white/50 text-xs font-semibold uppercase tracking-wide">
-                    Nombre
-                  </TableHead>
-                  <TableHead className="text-white/50 text-xs font-semibold uppercase tracking-wide text-right">
-                    Acciones
-                  </TableHead>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="font-semibold">Nombre</TableHead>
+                  <TableHead className="font-semibold">Área</TableHead>
+                  <TableHead className="font-semibold">Puesto</TableHead>
+                  <TableHead className="font-semibold text-right">Sueldo Semanal</TableHead>
+                  <TableHead className="font-semibold">Ingreso</TableHead>
+                  <TableHead className="font-semibold">Estatus</TableHead>
+                  <TableHead className="font-semibold text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i} className="border-white/10">
-                      <TableCell><Skeleton className="h-4 w-8 bg-white/10" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-48 bg-white/10" /></TableCell>
-                      <TableCell className="text-right"><Skeleton className="h-4 w-24 ml-auto bg-white/10" /></TableCell>
+                    <TableRow key={i}>
+                      {Array.from({ length: 7 }).map((_, j) => (
+                        <TableCell key={j}><Skeleton className="h-4 w-20" /></TableCell>
+                      ))}
                     </TableRow>
                   ))
                 ) : records.length === 0 ? (
-                  <TableRow className="border-white/10">
-                    <TableCell
-                      colSpan={3}
-                      className="h-28 text-center text-sm text-white/30"
-                    >
+                  <TableRow>
+                    <TableCell colSpan={7} className="h-28 text-center text-sm text-muted-foreground">
                       Sin registros. Agrega la primera {label.toLowerCase()}.
                     </TableCell>
                   </TableRow>
                 ) : (
                   records.map((r) => (
-                    <TableRow
-                      key={r.id}
-                      className="border-white/10 hover:bg-white/5 transition-colors"
-                    >
-                      <TableCell className="tabular-nums text-xs text-white/35">
-                        {r.id}
+                    <TableRow key={r.id} className="hover:bg-muted/30">
+                      <TableCell className="font-medium text-foreground">{r.nombre}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{r.area ?? "—"}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{r.puesto ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">
+                        {fmtCurrency(r.sueldo_semanal)}
                       </TableCell>
-                      <TableCell className="font-medium text-white">
-                        {r.nombre}
+                      <TableCell className="text-sm text-muted-foreground">{fmtDate(r.fecha_ingreso)}</TableCell>
+                      <TableCell>
+                        {r.fecha_baja ? (
+                          <Badge variant="secondary" className="text-slate-600">Baja</Badge>
+                        ) : (
+                          <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
+                            Activo
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -340,7 +408,7 @@ function CRUDTab({
                             size="sm"
                             variant="ghost"
                             onClick={() => openEdit(r)}
-                            className="gap-1.5 text-white/55 hover:text-white hover:bg-white/10"
+                            className="gap-1.5"
                           >
                             <Pencil className="size-3.5" />
                             Editar
@@ -349,7 +417,7 @@ function CRUDTab({
                             size="sm"
                             variant="ghost"
                             onClick={() => setDeleteTarget(r)}
-                            className="gap-1.5 text-red-400/70 hover:text-red-300 hover:bg-red-500/10"
+                            className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
                           >
                             <Trash2 className="size-3.5" />
                             Eliminar
@@ -366,63 +434,108 @@ function CRUDTab({
       </div>
 
       {/* ── Dialog Crear / Editar ── */}
-      <Dialog
-        open={dialogOpen}
-        onOpenChange={(o) => {
-          if (!saving) setDialogOpen(o)
-        }}
-      >
-        <DialogContent
-          className="sm:max-w-xs border-white/10"
-          style={{ background: "oklch(0.19 0.05 295)" }}
-        >
+      <Dialog open={dialogOpen} onOpenChange={(o) => { if (!saving) setDialogOpen(o) }}>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-white">
-              {editRecord ? `Editar ${label}` : `Agregar ${label}`}
-            </DialogTitle>
-            <DialogDescription className="text-white/55">
+            <DialogTitle>{editRecord ? `Editar ${label}` : `Agregar ${label}`}</DialogTitle>
+            <DialogDescription>
               {editRecord
-                ? "Modifica el nombre y guarda los cambios."
-                : `Escribe el nombre de la nueva ${label.toLowerCase()}.`}
+                ? "Modifica los datos y guarda los cambios."
+                : `Completa los datos de la nueva ${label.toLowerCase()}.`}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-2 space-y-1.5">
-            <Label htmlFor="nombre-input" className="text-xs font-medium text-white/70">
-              Nombre <span className="text-rose-400">*</span>
-            </Label>
-            <Input
-              id="nombre-input"
-              value={nombreInput}
-              onChange={(e) => setNombreInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSave() }}
-              placeholder={`Nombre de la ${label.toLowerCase()}…`}
-              autoFocus
-              className={cn(DARK_INPUT)}
-            />
+          <div className="space-y-4 py-1 max-h-[65vh] overflow-y-auto pr-1">
+            {/* Nombre — ancho completo */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">
+                Nombre <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                value={form.nombre}
+                onChange={(e) => setField("nombre", e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSave() }}
+                placeholder="Nombre completo…"
+                autoFocus
+              />
+            </div>
+
+            {/* Área / Puesto */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Área</Label>
+                <Input
+                  value={form.area}
+                  onChange={(e) => setField("area", e.target.value)}
+                  placeholder="Ej. Diseño, Corte…"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Puesto</Label>
+                <Input
+                  value={form.puesto}
+                  onChange={(e) => setField("puesto", e.target.value)}
+                  placeholder="Ej. Diseñadora Sr…"
+                />
+              </div>
+            </div>
+
+            {/* Sueldo semanal */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Sueldo semanal (MXN)</Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={form.sueldo_semanal}
+                onChange={(e) => setField("sueldo_semanal", e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+
+            {/* Fecha nacimiento / Fecha ingreso */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Fecha de nacimiento</Label>
+                <DatePicker
+                  value={form.fecha_nacimiento}
+                  onChange={(d) => setField("fecha_nacimiento", d)}
+                  placeholder="dd/mm/aaaa"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Fecha de ingreso</Label>
+                <DatePicker
+                  value={form.fecha_ingreso}
+                  onChange={(d) => setField("fecha_ingreso", d)}
+                  placeholder="dd/mm/aaaa"
+                />
+              </div>
+            </div>
+
+            {/* Fecha baja — limpiable */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">
+                Fecha de baja{" "}
+                <span className="font-normal text-muted-foreground">(opcional — vacío = activa)</span>
+              </Label>
+              <DatePicker
+                value={form.fecha_baja}
+                onChange={(d) => setField("fecha_baja", d)}
+                placeholder="Sin fecha de baja"
+                clearable
+              />
+            </div>
           </div>
 
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setDialogOpen(false)}
-              disabled={saving}
-              className="text-white/60 hover:text-white hover:bg-white/10"
-            >
+          <DialogFooter className="pt-2">
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button
-              onClick={handleSave}
-              disabled={saving || !nombreInput.trim()}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white border-0"
-            >
+            <Button onClick={handleSave} disabled={saving || !form.nombre.trim()}>
               {saving ? (
-                <><Loader2 className="size-4 animate-spin" />Guardando…</>
-              ) : editRecord ? (
-                "Guardar cambios"
-              ) : (
-                "Agregar"
-              )}
+                <><Loader2 className="size-4 animate-spin mr-1" />Guardando…</>
+              ) : editRecord ? "Guardar cambios" : "Agregar"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -433,27 +546,17 @@ function CRUDTab({
         open={deleteTarget !== null}
         onOpenChange={(o) => { if (!o && !deleting) setDeleteTarget(null) }}
       >
-        <AlertDialogContent
-          className="border-white/10"
-          style={{ background: "oklch(0.19 0.05 295)" }}
-        >
+        <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-white">
-              ¿Eliminar {label.toLowerCase()}?
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-white/55">
+            <AlertDialogTitle>¿Eliminar {label.toLowerCase()}?</AlertDialogTitle>
+            <AlertDialogDescription>
               Se eliminará permanentemente a{" "}
-              <span className="font-semibold text-white">{deleteTarget?.nombre}</span>.
+              <span className="font-semibold text-foreground">{deleteTarget?.nombre}</span>.
               Si tiene historial registrado, la operación será rechazada.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel
-              disabled={deleting}
-              className="border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-            >
-              Cancelar
-            </AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleConfirmDelete}
               disabled={deleting}

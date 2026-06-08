@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, useCallback } from "react"
-import { getISOWeek, format } from "date-fns"
+import { getISOWeek, format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
 import {
   Loader2,
@@ -21,6 +21,7 @@ import {
   Trash2,
   MoreHorizontal,
   CalendarClock,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -117,6 +118,7 @@ type DisenoProgramacion = {
 
 type VwBonosDiseno = {
   nombre: string | null
+  tipo_personal: string | null
   semana: number | null
   anio: number | null
   horas_cumplidas: number | null
@@ -718,6 +720,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
                 <TableHead className="font-semibold">Nombre</TableHead>
+                <TableHead className="font-semibold">Área</TableHead>
                 <TableHead className="font-semibold text-right">Hrs Cumplidas</TableHead>
                 <TableHead className="font-semibold text-right">Hrs Fuera</TableHead>
                 <TableHead className="font-semibold text-right">Ausentismos</TableHead>
@@ -733,21 +736,21 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 10 }).map((__, j) => (
+                    {Array.from({ length: 11 }).map((__, j) => (
                       <TableCell key={j}><Skeleton className="h-4 rounded" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : error ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-24 text-center text-destructive">
+                  <TableCell colSpan={11} className="h-24 text-center text-destructive">
                     <AlertCircle className="inline size-4 mr-1.5 align-text-bottom" />
                     {error}
                   </TableCell>
                 </TableRow>
               ) : filteredBonos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
                     {bonos.length === 0
                       ? "Sin datos de bonos disponibles."
                       : "Sin datos para la semana seleccionada."}
@@ -758,6 +761,19 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
                   <TableRow key={i} className="hover:bg-muted/30">
                     <TableCell className="font-medium text-foreground">
                       {row.nombre ?? <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      {row.tipo_personal === "Diseño" ? (
+                        <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 hover:bg-indigo-100">
+                          Diseño
+                        </Badge>
+                      ) : row.tipo_personal === "Costura" ? (
+                        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
+                          Costura
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-sm">
                       {fmtH(row.horas_cumplidas)} <span className="text-muted-foreground text-xs">h</span>
@@ -1587,6 +1603,7 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
     rechazoOrden: false,
     idcosturera: "__none__",
     comentarios: "",
+    fechaAprobacionDiseno: null as Date | null,
   })
 
   // Carga catálogo de costureras al abrir el sheet
@@ -1614,6 +1631,9 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
       rechazoOrden: record.rechazo_orden ?? false,
       idcosturera: record.idcosturera ? String(record.idcosturera) : "__none__",
       comentarios: record.comentarios ?? "",
+      fechaAprobacionDiseno: record.fecha_aprobacion_diseno
+        ? parseISO(record.fecha_aprobacion_diseno)
+        : null,
     })
   }, [record])
 
@@ -1623,6 +1643,7 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
     if (!supabase) return
     setSubmitting(true)
     try {
+      // 1. Actualizar diseno_programacion
       const { data, error } = await supabase
         .from("diseno_programacion")
         .update({
@@ -1637,7 +1658,21 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
         .select("*, disenadoras(nombre), costureras(nombre)")
         .single()
       if (error) { console.error("[v0] eval update:", error); toast.error("No se pudo guardar", { description: error.message }); return }
-      const updated = data as DisenoProgramacion
+
+      // 2. Actualizar fecha_aprobacion_diseno en ordenes_produccion
+      const nuevaFecha = form.fechaAprobacionDiseno
+        ? format(form.fechaAprobacionDiseno, "yyyy-MM-dd")
+        : null
+      if (record.folio) {
+        const { error: aprobError } = await supabase
+          .from("ordenes_produccion")
+          .update({ fecha_aprobacion_diseno: nuevaFecha })
+          .eq("folio", record.folio)
+          .eq("idempresa", IDEMPRESA)
+        if (aprobError) console.error("[v0] aprobacion update:", aprobError)
+      }
+
+      const updated = { ...(data as DisenoProgramacion), fecha_aprobacion_diseno: nuevaFecha }
       toast.success("Evaluación guardada", { description: `Diseño: ${fmtH(updated.horas_diseno_cumplidas)} h · Costura: ${fmtH(updated.horas_costura_cumplidas)} h cumplidas` })
       onUpdated(updated)
       onOpenChange(false)
@@ -1702,6 +1737,35 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </section>
+
+          {/* Aprobación de Diseño */}
+          <section className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Aprobación de Diseño</p>
+            <div className="grid gap-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Fecha de aprobación del cliente</Label>
+                {form.fechaAprobacionDiseno && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, fechaAprobacionDiseno: null }))}
+                    className="flex items-center gap-1 text-xs text-rose-500 hover:text-rose-700 transition-colors"
+                  >
+                    <X className="size-3" />
+                    Eliminar fecha
+                  </button>
+                )}
+              </div>
+              <DatePicker
+                value={form.fechaAprobacionDiseno ?? undefined}
+                onChange={(d) => setForm((p) => ({ ...p, fechaAprobacionDiseno: d ?? null }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                {form.fechaAprobacionDiseno
+                  ? "Al guardar se actualizará la fecha en la orden de producción."
+                  : "Sin fecha seleccionada — al guardar se eliminará la aprobación registrada."}
+              </p>
             </div>
           </section>
 

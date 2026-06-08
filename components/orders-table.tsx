@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, Calendar, RefreshCw, CheckCircle2, Trash2 } from "lucide-react"
+import { Loader2, Search, Calendar, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,6 +28,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 type Props = {
   refreshKey: number
@@ -77,6 +84,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<OrdenProduccion | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [skippingId, setSkippingId] = useState<number | string | null>(null)
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget?.id) return
@@ -99,6 +107,28 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
     setDeleteTarget(null)
   }
 
+  const handleSkipPhase = async (
+    row: OrdenProduccion,
+    field: "no_requiere_diseno" | "no_requiere_corte",
+  ) => {
+    const supabase = getSupabase()
+    if (!supabase || row.id == null) return
+    setSkippingId(row.id)
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ [field]: true })
+      .eq("id", row.id)
+      .eq("idempresa", IDEMPRESA)
+    setSkippingId(null)
+    if (error) {
+      toast.error("No se pudo actualizar la orden", { description: error.message })
+    } else {
+      const label = field === "no_requiere_diseno" ? "Diseño" : "Corte"
+      toast.success(`Folio ${row.folio} marcado como: No pasa por ${label}.`)
+      void fetchOrders()
+    }
+  }
+
   const fetchOrders = async () => {
     if (configMissing) return
     const supabase = getSupabase()
@@ -109,7 +139,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
     const { data, error } = await supabase
       .from("ordenes_produccion")
       .select(
-        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado",
+        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado",
       )
       .eq("idempresa", IDEMPRESA)
       .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
@@ -250,14 +280,16 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {/* ── Botón Diseño ── */}
                         {row.diseno_programado ? (
-                          <Button
-                            size="sm"
-                            disabled
-                            className="cursor-default gap-1.5 bg-slate-100 text-emerald-700 hover:bg-slate-100 border border-emerald-200"
-                          >
+                          <Button size="sm" disabled className="cursor-default gap-1.5 bg-slate-100 text-emerald-700 hover:bg-slate-100 border border-emerald-200">
                             <CheckCircle2 className="size-3.5 text-emerald-500" />
-                            Diseño Listo
+                            Diseño Programado
+                          </Button>
+                        ) : row.no_requiere_diseno ? (
+                          <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
+                            <Ban className="size-3.5" />
+                            Omitió Diseño
                           </Button>
                         ) : (
                           <Button
@@ -273,22 +305,73 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                             Programar en Diseño
                           </Button>
                         )}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => console.log("Pendiente de desarrollo")}
-                        >
-                          Programar en Corte
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setDeleteTarget(row)}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10 px-2"
-                          title="Eliminar folio"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
+
+                        {/* ── Botón Corte ── */}
+                        {row.corte_programado ? (
+                          <Button size="sm" disabled className="cursor-default gap-1.5 bg-slate-100 text-emerald-700 hover:bg-slate-100 border border-emerald-200">
+                            <CheckCircle2 className="size-3.5 text-emerald-500" />
+                            Corte Programado
+                          </Button>
+                        ) : row.no_requiere_corte ? (
+                          <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
+                            <Ban className="size-3.5" />
+                            Omitió Corte
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline">
+                            Programar en Corte
+                          </Button>
+                        )}
+
+                        {/* ── Menú de opciones adicionales ── */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="px-1.5"
+                              disabled={skippingId === row.id}
+                            >
+                              {skippingId === row.id
+                                ? <Loader2 className="size-3.5 animate-spin" />
+                                : <ChevronDown className="size-3.5" />}
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52">
+                            {!row.diseno_programado && !row.no_requiere_diseno && (
+                              <DropdownMenuItem
+                                onClick={() => handleSkipPhase(row, "no_requiere_diseno")}
+                                className="text-amber-700 focus:text-amber-700"
+                              >
+                                <Ban className="size-3.5 mr-2 shrink-0" />
+                                Marcar: No pasa por Diseño
+                              </DropdownMenuItem>
+                            )}
+                            {!row.corte_programado && !row.no_requiere_corte && (
+                              <DropdownMenuItem
+                                onClick={() => handleSkipPhase(row, "no_requiere_corte")}
+                                className="text-amber-700 focus:text-amber-700"
+                              >
+                                <Ban className="size-3.5 mr-2 shrink-0" />
+                                Marcar: No pasa por Corte
+                              </DropdownMenuItem>
+                            )}
+                            {(row.diseno_programado || row.no_requiere_diseno) &&
+                             (row.corte_programado || row.no_requiere_corte) && (
+                              <DropdownMenuItem disabled className="text-muted-foreground text-xs">
+                                Sin acciones disponibles
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => setDeleteTarget(row)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="size-3.5 mr-2 shrink-0" />
+                              Eliminar folio
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </TableCell>
                   </TableRow>

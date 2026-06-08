@@ -30,6 +30,9 @@ export type OrdenProduccion = {
   fecha_ultima_revision?: string | null
   diseno_programado?: boolean | null
   fecha_aprobacion_diseno?: string | null
+  no_requiere_diseno?: boolean | null
+  no_requiere_corte?: boolean | null
+  corte_programado?: boolean | null
 }
 
 export type ParsedRow = Pick<
