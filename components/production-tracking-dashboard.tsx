@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
 import { es } from "date-fns/locale"
-import { CalendarIcon, ClipboardPen, Loader2, RefreshCw, Search, X } from "lucide-react"
+import { CalendarIcon, Camera, ClipboardPen, Loader2, RefreshCw, Search, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -44,6 +44,11 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog"
+import { EvidenciaFotos } from "@/components/evidencia-fotos"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -526,6 +531,36 @@ function UpdateProgressSheet({
 }) {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [fotoEtapa, setFotoEtapa] = useState<string | null>(null)
+  const [fotoCounts, setFotoCounts] = useState<Record<string, number>>({})
+
+  // Clear foto dialog when sheet closes
+  useEffect(() => {
+    if (!open) setFotoEtapa(null)
+  }, [open])
+
+  // Fetch foto counts per stage whenever this sheet opens for a new order
+  useEffect(() => {
+    if (!open || !order?.folio) {
+      setFotoCounts({})
+      return
+    }
+    const supabase = getSupabase()
+    if (!supabase) return
+    supabase
+      .from("ordenes_fotos")
+      .select("etapa")
+      .eq("idempresa", IDEMPRESA)
+      .eq("folio", order.folio)
+      .then(({ data }) => {
+        if (!data) return
+        const counts: Record<string, number> = {}
+        ;(data as { etapa: string }[]).forEach((r) => {
+          counts[r.etapa] = (counts[r.etapa] ?? 0) + 1
+        })
+        setFotoCounts(counts)
+      })
+  }, [open, order?.folio])
 
   useEffect(() => {
     if (!order) {
@@ -615,6 +650,7 @@ function UpdateProgressSheet({
   }
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
         {/* Header */}
@@ -678,12 +714,29 @@ function UpdateProgressSheet({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   {STAGE_KEYS.map((key, idx) => {
                     const label = `${idx + 1} - S${idx + 1}`
+                    const etapaKey = `S${idx + 1}`
                     const value = form[key] as Date | null
+                    const count = fotoCounts[etapaKey] ?? 0
                     return (
                       <div key={key} className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                          {label}
-                        </Label>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            {label}
+                          </Label>
+                          <button
+                            type="button"
+                            onClick={() => setFotoEtapa(etapaKey)}
+                            title={`Evidencias fotográficas de ${etapaKey}`}
+                            className="flex items-center gap-0.5 rounded px-1 py-0.5 transition-colors text-muted-foreground/50 hover:bg-violet-50 hover:text-violet-600"
+                          >
+                            <Camera className="size-3" />
+                            {count > 0 && (
+                              <span className="text-[10px] font-bold tabular-nums text-violet-600">
+                                {count}
+                              </span>
+                            )}
+                          </button>
+                        </div>
                         <Popover>
                           <PopoverTrigger asChild>
                             <Button
@@ -840,5 +893,37 @@ function UpdateProgressSheet({
         </SheetFooter>
       </SheetContent>
     </Sheet>
+
+    {/* ── Foto Viewer Dialog ─────────────────────────────────────── */}
+    <Dialog open={!!fotoEtapa} onOpenChange={(o) => !o && setFotoEtapa(null)}>
+      <DialogContent className="max-w-lg overflow-hidden p-0 shadow-2xl">
+        {/* Dark premium header */}
+        <div className="flex items-center gap-2.5 bg-gradient-to-r from-violet-700 to-violet-600 px-6 py-4">
+          <Camera className="size-4 text-violet-100" />
+          <span className="text-sm font-semibold text-white">
+            Evidencias Fotográficas
+          </span>
+          <span className="ml-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-bold text-white/90">
+            {order?.folio ?? "—"} · {fotoEtapa}
+          </span>
+        </div>
+        {/* Body */}
+        <div className="px-6 py-5">
+          {order && fotoEtapa && (
+            <EvidenciaFotos
+              folio={order.folio}
+              etapa={fotoEtapa}
+              onFotoAdded={() =>
+                setFotoCounts((prev) => ({
+                  ...prev,
+                  [fotoEtapa]: (prev[fotoEtapa] ?? 0) + 1,
+                }))
+              }
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }
