@@ -719,30 +719,16 @@ function UpdateProgressSheet({
                     const count = fotoCounts[etapaKey] ?? 0
                     return (
                       <div key={key} className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            {label}
-                          </Label>
-                          <button
-                            type="button"
-                            onClick={() => setFotoEtapa(etapaKey)}
-                            title={`Evidencias fotográficas de ${etapaKey}`}
-                            className="flex items-center gap-0.5 rounded px-1 py-0.5 transition-colors text-muted-foreground/50 hover:bg-violet-50 hover:text-violet-600"
-                          >
-                            <Camera className="size-3" />
-                            {count > 0 && (
-                              <span className="text-[10px] font-bold tabular-nums text-violet-600">
-                                {count}
-                              </span>
-                            )}
-                          </button>
-                        </div>
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          {label}
+                        </Label>
+                        <div className="flex gap-1.5">
                         <Popover>
                           <PopoverTrigger asChild>
                             <Button
                               variant="outline"
                               className={cn(
-                                "w-full justify-start text-left text-xs font-normal h-9",
+                                "flex-1 justify-start text-left text-xs font-normal h-9",
                                 !value && "text-muted-foreground",
                               )}
                             >
@@ -774,6 +760,28 @@ function UpdateProgressSheet({
                             )}
                           </PopoverContent>
                         </Popover>
+                        {/* Camera button — same height as datepicker */}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setFotoEtapa(etapaKey)}
+                          title={`Evidencias fotográficas de ${etapaKey}`}
+                          className={cn(
+                            "relative h-9 w-9 shrink-0 transition-colors",
+                            count > 0
+                              ? "border-violet-300 text-violet-600 hover:bg-violet-50"
+                              : "text-muted-foreground hover:border-violet-300 hover:text-violet-600 hover:bg-violet-50",
+                          )}
+                        >
+                          <Camera className="size-4" />
+                          {count > 0 && (
+                            <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-600 px-0.5 text-[9px] font-bold text-white">
+                              {count}
+                            </span>
+                          )}
+                        </Button>
+                        </div>
                       </div>
                     )
                   })}
