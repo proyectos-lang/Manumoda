@@ -110,7 +110,6 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
       supabase
         .from("vw_plan_corte_detalle")
         .select("*")
-        .eq("idempresa", IDEMPRESA)
         .order("semana", { ascending: false })
         .order("folio"),
       supabase
