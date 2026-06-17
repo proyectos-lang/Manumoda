@@ -116,7 +116,6 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
         .from("cortadores")
         .select("id, nombre")
         .eq("activo", true)
-        .eq("idempresa", IDEMPRESA)
         .order("nombre"),
     ])
     setLoading(false)
