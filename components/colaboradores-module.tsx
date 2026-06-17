@@ -227,7 +227,6 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
     const { data, error } = await supabase
       .from("cortadores")
       .select("id, nombre, activo, fecha_baja")
-      .eq("idempresa", IDEMPRESA)
       .order("nombre")
     if (error) {
       toast.error("Error al cargar cortadores", { description: error.message })
@@ -265,7 +264,7 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
       }
       if (editRecord) {
         const { error } = await supabase
-          .from("cortadores").update(payload).eq("id", editRecord.id).eq("idempresa", IDEMPRESA)
+          .from("cortadores").update(payload).eq("id", editRecord.id)
         if (error) { toast.error("No se pudo actualizar", { description: error.message }); return }
         setRecords((prev) =>
           prev.map((r) => r.id === editRecord.id ? { ...r, ...payload } : r)
@@ -275,7 +274,7 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
       } else {
         const { data, error } = await supabase
           .from("cortadores")
-          .insert({ ...payload, idempresa: IDEMPRESA })
+          .insert(payload)
           .select("id, nombre, activo, fecha_baja")
           .single()
         if (error) { toast.error("No se pudo agregar", { description: error.message }); return }
@@ -297,7 +296,7 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
     setDeleting(true)
     try {
       const { error } = await supabase
-        .from("cortadores").delete().eq("id", deleteTarget.id).eq("idempresa", IDEMPRESA)
+        .from("cortadores").delete().eq("id", deleteTarget.id)
       if (error) {
         toast.error(
           error.code === "23503" ? "No se puede eliminar" : "No se pudo eliminar",
