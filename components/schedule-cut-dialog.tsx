@@ -222,7 +222,7 @@ export function ScheduleCutDialog({
           className="relative shrink-0 overflow-hidden p-6"
           style={{
             background:
-              "linear-gradient(135deg, oklch(0.18 0.09 50) 0%, oklch(0.22 0.12 40) 50%, oklch(0.18 0.10 30) 100%)",
+              "linear-gradient(135deg, oklch(0.18 0.09 295) 0%, oklch(0.22 0.12 305) 50%, oklch(0.18 0.1 320) 100%)",
           }}
         >
           {/* Capa de puntos decorativos */}
@@ -251,7 +251,7 @@ export function ScheduleCutDialog({
         {/* ── Cuerpo scrolleable con fondo oscuro ámbar ── */}
         <div
           className="flex-1 overflow-y-auto"
-          style={{ background: "oklch(0.16 0.06 50)", color: "white" }}
+          style={{ background: "oklch(0.16 0.04 295)", color: "white" }}
         >
           <div className="space-y-6 p-6">
 
@@ -382,7 +382,7 @@ export function ScheduleCutDialog({
                   id="combinacion"
                   checked={form.combinacion}
                   onCheckedChange={(v) => setForm((f) => ({ ...f, combinacion: v }))}
-                  className="shrink-0 data-[state=checked]:bg-amber-500"
+                  className="shrink-0 data-[state=checked]:bg-indigo-500"
                 />
               </div>
             </FormSection>
@@ -393,7 +393,7 @@ export function ScheduleCutDialog({
         {/* ── Footer ── */}
         <SheetFooter
           className="shrink-0 flex-row justify-end gap-2 border-t border-white/10 p-4"
-          style={{ background: "oklch(0.14 0.05 50)" }}
+          style={{ background: "oklch(0.14 0.04 295)" }}
         >
           <Button
             type="button"
@@ -408,7 +408,7 @@ export function ScheduleCutDialog({
             type="button"
             onClick={handleSubmit}
             disabled={saving || !orden}
-            className="bg-amber-600 hover:bg-amber-500 text-white border-0"
+            className="bg-indigo-600 hover:bg-indigo-500 text-white border-0"
           >
             {saving ? (
               <>
