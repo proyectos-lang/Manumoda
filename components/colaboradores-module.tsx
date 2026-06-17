@@ -198,16 +198,34 @@ export function ColaboradoresModule({ configMissing }: Props) {
 type Cortador = {
   id: number
   nombre: string
+  area: string | null
+  puesto: string | null
+  sueldo_semanal: number | null
+  fecha_nacimiento: string | null
+  fecha_ingreso: string | null
   activo: boolean
   fecha_baja: string | null
 }
 
 type CortadorForm = {
   nombre: string
+  area: string
+  puesto: string
+  sueldo_semanal: string
+  fecha_nacimiento: Date | null
+  fecha_ingreso: Date | null
   fecha_baja: Date | null
 }
 
-const EMPTY_CORTADOR_FORM: CortadorForm = { nombre: "", fecha_baja: null }
+const EMPTY_CORTADOR_FORM: CortadorForm = {
+  nombre: "",
+  area: "",
+  puesto: "",
+  sueldo_semanal: "",
+  fecha_nacimiento: null,
+  fecha_ingreso: null,
+  fecha_baja: null,
+}
 
 function CortadoresTab({ configMissing }: { configMissing: boolean }) {
   const [records, setRecords] = useState<Cortador[]>([])
@@ -226,7 +244,7 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
     setLoading(true)
     const { data, error } = await supabase
       .from("cortadores")
-      .select("id, nombre, activo, fecha_baja")
+      .select("id, nombre, area, puesto, sueldo_semanal, fecha_nacimiento, fecha_ingreso, activo, fecha_baja")
       .order("nombre")
     if (error) {
       toast.error("Error al cargar cortadores", { description: error.message })
@@ -246,7 +264,15 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
 
   const openEdit = (r: Cortador) => {
     setEditRecord(r)
-    setForm({ nombre: r.nombre, fecha_baja: toDateOrNull(r.fecha_baja) })
+    setForm({
+      nombre: r.nombre,
+      area: r.area ?? "",
+      puesto: r.puesto ?? "",
+      sueldo_semanal: r.sueldo_semanal != null ? String(r.sueldo_semanal) : "",
+      fecha_nacimiento: toDateOrNull(r.fecha_nacimiento),
+      fecha_ingreso: toDateOrNull(r.fecha_ingreso),
+      fecha_baja: toDateOrNull(r.fecha_baja),
+    })
     setDialogOpen(true)
   }
 
@@ -259,6 +285,11 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
       const fechaBajaISO = toISOOrNull(form.fecha_baja)
       const payload = {
         nombre: form.nombre.trim(),
+        area: form.area.trim() || null,
+        puesto: form.puesto.trim() || null,
+        sueldo_semanal: form.sueldo_semanal !== "" ? Number(form.sueldo_semanal) : null,
+        fecha_nacimiento: toISOOrNull(form.fecha_nacimiento),
+        fecha_ingreso: toISOOrNull(form.fecha_ingreso),
         activo: !fechaBajaISO,
         fecha_baja: fechaBajaISO,
       }
@@ -275,7 +306,7 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
         const { data, error } = await supabase
           .from("cortadores")
           .insert(payload)
-          .select("id, nombre, activo, fecha_baja")
+          .select("id, nombre, area, puesto, sueldo_semanal, fecha_nacimiento, fecha_ingreso, activo, fecha_baja")
           .single()
         if (error) { toast.error("No se pudo agregar", { description: error.message }); return }
         setRecords((prev) =>
@@ -335,8 +366,11 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
               <TableHeader>
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
                   <TableHead className="font-semibold">Nombre</TableHead>
+                  <TableHead className="font-semibold">Área</TableHead>
+                  <TableHead className="font-semibold">Puesto</TableHead>
+                  <TableHead className="font-semibold text-right">Sueldo Semanal</TableHead>
+                  <TableHead className="font-semibold">Ingreso</TableHead>
                   <TableHead className="font-semibold">Estatus</TableHead>
-                  <TableHead className="font-semibold">Fecha de Baja</TableHead>
                   <TableHead className="font-semibold text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
@@ -344,14 +378,14 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
                 {loading ? (
                   Array.from({ length: 4 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 4 }).map((__, j) => (
+                      {Array.from({ length: 7 }).map((__, j) => (
                         <TableCell key={j}><Skeleton className="h-4 w-20" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : records.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="h-28 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={7} className="h-28 text-center text-sm text-muted-foreground">
                       Sin cortadores registrados. Agrega el primero.
                     </TableCell>
                   </TableRow>
@@ -359,6 +393,12 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
                   records.map((r) => (
                     <TableRow key={r.id} className="hover:bg-muted/30">
                       <TableCell className="font-medium text-foreground">{r.nombre}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{r.area ?? "—"}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{r.puesto ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">
+                        {fmtCurrency(r.sueldo_semanal)}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{fmtDate(r.fecha_ingreso)}</TableCell>
                       <TableCell>
                         {r.activo ? (
                           <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
@@ -367,9 +407,6 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
                         ) : (
                           <Badge variant="secondary" className="text-slate-600">Baja</Badge>
                         )}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {fmtDate(r.fecha_baja)}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -395,7 +432,7 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
 
       {/* ── Dialog Crear / Editar ── */}
       <Dialog open={dialogOpen} onOpenChange={(o) => { if (!saving) setDialogOpen(o) }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editRecord ? "Editar Cortador" : "Agregar Cortador"}</DialogTitle>
             <DialogDescription>
@@ -404,7 +441,7 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
                 : "Completa los datos del nuevo cortador de telas."}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-1">
+          <div className="space-y-4 py-1 max-h-[65vh] overflow-y-auto pr-1">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">
                 Nombre <span className="text-destructive">*</span>
@@ -417,6 +454,57 @@ function CortadoresTab({ configMissing }: { configMissing: boolean }) {
                 autoFocus
               />
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Área</Label>
+                <Input
+                  value={form.area}
+                  onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))}
+                  placeholder="Ej. Corte…"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Puesto</Label>
+                <Input
+                  value={form.puesto}
+                  onChange={(e) => setForm((f) => ({ ...f, puesto: e.target.value }))}
+                  placeholder="Ej. Cortador Sr…"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Sueldo semanal (MXN)</Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={form.sueldo_semanal}
+                onChange={(e) => setForm((f) => ({ ...f, sueldo_semanal: e.target.value }))}
+                placeholder="0.00"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Fecha de nacimiento</Label>
+                <DatePicker
+                  value={form.fecha_nacimiento}
+                  onChange={(d) => setForm((f) => ({ ...f, fecha_nacimiento: d }))}
+                  placeholder="dd/mm/aaaa"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Fecha de ingreso</Label>
+                <DatePicker
+                  value={form.fecha_ingreso}
+                  onChange={(d) => setForm((f) => ({ ...f, fecha_ingreso: d }))}
+                  placeholder="dd/mm/aaaa"
+                />
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">
                 Fecha de baja{" "}
