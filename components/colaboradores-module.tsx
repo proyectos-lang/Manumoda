@@ -165,8 +165,8 @@ export function ColaboradoresModule({ configMissing }: Props) {
           <div>
             <h2 className="text-base font-semibold text-foreground">Registro de Colaboradores</h2>
             <p className="text-xs text-muted-foreground">
-              Administra diseñadoras y costureras ·{" "}
-              <code className="font-mono">manumoda.disenadoras / costureras</code>
+              Administra diseñadoras, costureras y cortadores ·{" "}
+              <code className="font-mono">manumoda.disenadoras / costureras / cortadores</code>
             </p>
           </div>
         </div>
@@ -175,6 +175,7 @@ export function ColaboradoresModule({ configMissing }: Props) {
           <TabsList className="mb-5">
             <TabsTrigger value="disenadoras">Diseñadoras</TabsTrigger>
             <TabsTrigger value="costureras">Costureras</TabsTrigger>
+            <TabsTrigger value="cortadores">Cortadores</TabsTrigger>
           </TabsList>
 
           <TabsContent value="disenadoras" className="mt-0">
@@ -183,9 +184,293 @@ export function ColaboradoresModule({ configMissing }: Props) {
           <TabsContent value="costureras" className="mt-0">
             <CRUDTab table="costureras" label="Costurera" configMissing={configMissing} />
           </TabsContent>
+          <TabsContent value="cortadores" className="mt-0">
+            <CortadoresTab configMissing={configMissing} />
+          </TabsContent>
         </Tabs>
       </section>
     </div>
+  )
+}
+
+// ── Tab Cortadores ─────────────────────────────────────────────────────────────
+
+type Cortador = {
+  id: number
+  nombre: string
+  activo: boolean
+  fecha_baja: string | null
+}
+
+type CortadorForm = {
+  nombre: string
+  fecha_baja: Date | null
+}
+
+const EMPTY_CORTADOR_FORM: CortadorForm = { nombre: "", fecha_baja: null }
+
+function CortadoresTab({ configMissing }: { configMissing: boolean }) {
+  const [records, setRecords] = useState<Cortador[]>([])
+  const [loading, setLoading] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editRecord, setEditRecord] = useState<Cortador | null>(null)
+  const [form, setForm] = useState<CortadorForm>(EMPTY_CORTADOR_FORM)
+  const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Cortador | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const fetchRecords = useCallback(async () => {
+    if (configMissing) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setLoading(true)
+    const { data, error } = await supabase
+      .from("cortadores")
+      .select("id, nombre, activo, fecha_baja")
+      .eq("idempresa", IDEMPRESA)
+      .order("nombre")
+    if (error) {
+      toast.error("Error al cargar cortadores", { description: error.message })
+    } else {
+      setRecords((data ?? []) as Cortador[])
+    }
+    setLoading(false)
+  }, [configMissing])
+
+  useEffect(() => { fetchRecords() }, [fetchRecords])
+
+  const openCreate = () => {
+    setEditRecord(null)
+    setForm(EMPTY_CORTADOR_FORM)
+    setDialogOpen(true)
+  }
+
+  const openEdit = (r: Cortador) => {
+    setEditRecord(r)
+    setForm({ nombre: r.nombre, fecha_baja: toDateOrNull(r.fecha_baja) })
+    setDialogOpen(true)
+  }
+
+  const handleSave = async () => {
+    if (!form.nombre.trim()) { toast.error("El nombre es requerido."); return }
+    const supabase = getSupabase()
+    if (!supabase) return
+    setSaving(true)
+    try {
+      const fechaBajaISO = toISOOrNull(form.fecha_baja)
+      const payload = {
+        nombre: form.nombre.trim(),
+        activo: !fechaBajaISO,
+        fecha_baja: fechaBajaISO,
+      }
+      if (editRecord) {
+        const { error } = await supabase
+          .from("cortadores").update(payload).eq("id", editRecord.id).eq("idempresa", IDEMPRESA)
+        if (error) { toast.error("No se pudo actualizar", { description: error.message }); return }
+        setRecords((prev) =>
+          prev.map((r) => r.id === editRecord.id ? { ...r, ...payload } : r)
+            .sort((a, b) => a.nombre.localeCompare(b.nombre)),
+        )
+        toast.success("Cortador actualizado correctamente.")
+      } else {
+        const { data, error } = await supabase
+          .from("cortadores")
+          .insert({ ...payload, idempresa: IDEMPRESA })
+          .select("id, nombre, activo, fecha_baja")
+          .single()
+        if (error) { toast.error("No se pudo agregar", { description: error.message }); return }
+        setRecords((prev) =>
+          [...prev, data as Cortador].sort((a, b) => a.nombre.localeCompare(b.nombre)),
+        )
+        toast.success("Cortador agregado correctamente.")
+      }
+      setDialogOpen(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setDeleting(true)
+    try {
+      const { error } = await supabase
+        .from("cortadores").delete().eq("id", deleteTarget.id).eq("idempresa", IDEMPRESA)
+      if (error) {
+        toast.error(
+          error.code === "23503" ? "No se puede eliminar" : "No se pudo eliminar",
+          {
+            description: error.code === "23503"
+              ? "Este cortador tiene historial de cortes registrado en el sistema."
+              : error.message,
+          },
+        )
+        return
+      }
+      setRecords((prev) => prev.filter((r) => r.id !== deleteTarget.id))
+      toast.success("Cortador eliminado correctamente.")
+      setDeleteTarget(null)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            {loading ? "Cargando…" : `${records.length} registro(s)`}
+          </p>
+          <Button size="sm" onClick={openCreate} disabled={configMissing} className="gap-1.5">
+            <Plus className="size-4" />
+            Agregar Cortador
+          </Button>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="font-semibold">Nombre</TableHead>
+                  <TableHead className="font-semibold">Estatus</TableHead>
+                  <TableHead className="font-semibold">Fecha de Baja</TableHead>
+                  <TableHead className="font-semibold text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array.from({ length: 4 }).map((__, j) => (
+                        <TableCell key={j}><Skeleton className="h-4 w-20" /></TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : records.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-28 text-center text-sm text-muted-foreground">
+                      Sin cortadores registrados. Agrega el primero.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  records.map((r) => (
+                    <TableRow key={r.id} className="hover:bg-muted/30">
+                      <TableCell className="font-medium text-foreground">{r.nombre}</TableCell>
+                      <TableCell>
+                        {r.activo ? (
+                          <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
+                            Activo
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-slate-600">Baja</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {fmtDate(r.fecha_baja)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => openEdit(r)} className="gap-1.5">
+                            <Pencil className="size-3.5" />Editar
+                          </Button>
+                          <Button
+                            size="sm" variant="ghost" onClick={() => setDeleteTarget(r)}
+                            className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="size-3.5" />Eliminar
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Dialog Crear / Editar ── */}
+      <Dialog open={dialogOpen} onOpenChange={(o) => { if (!saving) setDialogOpen(o) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editRecord ? "Editar Cortador" : "Agregar Cortador"}</DialogTitle>
+            <DialogDescription>
+              {editRecord
+                ? "Modifica los datos y guarda los cambios."
+                : "Completa los datos del nuevo cortador de telas."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">
+                Nombre <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                value={form.nombre}
+                onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSave() }}
+                placeholder="Nombre completo…"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">
+                Fecha de baja{" "}
+                <span className="font-normal text-muted-foreground">(opcional — vacío = activo)</span>
+              </Label>
+              <DatePicker
+                value={form.fecha_baja}
+                onChange={(d) => setForm((f) => ({ ...f, fecha_baja: d }))}
+                placeholder="Sin fecha de baja"
+                clearable
+              />
+            </div>
+          </div>
+          <DialogFooter className="pt-2">
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSave} disabled={saving || !form.nombre.trim()}>
+              {saving
+                ? <><Loader2 className="size-4 animate-spin mr-1" />Guardando…</>
+                : editRecord ? "Guardar cambios" : "Agregar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── AlertDialog Eliminar ── */}
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => { if (!o && !deleting) setDeleteTarget(null) }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar cortador?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará permanentemente a{" "}
+              <span className="font-semibold text-foreground">{deleteTarget?.nombre}</span>.
+              Si tiene historial de cortes registrado, la operación será rechazada.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+            >
+              {deleting ? "Eliminando…" : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
