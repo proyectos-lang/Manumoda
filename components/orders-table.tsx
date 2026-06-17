@@ -18,6 +18,7 @@ import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
+import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -82,6 +83,8 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const [page, setPage] = useState(1)
   const [scheduleId, setScheduleId] = useState<number | string | null>(null)
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduleCutId, setScheduleCutId] = useState<number | string | null>(null)
+  const [scheduleCutOpen, setScheduleCutOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<OrdenProduccion | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [skippingId, setSkippingId] = useState<number | string | null>(null)
@@ -318,7 +321,16 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                             Omitió Corte
                           </Button>
                         ) : (
-                          <Button size="sm" variant="outline">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (row.id == null) return
+                              setScheduleCutId(row.id)
+                              setScheduleCutOpen(true)
+                            }}
+                            disabled={row.id == null}
+                          >
                             Programar en Corte
                           </Button>
                         )}
@@ -423,6 +435,20 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
           if (!o) setScheduleId(null)
         }}
         onScheduled={fetchOrders}
+      />
+
+      <ScheduleCutDialog
+        open={scheduleCutOpen}
+        onOpenChange={(o) => {
+          setScheduleCutOpen(o)
+          if (!o) setScheduleCutId(null)
+        }}
+        orden={orders.find((o) => o.id === scheduleCutId) ?? null}
+        onSaved={() => {
+          setScheduleCutOpen(false)
+          setScheduleCutId(null)
+          void fetchOrders()
+        }}
       />
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>

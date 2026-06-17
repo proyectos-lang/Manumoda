@@ -35,6 +35,51 @@ export type OrdenProduccion = {
   corte_programado?: boolean | null
 }
 
+export type VwPlanCorteDetalle = {
+  registro_id: number
+  fecha: string | null
+  semana: number | null
+  no_origien: number | null
+  folio: string
+  piezas_orden: number | null
+  familia: string | null
+  categoria: string | null
+  tipo_tela: string | null
+  metros_utilizar: number | null
+  complejidad_de_tela: string | null
+  combinacion: boolean | null
+  no_piezas: number | null
+  idcortador: number | null
+  cortador_nombre: string | null
+  idapoyo: number | null
+  apoyo_nombre: string | null
+  mesa: string | null
+  trazos: number | null
+  variable_subjetiva: number | null
+  cumplimiento_corte: string | null
+  horas_plan_corte: number | null
+  horas_plan_final: number | null
+  horas_cumplimiento_corte: number | null
+}
+
+export type VwBonosCorte = {
+  registro: number
+  anio: number | null
+  semana: number | null
+  nombre: string | null
+  area: string | null
+  horas_semana: number | null
+  horas_cumplidas: number | null
+  horas_fuera_area: number | null
+  ausentismos: number | null
+  porcentaje_eficiencia: number | null
+  criterio_aceptacion: string | null
+  bono_semanal: string | null
+  monto: number | null
+  estatus_colaborador: string | null
+  porcentaje_productividad_directa: number | null
+}
+
 export type ParsedRow = Pick<
   OrdenProduccion,
   | "idempresa"

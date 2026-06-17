@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, Database, Settings as SettingsIcon, Palette } from "lucide-react"
+import { AlertTriangle, Database, Scissors, Settings as SettingsIcon, Palette } from "lucide-react"
 import { ExcelUploader } from "@/components/excel-uploader"
 import { OrdersTable } from "@/components/orders-table"
 import { ProductionTrackingDashboard } from "@/components/production-tracking-dashboard"
@@ -12,6 +12,7 @@ import { ConfigCatalogs } from "@/components/config-catalogs"
 import { AnalyticsDashboard } from "@/components/analytics-dashboard"
 import { OperationsOverview } from "@/components/operations-overview"
 import { DesignModule } from "@/components/design-module"
+import { CorteModule } from "@/components/corte-module"
 import { ColaboradoresModule } from "@/components/colaboradores-module"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Toaster } from "@/components/ui/sonner"
@@ -20,6 +21,7 @@ const TITLES: Record<ModuleKey, string> = {
   inicio: "Página de Inicio",
   ingestion: "Ingestión de Datos",
   diseno: "Diseño",
+  corte: "Corte de Telas",
   seguimiento: "Seguimiento de Producción",
   operacion: "Resumen General de Operación",
   riesgos: "Seguimiento de Ordenes",
@@ -128,6 +130,39 @@ export default function Page() {
                 </div>
 
                 <DesignModule configMissing={configMissing} />
+              </section>
+            </div>
+          )}
+
+          {active === "corte" && (
+            <div className="space-y-6">
+              {configMissing && (
+                <Alert variant="destructive" className="border-destructive/40 bg-white/80 backdrop-blur">
+                  <AlertTriangle className="size-4" />
+                  <AlertTitle>Conexión a Supabase no configurada</AlertTitle>
+                  <AlertDescription>
+                    Faltan las variables de entorno requeridas para conectar a Supabase.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
+                <div className="mb-5 flex items-center gap-3">
+                  <div className="flex size-9 items-center justify-center rounded-lg bg-amber-100 ring-1 ring-amber-200">
+                    <Scissors className="size-4 text-amber-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">
+                      Corte e Inventario de Telas
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      Plan semanal y liquidación ·{" "}
+                      <code className="font-mono">vw_plan_corte_detalle · vw_bonos_corte</code>
+                    </p>
+                  </div>
+                </div>
+
+                <CorteModule configMissing={configMissing} />
               </section>
             </div>
           )}
