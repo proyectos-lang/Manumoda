@@ -164,6 +164,7 @@ export function DesignModule({ configMissing }: Props) {
 
   // Catálogos compartidos
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
+  const [costureras, setCostureraCatalog] = useState<Catalog[]>([])
   const [tiposAusentismos, setTiposAusentismos] = useState<Catalog[]>([])
   const [loadingCatalogs, setLoadingCatalogs] = useState(false)
 
@@ -280,9 +281,11 @@ export function DesignModule({ configMissing }: Props) {
     Promise.all([
       supabase.from("disenadoras").select("id, nombre").eq("idempresa", IDEMPRESA).order("nombre"),
       supabase.from("tipos_ausentismos").select("id, nombre").eq("idempresa", IDEMPRESA).order("nombre"),
-    ]).then(([d, t]) => {
+      supabase.from("costureras").select("id, nombre").eq("idempresa", IDEMPRESA).order("nombre"),
+    ]).then(([d, t, c]) => {
       if (!d.error) setDisenadoras((d.data ?? []) as Catalog[])
       if (!t.error) setTiposAusentismos((t.data ?? []) as Catalog[])
+      if (!c.error) setCostureraCatalog((c.data ?? []) as Catalog[])
       setLoadingCatalogs(false)
     })
   }, [configMissing])
@@ -537,6 +540,7 @@ export function DesignModule({ configMissing }: Props) {
         <TabsContent value="tiempos-fuera" className="mt-0">
           <TiemposFueraTab
             disenadoras={disenadoras}
+            costureras={costureras}
             loadingCatalogs={loadingCatalogs}
             configMissing={configMissing}
           />
@@ -546,6 +550,7 @@ export function DesignModule({ configMissing }: Props) {
         <TabsContent value="vacaciones" className="mt-0">
           <VacacionesPermisosTab
             disenadoras={disenadoras}
+            costureras={costureras}
             tiposAusentismos={tiposAusentismos}
             loadingCatalogs={loadingCatalogs}
             configMissing={configMissing}
@@ -940,18 +945,21 @@ type TiempoFueraRecord = {
   fecha: string | null
   semana: number | null
   iddisenadora: number | null
+  idcosturera: number | null
   area_foranea: string | null
   tiempo_af: number | null
   comentarios: string | null
   disenadoras: { nombre: string } | null
+  costureras: { nombre: string } | null
 }
 
-const INIT_TF = { fecha: undefined as Date | undefined, iddisenadora: "", area_foranea: "", tiempo_af: "", comentarios: "" }
+const INIT_TF = { fecha: undefined as Date | undefined, tipoColaborador: "disenadora" as "disenadora" | "costurera", idColaborador: "", area_foranea: "", tiempo_af: "", comentarios: "" }
 
 function TiemposFueraTab({
-  disenadoras, loadingCatalogs, configMissing,
+  disenadoras, costureras, loadingCatalogs, configMissing,
 }: {
   disenadoras: Catalog[]
+  costureras: Catalog[]
   loadingCatalogs: boolean
   configMissing: boolean
 }) {
@@ -978,7 +986,7 @@ function TiemposFueraTab({
     setLoadingRecords(true)
     const { data, error } = await supabase
       .from("tiempos_fuera_area")
-      .select("id, fecha, semana, iddisenadora, area_foranea, tiempo_af, comentarios, disenadoras(nombre)")
+      .select("id, fecha, semana, iddisenadora, idcosturera, area_foranea, tiempo_af, comentarios, disenadoras(nombre), costureras(nombre)")
       .eq("idempresa", IDEMPRESA)
       .order("fecha", { ascending: false })
     if (!error) setRecords((data ?? []) as unknown as TiempoFueraRecord[])
@@ -990,7 +998,7 @@ function TiemposFueraTab({
 
   const handleSubmit = async () => {
     if (!form.fecha) { toast.error("Campo requerido", { description: "Selecciona una fecha." }); return }
-    if (!form.iddisenadora) { toast.error("Campo requerido", { description: "Selecciona una diseñadora." }); return }
+    if (!form.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${form.tipoColaborador === "costurera" ? "una costurera" : "una diseñadora"}.` }); return }
     const supabase = getSupabase()
     if (!supabase) return
     setSubmitting(true)
@@ -998,7 +1006,8 @@ function TiemposFueraTab({
       const { error } = await supabase.from("tiempos_fuera_area").insert({
         idempresa: IDEMPRESA,
         fecha: format(form.fecha, "yyyy-MM-dd"),
-        iddisenadora: Number(form.iddisenadora),
+        iddisenadora: form.tipoColaborador === "disenadora" ? Number(form.idColaborador) : null,
+        idcosturera: form.tipoColaborador === "costurera" ? Number(form.idColaborador) : null,
         area_foranea: form.area_foranea.trim() || null,
         tiempo_af: form.tiempo_af ? Number(form.tiempo_af) : null,
         comentarios: form.comentarios.trim() || null,
@@ -1012,9 +1021,11 @@ function TiemposFueraTab({
 
   const openEdit = (r: TiempoFueraRecord) => {
     setEditTarget(r)
+    const tipoColaborador: "disenadora" | "costurera" = r.idcosturera ? "costurera" : "disenadora"
     setEditForm({
       fecha: r.fecha ? new Date(`${r.fecha}T00:00:00`) : undefined,
-      iddisenadora: r.iddisenadora ? String(r.iddisenadora) : "",
+      tipoColaborador,
+      idColaborador: tipoColaborador === "costurera" ? String(r.idcosturera ?? "") : String(r.iddisenadora ?? ""),
       area_foranea: r.area_foranea ?? "",
       tiempo_af: r.tiempo_af != null ? String(r.tiempo_af) : "",
       comentarios: r.comentarios ?? "",
@@ -1024,7 +1035,7 @@ function TiemposFueraTab({
 
   const handleSaveEdit = async () => {
     if (!editTarget || !editForm.fecha) { toast.error("Campo requerido", { description: "Selecciona una fecha." }); return }
-    if (!editForm.iddisenadora) { toast.error("Campo requerido", { description: "Selecciona una diseñadora." }); return }
+    if (!editForm.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${editForm.tipoColaborador === "costurera" ? "una costurera" : "una diseñadora"}.` }); return }
     const supabase = getSupabase()
     if (!supabase) return
     setSaving(true)
@@ -1033,7 +1044,8 @@ function TiemposFueraTab({
         .from("tiempos_fuera_area")
         .update({
           fecha: format(editForm.fecha, "yyyy-MM-dd"),
-          iddisenadora: Number(editForm.iddisenadora),
+          iddisenadora: editForm.tipoColaborador === "disenadora" ? Number(editForm.idColaborador) : null,
+          idcosturera: editForm.tipoColaborador === "costurera" ? Number(editForm.idColaborador) : null,
           area_foranea: editForm.area_foranea.trim() || null,
           tiempo_af: editForm.tiempo_af ? Number(editForm.tiempo_af) : null,
           comentarios: editForm.comentarios.trim() || null,
@@ -1080,14 +1092,24 @@ function TiemposFueraTab({
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Fecha <span className="text-destructive">*</span></Label>
               <DatePicker value={form.fecha} onChange={(d) => set("fecha", d)} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Diseñadora <span className="text-destructive">*</span></Label>
-              <CatalogSelect value={form.iddisenadora} onValueChange={(v) => set("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              <Label className="text-xs font-medium">Tipo</Label>
+              <Select value={form.tipoColaborador} onValueChange={(v) => setForm((p) => ({ ...p, tipoColaborador: v as "disenadora" | "costurera", idColaborador: "" }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="disenadora">Diseñadora</SelectItem>
+                  <SelectItem value="costurera">Costurera</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">{form.tipoColaborador === "costurera" ? "Costurera" : "Diseñadora"} <span className="text-destructive">*</span></Label>
+              <CatalogSelect value={form.idColaborador} onValueChange={(v) => set("idColaborador", v)} items={form.tipoColaborador === "costurera" ? costureras : disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Área Foránea</Label>
@@ -1125,7 +1147,7 @@ function TiemposFueraTab({
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
                   <TableHead className="font-semibold">Fecha</TableHead>
                   <TableHead className="font-semibold text-right">Semana</TableHead>
-                  <TableHead className="font-semibold">Diseñadora</TableHead>
+                  <TableHead className="font-semibold">Colaborador</TableHead>
                   <TableHead className="font-semibold">Área Foránea</TableHead>
                   <TableHead className="font-semibold text-right">Tiempo (h)</TableHead>
                   <TableHead className="font-semibold">Comentarios</TableHead>
@@ -1145,7 +1167,7 @@ function TiemposFueraTab({
                   <TableRow key={r.id} className="hover:bg-muted/30">
                     <TableCell className="tabular-nums text-sm">{r.fecha ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm">{r.semana ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="text-sm">{r.costureras?.nombre ?? r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{r.area_foranea ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm font-medium text-amber-700">{r.tiempo_af != null ? `${r.tiempo_af} h` : "—"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{r.comentarios ?? "—"}</TableCell>
@@ -1181,8 +1203,17 @@ function TiemposFueraTab({
               <FormRow label="Fecha" required>
                 <DatePicker value={editForm.fecha} onChange={(d) => setE("fecha", d)} />
               </FormRow>
-              <FormRow label="Diseñadora" required>
-                <CatalogSelect value={editForm.iddisenadora} onValueChange={(v) => setE("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              <FormRow label="Tipo">
+                <Select value={editForm.tipoColaborador} onValueChange={(v) => setEditForm((p) => ({ ...p, tipoColaborador: v as "disenadora" | "costurera", idColaborador: "" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="disenadora">Diseñadora</SelectItem>
+                    <SelectItem value="costurera">Costurera</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormRow>
+              <FormRow label={editForm.tipoColaborador === "costurera" ? "Costurera" : "Diseñadora"} required>
+                <CatalogSelect value={editForm.idColaborador} onValueChange={(v) => setE("idColaborador", v)} items={editForm.tipoColaborador === "costurera" ? costureras : disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
               </FormRow>
               <FormRow label="Área Foránea">
                 <Input placeholder="Nombre del área" value={editForm.area_foranea} onChange={(e) => setE("area_foranea", e.target.value)} />
@@ -1234,20 +1265,23 @@ type VacacionPermiso = {
   fecha_inicio: string | null
   semana: number | null
   iddisenadora: number | null
+  idcosturera: number | null
   tipo_ausentismo: string | null
   dias: number | null
   horas_manuales: number | null
   horas_totales: number | null
   comentarios: string | null
   disenadoras: { nombre: string } | null
+  costureras: { nombre: string } | null
 }
 
-const INIT_VP = { fecha_inicio: undefined as Date | undefined, iddisenadora: "", tipo_ausentismo: "", dias: "", horas_manuales: "", comentarios: "" }
+const INIT_VP = { fecha_inicio: undefined as Date | undefined, tipoColaborador: "disenadora" as "disenadora" | "costurera", idColaborador: "", tipo_ausentismo: "", dias: "", horas_manuales: "", comentarios: "" }
 
 function VacacionesPermisosTab({
-  disenadoras, tiposAusentismos, loadingCatalogs, configMissing,
+  disenadoras, costureras, tiposAusentismos, loadingCatalogs, configMissing,
 }: {
   disenadoras: Catalog[]
+  costureras: Catalog[]
   tiposAusentismos: Catalog[]
   loadingCatalogs: boolean
   configMissing: boolean
@@ -1283,7 +1317,7 @@ function VacacionesPermisosTab({
     setLoadingRecords(true)
     const { data, error } = await supabase
       .from("vacaciones_permisos")
-      .select("id, fecha_inicio, semana, iddisenadora, tipo_ausentismo, dias, horas_manuales, horas_totales, comentarios, disenadoras(nombre)")
+      .select("id, fecha_inicio, semana, iddisenadora, idcosturera, tipo_ausentismo, dias, horas_manuales, horas_totales, comentarios, disenadoras(nombre), costureras(nombre)")
       .eq("idempresa", IDEMPRESA)
       .order("fecha_inicio", { ascending: false })
     if (!error) setRecords((data ?? []) as unknown as VacacionPermiso[])
@@ -1295,7 +1329,7 @@ function VacacionesPermisosTab({
 
   const handleSubmit = async () => {
     if (!form.fecha_inicio) { toast.error("Campo requerido", { description: "Selecciona la fecha de inicio." }); return }
-    if (!form.iddisenadora) { toast.error("Campo requerido", { description: "Selecciona una diseñadora." }); return }
+    if (!form.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${form.tipoColaborador === "costurera" ? "una costurera" : "una diseñadora"}.` }); return }
     if (!form.tipo_ausentismo) { toast.error("Campo requerido", { description: "Selecciona el tipo de ausentismo." }); return }
     if (showDias && !form.dias) { toast.error("Campo requerido", { description: "Ingresa los días." }); return }
     if (showHorasManuales && !form.horas_manuales) { toast.error("Campo requerido", { description: "Ingresa las horas." }); return }
@@ -1308,7 +1342,8 @@ function VacacionesPermisosTab({
         .insert({
           idempresa: IDEMPRESA,
           fecha_inicio: format(form.fecha_inicio, "yyyy-MM-dd"),
-          iddisenadora: Number(form.iddisenadora),
+          iddisenadora: form.tipoColaborador === "disenadora" ? Number(form.idColaborador) : null,
+          idcosturera: form.tipoColaborador === "costurera" ? Number(form.idColaborador) : null,
           tipo_ausentismo: form.tipo_ausentismo,
           dias: showDias && form.dias ? Number(form.dias) : null,
           horas_manuales: showHorasManuales && form.horas_manuales ? Number(form.horas_manuales) : null,
@@ -1326,9 +1361,11 @@ function VacacionesPermisosTab({
 
   const openEdit = (r: VacacionPermiso) => {
     setEditTarget(r)
+    const tipoColaborador: "disenadora" | "costurera" = r.idcosturera ? "costurera" : "disenadora"
     setEditForm({
       fecha_inicio: r.fecha_inicio ? new Date(`${r.fecha_inicio}T00:00:00`) : undefined,
-      iddisenadora: r.iddisenadora ? String(r.iddisenadora) : "",
+      tipoColaborador,
+      idColaborador: tipoColaborador === "costurera" ? String(r.idcosturera ?? "") : String(r.iddisenadora ?? ""),
       tipo_ausentismo: r.tipo_ausentismo ?? "",
       dias: r.dias != null ? String(r.dias) : "",
       horas_manuales: r.horas_manuales != null ? String(r.horas_manuales) : "",
@@ -1339,7 +1376,7 @@ function VacacionesPermisosTab({
 
   const handleSaveEdit = async () => {
     if (!editTarget || !editForm.fecha_inicio) { toast.error("Campo requerido", { description: "Selecciona la fecha de inicio." }); return }
-    if (!editForm.iddisenadora) { toast.error("Campo requerido", { description: "Selecciona una diseñadora." }); return }
+    if (!editForm.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${editForm.tipoColaborador === "costurera" ? "una costurera" : "una diseñadora"}.` }); return }
     if (!editForm.tipo_ausentismo) { toast.error("Campo requerido", { description: "Selecciona el tipo." }); return }
     if (editShowDias && !editForm.dias) { toast.error("Campo requerido", { description: "Ingresa los días." }); return }
     if (editShowHoras && !editForm.horas_manuales) { toast.error("Campo requerido", { description: "Ingresa las horas." }); return }
@@ -1351,7 +1388,8 @@ function VacacionesPermisosTab({
         .from("vacaciones_permisos")
         .update({
           fecha_inicio: format(editForm.fecha_inicio, "yyyy-MM-dd"),
-          iddisenadora: Number(editForm.iddisenadora),
+          iddisenadora: editForm.tipoColaborador === "disenadora" ? Number(editForm.idColaborador) : null,
+          idcosturera: editForm.tipoColaborador === "costurera" ? Number(editForm.idColaborador) : null,
           tipo_ausentismo: editForm.tipo_ausentismo,
           dias: editShowDias && editForm.dias ? Number(editForm.dias) : null,
           horas_manuales: editShowHoras && editForm.horas_manuales ? Number(editForm.horas_manuales) : null,
@@ -1405,8 +1443,18 @@ function VacacionesPermisosTab({
               <DatePicker value={form.fecha_inicio} onChange={(d) => set("fecha_inicio", d)} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Diseñadora <span className="text-destructive">*</span></Label>
-              <CatalogSelect value={form.iddisenadora} onValueChange={(v) => set("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              <Label className="text-xs font-medium">Tipo de Colaborador</Label>
+              <Select value={form.tipoColaborador} onValueChange={(v) => setForm((p) => ({ ...p, tipoColaborador: v as "disenadora" | "costurera", idColaborador: "" }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="disenadora">Diseñadora</SelectItem>
+                  <SelectItem value="costurera">Costurera</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">{form.tipoColaborador === "costurera" ? "Costurera" : "Diseñadora"} <span className="text-destructive">*</span></Label>
+              <CatalogSelect value={form.idColaborador} onValueChange={(v) => set("idColaborador", v)} items={form.tipoColaborador === "costurera" ? costureras : disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Tipo de Ausentismo <span className="text-destructive">*</span></Label>
@@ -1459,7 +1507,7 @@ function VacacionesPermisosTab({
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
                   <TableHead className="font-semibold">Fecha Inicio</TableHead>
                   <TableHead className="font-semibold text-right">Semana</TableHead>
-                  <TableHead className="font-semibold">Diseñadora</TableHead>
+                  <TableHead className="font-semibold">Colaborador</TableHead>
                   <TableHead className="font-semibold">Tipo</TableHead>
                   <TableHead className="font-semibold text-right">Días</TableHead>
                   <TableHead className="font-semibold text-right">Hrs Man.</TableHead>
@@ -1481,7 +1529,7 @@ function VacacionesPermisosTab({
                   <TableRow key={r.id} className="hover:bg-muted/30">
                     <TableCell className="tabular-nums text-sm">{r.fecha_inicio ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm">{r.semana ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="text-sm">{r.costureras?.nombre ?? r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell>
                       {r.tipo_ausentismo
                         ? <span className="inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium">{r.tipo_ausentismo}</span>
@@ -1523,8 +1571,17 @@ function VacacionesPermisosTab({
               <FormRow label="Fecha de Inicio" required>
                 <DatePicker value={editForm.fecha_inicio} onChange={(d) => setE("fecha_inicio", d)} />
               </FormRow>
-              <FormRow label="Diseñadora" required>
-                <CatalogSelect value={editForm.iddisenadora} onValueChange={(v) => setE("iddisenadora", v)} items={disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              <FormRow label="Tipo de Colaborador">
+                <Select value={editForm.tipoColaborador} onValueChange={(v) => setEditForm((p) => ({ ...p, tipoColaborador: v as "disenadora" | "costurera", idColaborador: "" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="disenadora">Diseñadora</SelectItem>
+                    <SelectItem value="costurera">Costurera</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormRow>
+              <FormRow label={editForm.tipoColaborador === "costurera" ? "Costurera" : "Diseñadora"} required>
+                <CatalogSelect value={editForm.idColaborador} onValueChange={(v) => setE("idColaborador", v)} items={editForm.tipoColaborador === "costurera" ? costureras : disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
               </FormRow>
               <FormRow label="Tipo de Ausentismo" required>
                 <CatalogSelect
@@ -1567,7 +1624,7 @@ function VacacionesPermisosTab({
             <AlertDialogTitle>¿Eliminar registro?</AlertDialogTitle>
             <AlertDialogDescription>
               Se eliminará el ausentismo de{" "}
-              <span className="font-medium">{deleteTarget?.disenadoras?.nombre ?? "—"}</span>{" "}
+              <span className="font-medium">{deleteTarget?.costureras?.nombre ?? deleteTarget?.disenadoras?.nombre ?? "—"}</span>{" "}
               del <span className="font-medium">{deleteTarget?.fecha_inicio ?? "—"}</span>.
               Esta acción no se puede deshacer.
             </AlertDialogDescription>

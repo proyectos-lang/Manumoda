@@ -85,6 +85,7 @@ type FormState = {
   tipo_revision: string
   habilitaciones_insumos: string
   comentarios_generales: string
+  fecha_limite_confirmacion: Date | null
 }
 
 const EMPTY_FORM: FormState = {
@@ -99,6 +100,7 @@ const EMPTY_FORM: FormState = {
   tipo_revision: "",
   habilitaciones_insumos: "",
   comentarios_generales: "",
+  fecha_limite_confirmacion: null,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -168,11 +170,11 @@ export function ProductionTrackingDashboard({
     const { data, error } = await supabase
       .from("ordenes_produccion")
       .select(
-        "id, idempresa, folio, num_pedido, modelo, familia, cliente, piezas, fase_actual, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision",
+        "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion",
       )
       .eq("idempresa", IDEMPRESA)
       .neq("fase_actual", "Por Programar")
-      .order("folio", { ascending: true })
+      .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
 
     setLoading(false)
 
@@ -328,7 +330,10 @@ function TableView({
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/50 hover:bg-muted/50">
+            <TableHead className="font-semibold">#ID</TableHead>
             <TableHead className="font-semibold">Folio</TableHead>
+            <TableHead className="font-semibold">F. Entrega</TableHead>
+            <TableHead className="font-semibold">Maquilero</TableHead>
             <TableHead className="font-semibold">Cliente</TableHead>
             <TableHead className="font-semibold">Modelo</TableHead>
             <TableHead className="text-right font-semibold">Piezas</TableHead>
@@ -343,7 +348,7 @@ function TableView({
           {loading && orders.length === 0 ? (
             Array.from({ length: 5 }).map((_, i) => (
               <TableRow key={i}>
-                {Array.from({ length: 9 }).map((__, j) => (
+                {Array.from({ length: 12 }).map((__, j) => (
                   <TableCell key={j}>
                     <Skeleton className="h-4 w-full" />
                   </TableCell>
@@ -353,7 +358,7 @@ function TableView({
           ) : orders.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={9}
+                colSpan={12}
                 className="h-28 text-center text-sm text-muted-foreground"
               >
                 No hay órdenes en seguimiento.
@@ -362,8 +367,17 @@ function TableView({
           ) : (
             orders.map((o) => (
               <TableRow key={String(o.id)} className="group text-sm">
+                <TableCell className="font-mono text-xs text-muted-foreground tabular-nums">
+                  {o.id ?? "—"}
+                </TableCell>
                 <TableCell className="font-mono font-semibold text-foreground">
                   {o.folio}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                  {fmtShort(o.fecha_cancelacion)}
+                </TableCell>
+                <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
+                  {o.maquilero ?? "—"}
                 </TableCell>
                 <TableCell className="max-w-[180px] truncate text-muted-foreground">
                   {o.cliente ?? "—"}
@@ -504,6 +518,11 @@ function KanbanView({
                       <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                         {o.cliente ?? "—"}
                       </p>
+                      {o.maquilero && (
+                        <p className="mt-0.5 truncate text-[10px] font-medium text-violet-600">
+                          {o.maquilero}
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 ))
@@ -579,6 +598,7 @@ function UpdateProgressSheet({
       tipo_revision: order.tipo_revision ?? "",
       habilitaciones_insumos: order.habilitaciones_insumos ?? "",
       comentarios_generales: order.comentarios_generales ?? "",
+      fecha_limite_confirmacion: parseDate(order.fecha_limite_confirmacion),
     })
   }, [order])
 
@@ -627,6 +647,7 @@ function UpdateProgressSheet({
       comentarios_generales: form.comentarios_generales || null,
       fecha_ultima_revision: new Date().toISOString(),
       fase_actual: detectedPhase,
+      fecha_limite_confirmacion: toISODate(form.fecha_limite_confirmacion),
     }
 
     const { error } = await supabase
@@ -870,6 +891,60 @@ function UpdateProgressSheet({
                     }
                     className="min-h-[80px] resize-none text-sm"
                   />
+                </div>
+              </div>
+
+              {/* Section C: Confirmación */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex size-5 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">
+                    C
+                  </span>
+                  <h3 className="text-sm font-semibold text-foreground">Confirmación</h3>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Fecha Límite de Confirmación
+                  </Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left text-xs font-normal h-9",
+                          !form.fecha_limite_confirmacion && "text-muted-foreground",
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 size-3.5 shrink-0" />
+                        <span className="truncate">
+                          {form.fecha_limite_confirmacion
+                            ? format(form.fecha_limite_confirmacion, "dd MMM yyyy", { locale: es })
+                            : "Sin fecha de confirmación"}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={form.fecha_limite_confirmacion ?? undefined}
+                        onSelect={(d) => setForm((f) => ({ ...f, fecha_limite_confirmacion: d ?? null }))}
+                        locale={es}
+                        initialFocus
+                      />
+                      {form.fecha_limite_confirmacion && (
+                        <div className="flex justify-end border-t border-border p-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-muted-foreground"
+                            onClick={() => setForm((f) => ({ ...f, fecha_limite_confirmacion: null }))}
+                          >
+                            Limpiar fecha
+                          </Button>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
                 </div>
               </div>
             </div>

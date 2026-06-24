@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, Calendar, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban } from "lucide-react"
+import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +15,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -88,6 +91,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<OrdenProduccion | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [skippingId, setSkippingId] = useState<number | string | null>(null)
+  const [savingDateId, setSavingDateId] = useState<number | string | null>(null)
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget?.id) return
@@ -108,6 +112,25 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
       toast.success(`Folio ${deleteTarget.folio} eliminado.`)
     }
     setDeleteTarget(null)
+  }
+
+  const handleFechaCancelacionChange = async (row: OrdenProduccion, date: Date | undefined) => {
+    if (row.id == null) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    const fechaISO = date ? format(date, "yyyy-MM-dd") : null
+    setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, fecha_cancelacion: fechaISO } : o))
+    setSavingDateId(row.id)
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ fecha_cancelacion: fechaISO })
+      .eq("id", row.id)
+      .eq("idempresa", IDEMPRESA)
+    setSavingDateId(null)
+    if (error) {
+      setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, fecha_cancelacion: row.fecha_cancelacion } : o))
+      toast.error("No se pudo actualizar la fecha", { description: error.message })
+    }
   }
 
   const handleSkipPhase = async (
@@ -227,8 +250,8 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                 <TableHead className="font-semibold text-right">Piezas</TableHead>
                 <TableHead className="font-semibold">Fecha Límite</TableHead>
                 <TableHead className="font-semibold">Tipo Pedido</TableHead>
-                <TableHead className="font-semibold">Fase</TableHead>
                 <TableHead className="font-semibold text-right">Acciones</TableHead>
+                <TableHead className="font-semibold">Fase Maquila</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -247,9 +270,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
               ) : pageRows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
-                    {orders.length === 0
-                      ? "Sin órdenes registradas."
-                      : "Sin coincidencias para los filtros aplicados."}
+                    {orders.length === 0 ? "Sin órdenes registradas." : "Sin coincidencias para los filtros aplicados."}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -268,18 +289,41 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                       {row.piezas?.toLocaleString("es-MX") ?? "-"}
                     </TableCell>
                     <TableCell className="text-sm">
-                      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                        <Calendar className="size-3.5" />
-                        {formatDate(row.fecha_cancelacion)}
-                      </span>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={savingDateId === row.id}
+                            className={cn(
+                              "h-auto gap-1.5 px-2 py-1 text-xs font-normal",
+                              savingDateId === row.id
+                                ? "opacity-60"
+                                : "text-muted-foreground hover:text-foreground",
+                            )}
+                          >
+                            {savingDateId === row.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <CalendarIcon className="size-3.5" />
+                            )}
+                            {formatDate(row.fecha_cancelacion)}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={row.fecha_cancelacion ? new Date(row.fecha_cancelacion + "T00:00:00") : undefined}
+                            onSelect={(d) => handleFechaCancelacionChange(row, d)}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary" className="font-normal">
                         {row.tipo_pedido ?? "-"}
                       </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <FaseBadge fase={row.fase_actual} />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -385,6 +429,9 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <FaseBadge fase={row.fase_actual} />
                     </TableCell>
                   </TableRow>
                 ))

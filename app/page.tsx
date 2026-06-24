@@ -19,10 +19,10 @@ import { Toaster } from "@/components/ui/sonner"
 
 const TITLES: Record<ModuleKey, string> = {
   inicio: "Página de Inicio",
-  ingestion: "Ingestión de Datos",
+  ingestion: "Panel General",
   diseno: "Diseño",
   corte: "Corte de Telas",
-  seguimiento: "Seguimiento de Producción",
+  seguimiento: "Seguimiento Maquila",
   operacion: "Resumen General de Operación",
   riesgos: "Seguimiento de Ordenes",
   colaboradores: "Registro de Colaboradores",
@@ -182,11 +182,10 @@ export default function Page() {
               <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
                 <div className="mb-4">
                   <h2 className="text-lg font-semibold text-foreground">
-                    Tablero de Seguimiento de Producción
+                    Seguimiento Maquila
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Visualiza el avance de las órdenes en producción por fase (S1 a S7) y actualiza
-                    su progreso.
+                    Visualiza el avance de las órdenes en producción por fase (S1 a S7), maquilero asignado y fecha de entrega.
                   </p>
                 </div>
 

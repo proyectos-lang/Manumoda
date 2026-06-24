@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   CalendarIcon,
+  Camera,
   Check,
   CheckCircle2,
   ChevronsUpDown,
@@ -44,6 +45,18 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { EvidenciaFotos } from "@/components/evidencia-fotos"
 
 function formatDeliveryDate(value: string | null | undefined): string {
   if (!value) return "—"
@@ -82,10 +95,11 @@ function computeProgress(o: OrdenProduccion): { progress: number; count: number 
   return { progress: Math.round((count / 7) * 100), count }
 }
 
-function computeRisk(fechaCancel: string | null | undefined): {
+function computeRisk(fechaCancel: string | null | undefined, progress: number): {
   risk: Risk
   days: number | null
 } {
+  if (progress >= 100) return { risk: "a-tiempo", days: 0 }
   if (!fechaCancel) return { risk: "sin-fecha", days: null }
   const deadline = new Date(fechaCancel)
   if (Number.isNaN(deadline.getTime())) return { risk: "sin-fecha", days: null }
@@ -200,6 +214,8 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
   const [view, setView] = useState<"cards" | "list">("cards")
 
   const [historyOrder, setHistoryOrder] = useState<EnrichedOrder | null>(null)
+  const [fotoOrder, setFotoOrder] = useState<EnrichedOrder | null>(null)
+  const [fotoEtapa, setFotoEtapa] = useState<string>("S1")
 
   useEffect(() => {
     if (configMissing) {
@@ -219,7 +235,7 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
           .from("ordenes_produccion")
           .select("*")
           .eq("idempresa", IDEMPRESA)
-          .order("id", { ascending: false })
+          .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
         if (cancelled) return
         if (ordersRes.error) throw ordersRes.error
         setOrders((ordersRes.data || []) as OrdenProduccion[])
@@ -242,7 +258,7 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
   const enriched: EnrichedOrder[] = useMemo(() => {
     return orders.map((o) => {
       const { progress, count } = computeProgress(o)
-      const { risk, days } = computeRisk(o.fecha_cancelacion)
+      const { risk, days } = computeRisk(o.fecha_cancelacion, progress)
       return {
         ...o,
         __progress: progress,
@@ -439,11 +455,20 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
       ) : view === "cards" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filtered.map((o) => (
-            <OrderCard key={String(o.id)} order={o} onHistory={() => setHistoryOrder(o)} />
+            <OrderCard
+              key={String(o.id)}
+              order={o}
+              onHistory={() => setHistoryOrder(o)}
+              onFotos={() => { setFotoOrder(o); setFotoEtapa("S1") }}
+            />
           ))}
         </div>
       ) : (
-        <OrdersListView orders={filtered} onHistory={(o) => setHistoryOrder(o)} />
+        <OrdersListView
+          orders={filtered}
+          onHistory={(o) => setHistoryOrder(o)}
+          onFotos={(o) => { setFotoOrder(o); setFotoEtapa("S1") }}
+        />
       )}
 
       {/* History Sheet */}
@@ -462,6 +487,36 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
           {historyOrder && <HistoryContent order={historyOrder} />}
         </SheetContent>
       </Sheet>
+
+      {/* ── Dialog Fotos ── */}
+      <Dialog open={!!fotoOrder} onOpenChange={(o) => !o && setFotoOrder(null)}>
+        <DialogContent className="sm:max-w-lg overflow-hidden p-0">
+          <div className="flex items-center gap-2.5 bg-gradient-to-r from-violet-700 to-violet-600 px-6 py-4">
+            <Camera className="size-4 text-violet-100" />
+            <span className="text-sm font-semibold text-white">Evidencias Fotográficas</span>
+            <span className="ml-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-bold text-white/90">
+              {fotoOrder?.folio}
+            </span>
+          </div>
+          <div className="px-6 pt-4">
+            <Select value={fotoEtapa} onValueChange={setFotoEtapa}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["S1", "S2", "S3", "S4", "S5", "S6", "S7"].map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="px-6 py-5">
+            {fotoOrder && (
+              <EvidenciaFotos folio={fotoOrder.folio} etapa={fotoEtapa} readOnly />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -647,7 +702,7 @@ function DateFilterPopover({
   )
 }
 
-function OrderCard({ order, onHistory }: { order: EnrichedOrder; onHistory: () => void }) {
+function OrderCard({ order, onHistory, onFotos }: { order: EnrichedOrder; onHistory: () => void; onFotos: () => void }) {
   return (
     <Card className="group relative overflow-hidden border-border/60 bg-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-violet-500/10">
       <CardContent className="flex h-full flex-col gap-3 p-5">
@@ -684,15 +739,25 @@ function OrderCard({ order, onHistory }: { order: EnrichedOrder; onHistory: () =
           <ProgressBar value={order.__progress} />
           <div className="flex items-center justify-between gap-2 pt-1">
             <PhaseBadge phase={order.fase_actual} />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onHistory}
-              className="h-7 gap-1.5 px-2 text-xs text-violet-700 hover:bg-violet-50 hover:text-violet-800"
-            >
-              <History className="size-3.5" />
-              Historial
-            </Button>
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onFotos}
+                className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:bg-slate-50"
+              >
+                <Camera className="size-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onHistory}
+                className="h-7 gap-1.5 px-2 text-xs text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+              >
+                <History className="size-3.5" />
+                Historial
+              </Button>
+            </div>
           </div>
         </div>
       </CardContent>
@@ -703,9 +768,11 @@ function OrderCard({ order, onHistory }: { order: EnrichedOrder; onHistory: () =
 function OrdersListView({
   orders,
   onHistory,
+  onFotos,
 }: {
   orders: EnrichedOrder[]
   onHistory: (o: EnrichedOrder) => void
+  onFotos: (o: EnrichedOrder) => void
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border/60 bg-white shadow-sm">
@@ -746,15 +813,25 @@ function OrdersListView({
                     <PhaseBadge phase={o.fase_actual} />
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => onHistory(o)}
-                      className="h-7 gap-1.5 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
-                    >
-                      <History className="size-3.5" />
-                      Historial
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onFotos(o)}
+                        className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:bg-slate-50"
+                      >
+                        <Camera className="size-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onHistory(o)}
+                        className="h-7 gap-1.5 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+                      >
+                        <History className="size-3.5" />
+                        Historial
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               )

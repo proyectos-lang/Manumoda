@@ -22,7 +22,7 @@ const NAV: {
   color: string
 }[] = [
   { key: "inicio", label: "Inicio", icon: Home, color: "text-icon-cyan" },
-  { key: "ingestion", label: "Cargar Folios", icon: Upload, color: "text-icon-magenta" },
+  { key: "ingestion", label: "Panel General", icon: Upload, color: "text-icon-magenta" },
   {
     key: "diseno",
     label: "Diseño",
@@ -37,7 +37,7 @@ const NAV: {
   },
   {
     key: "seguimiento",
-    label: "Seguimiento de Producción",
+    label: "Seguimiento Maquila",
     icon: KanbanSquare,
     color: "text-icon-yellow",
   },

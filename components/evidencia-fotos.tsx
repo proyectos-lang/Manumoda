@@ -22,9 +22,10 @@ type Props = {
   folio: string
   etapa: string
   onFotoAdded?: () => void
+  readOnly?: boolean
 }
 
-export function EvidenciaFotos({ folio, etapa, onFotoAdded }: Props) {
+export function EvidenciaFotos({ folio, etapa, onFotoAdded, readOnly }: Props) {
   const [fotos, setFotos] = useState<Foto[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -100,37 +101,42 @@ export function EvidenciaFotos({ folio, etapa, onFotoAdded }: Props) {
 
   return (
     <div className="space-y-3">
-      {/* Upload trigger */}
-      <div className="flex items-center gap-3">
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/jpg"
-          className="hidden"
-          onChange={handleFileChange}
-          disabled={uploading}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          disabled={uploading}
-          onClick={() => inputRef.current?.click()}
-        >
-          {uploading ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Camera className="size-4" />
+      {/* Upload trigger — oculto en modo lectura */}
+      {!readOnly && (
+        <div className="flex items-center gap-3">
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/jpg"
+            className="hidden"
+            onChange={handleFileChange}
+            disabled={uploading}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            disabled={uploading}
+            onClick={() => inputRef.current?.click()}
+          >
+            {uploading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Camera className="size-4" />
+            )}
+            {uploading ? "Subiendo…" : "Adjuntar foto"}
+          </Button>
+          {fotos.length > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {fotos.length} foto{fotos.length !== 1 ? "s" : ""}
+            </span>
           )}
-          {uploading ? "Subiendo…" : "Adjuntar foto"}
-        </Button>
-        {fotos.length > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {fotos.length} foto{fotos.length !== 1 ? "s" : ""}
-          </span>
-        )}
-      </div>
+        </div>
+      )}
+      {readOnly && fotos.length > 0 && (
+        <p className="text-xs text-muted-foreground">{fotos.length} foto{fotos.length !== 1 ? "s" : ""}</p>
+      )}
 
       {/* Thumbnail gallery */}
       {loading ? (
