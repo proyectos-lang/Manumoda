@@ -107,19 +107,16 @@ function formatDate(iso: string | null) {
 function getRiesgoVisuals(r: string | null | undefined) {
   const v = (r ?? "").toLowerCase()
   if (v.includes("vencid")) {
-    return { label: r ?? "Vencido", className: "bg-red-100 text-red-700 ring-red-200" }
+    return { label: r ?? "Vencido", className: "bg-red-500/10 text-red-500 ring-red-500/20" }
+  }
+  if (v.includes("destiempo") || v.includes("a destiempo")) {
+    return { label: r ?? "A Destiempo", className: "bg-orange-500/10 text-orange-500 ring-orange-500/20" }
   }
   if (v.includes("riesgo")) {
-    return {
-      label: r ?? "En Riesgo",
-      className: "bg-amber-100 text-amber-800 ring-amber-200",
-    }
+    return { label: r ?? "En Riesgo", className: "bg-yellow-500/10 text-yellow-500 ring-yellow-500/20" }
   }
   if (v.includes("tiempo")) {
-    return {
-      label: r ?? "A Tiempo",
-      className: "bg-emerald-100 text-emerald-700 ring-emerald-200",
-    }
+    return { label: r ?? "A Tiempo", className: "bg-emerald-500/10 text-emerald-500 ring-emerald-500/20" }
   }
   return {
     label: r ?? "Sin Fecha",
@@ -265,12 +262,15 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
   // Gráfico 1: órdenes por fase × riesgo_entrega (stacked)
   const statusRiskData = useMemo(() => {
-    const map: Record<string, { fase: string; vencido: number; a_tiempo: number }> = {}
+    const map: Record<string, { fase: string; vencido: number; a_destiempo: number; a_tiempo: number }> = {}
     rows.forEach((r) => {
       const fase = r.fase_actual ?? "Sin Fase"
-      if (!map[fase]) map[fase] = { fase, vencido: 0, a_tiempo: 0 }
-      if ((r.riesgo_entrega ?? "").toLowerCase().includes("vencid")) {
+      if (!map[fase]) map[fase] = { fase, vencido: 0, a_destiempo: 0, a_tiempo: 0 }
+      const v = (r.riesgo_entrega ?? "").toLowerCase()
+      if (v.includes("vencid")) {
         map[fase].vencido++
+      } else if (v.includes("destiempo")) {
+        map[fase].a_destiempo++
       } else {
         map[fase].a_tiempo++
       }
@@ -590,7 +590,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 labelStyle={{ color: "rgba(255,255,255,0.55)", marginBottom: 4 }}
                 formatter={(v: number, name: string) => [
                   `${v} órdenes`,
-                  name === "a_tiempo" ? "A Tiempo" : "Vencidas",
+                  name === "a_tiempo" ? "A Tiempo / En Riesgo" : name === "a_destiempo" ? "A Destiempo" : "Vencidas",
                 ]}
               />
               <Legend
@@ -599,9 +599,12 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 height={28}
                 iconSize={8}
                 wrapperStyle={{ fontSize: 11 }}
-                formatter={(v: string) => (v === "a_tiempo" ? "A Tiempo" : "Vencidas")}
+                formatter={(v: string) =>
+                  v === "a_tiempo" ? "A Tiempo / En Riesgo" : v === "a_destiempo" ? "A Destiempo" : "Vencidas"
+                }
               />
               <Bar dataKey="a_tiempo" stackId="a" fill="#22c55e" name="a_tiempo" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="a_destiempo" stackId="a" fill="#f97316" name="a_destiempo" radius={[0, 0, 0, 0]} />
               <Bar dataKey="vencido" stackId="a" fill="#ef4444" name="vencido" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
