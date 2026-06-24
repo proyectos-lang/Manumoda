@@ -55,6 +55,8 @@ type ResumenRow = {
   fase_actual: string | null
   maquilero_nombre: string | null
   riesgo_entrega: string | null
+  fecha_cancelacion: string | null
+  fecha_limite_confirmacion: string | null
   calidad: number | null
   familia: string | null
   fecha_s1: string | null
@@ -193,6 +195,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
         .from("vw_resumen_operacion")
         .select("*")
         .eq("idempresa", IDEMPRESA)
+        .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
 
       if (err) throw err
       setRows((data ?? []) as ResumenRow[])
@@ -735,6 +738,8 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead className="w-[140px]">Folio</TableHead>
                 <TableHead>Maquilador</TableHead>
+                <TableHead className="w-[120px]">F. Entrega</TableHead>
+                <TableHead className="w-[120px]">F. Límite Conf.</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
@@ -744,18 +749,12 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <>
                   {Array.from({ length: 6 }).map((_, i) => (
                     <TableRow key={`sk-${i}`}>
-                      <TableCell>
-                        <Skeleton className="h-4 w-20" />
-                      </TableCell>
-                      <TableCell>
-                        <Skeleton className="h-4 w-32" />
-                      </TableCell>
-                      <TableCell>
-                        <Skeleton className="h-5 w-20 rounded-full" />
-                      </TableCell>
-                      <TableCell>
-                        <Skeleton className="h-5 w-44" />
-                      </TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-44" /></TableCell>
                     </TableRow>
                   ))}
                 </>
@@ -763,7 +762,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-12 text-center">
+                  <TableCell colSpan={6} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -797,6 +796,16 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                             </span>
                           )}
                         </span>
+                      </TableCell>
+                      <TableCell className="tabular-nums text-sm">
+                        {r.fecha_cancelacion
+                          ? formatDate(r.fecha_cancelacion)
+                          : <span className="text-muted-foreground/60 italic">—</span>}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-sm">
+                        {r.fecha_limite_confirmacion
+                          ? formatDate(r.fecha_limite_confirmacion)
+                          : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell>
                         <span
