@@ -92,6 +92,9 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [skippingId, setSkippingId] = useState<number | string | null>(null)
   const [savingDateId, setSavingDateId] = useState<number | string | null>(null)
+  const [editingClienteId, setEditingClienteId] = useState<number | string | null>(null)
+  const [editingClienteValue, setEditingClienteValue] = useState("")
+  const [savingClienteId, setSavingClienteId] = useState<number | string | null>(null)
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget?.id) return
@@ -130,6 +133,27 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
     if (error) {
       setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, fecha_cancelacion: row.fecha_cancelacion } : o))
       toast.error("No se pudo actualizar la fecha", { description: error.message })
+    }
+  }
+
+  const handleClienteSave = async (row: OrdenProduccion, value: string) => {
+    if (row.id == null) return
+    const trimmed = value.trim()
+    setEditingClienteId(null)
+    const prev = row.cliente
+    setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, cliente: trimmed || null } : o))
+    setSavingClienteId(row.id)
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ cliente: trimmed || null })
+      .eq("id", row.id)
+      .eq("idempresa", IDEMPRESA)
+    setSavingClienteId(null)
+    if (error) {
+      setOrders((p) => p.map((o) => o.id === row.id ? { ...o, cliente: prev } : o))
+      toast.error("No se pudo actualizar el cliente", { description: error.message })
     }
   }
 
@@ -284,7 +308,33 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                     <TableCell className="text-sm text-muted-foreground">
                       {row.familia ?? "-"}
                     </TableCell>
-                    <TableCell className="text-sm">{row.cliente ?? "-"}</TableCell>
+                    <TableCell className="text-sm">
+                      {editingClienteId === row.id ? (
+                        <input
+                          autoFocus
+                          className="w-28 rounded border border-ring bg-background px-1.5 py-0.5 text-sm outline-none ring-1 ring-ring"
+                          value={editingClienteValue}
+                          onChange={(e) => setEditingClienteValue(e.target.value)}
+                          onBlur={() => handleClienteSave(row, editingClienteValue)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleClienteSave(row, editingClienteValue)
+                            if (e.key === "Escape") setEditingClienteId(null)
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingClienteId(row.id ?? null); setEditingClienteValue(row.cliente ?? "") }}
+                          className={cn(
+                            "rounded px-1 py-0.5 text-left text-sm transition-colors hover:bg-muted",
+                            savingClienteId === row.id ? "opacity-60" : "",
+                            !row.cliente ? "text-muted-foreground italic" : "text-foreground",
+                          )}
+                        >
+                          {savingClienteId === row.id ? <Loader2 className="inline size-3.5 animate-spin" /> : (row.cliente ?? "—")}
+                        </button>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {row.piezas?.toLocaleString("es-MX") ?? "-"}
                     </TableCell>
