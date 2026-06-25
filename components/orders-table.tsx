@@ -92,6 +92,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [skippingId, setSkippingId] = useState<number | string | null>(null)
   const [savingDateId, setSavingDateId] = useState<number | string | null>(null)
+  const [savingConfirmId, setSavingConfirmId] = useState<number | string | null>(null)
   const [editingClienteId, setEditingClienteId] = useState<number | string | null>(null)
   const [editingClienteValue, setEditingClienteValue] = useState("")
   const [savingClienteId, setSavingClienteId] = useState<number | string | null>(null)
@@ -133,6 +134,25 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
     if (error) {
       setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, fecha_cancelacion: row.fecha_cancelacion } : o))
       toast.error("No se pudo actualizar la fecha", { description: error.message })
+    }
+  }
+
+  const handleFechaLimiteConfirmacionChange = async (row: OrdenProduccion, date: Date | undefined) => {
+    if (row.id == null) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    const fechaISO = date ? format(date, "yyyy-MM-dd") : null
+    setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, fecha_limite_confirmacion: fechaISO } : o))
+    setSavingConfirmId(row.id)
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ fecha_limite_confirmacion: fechaISO })
+      .eq("id", row.id)
+      .eq("idempresa", IDEMPRESA)
+    setSavingConfirmId(null)
+    if (error) {
+      setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, fecha_limite_confirmacion: row.fecha_limite_confirmacion } : o))
+      toast.error("No se pudo actualizar la fecha límite de confirmación", { description: error.message })
     }
   }
 
@@ -189,7 +209,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
     const { data, error } = await supabase
       .from("ordenes_produccion")
       .select(
-        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado",
+        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado",
       )
       .eq("idempresa", IDEMPRESA)
       .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
@@ -273,6 +293,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                 <TableHead className="font-semibold">Cliente</TableHead>
                 <TableHead className="font-semibold text-right">Piezas</TableHead>
                 <TableHead className="font-semibold">Fecha Límite</TableHead>
+                <TableHead className="font-semibold">Límite Conf.</TableHead>
                 <TableHead className="font-semibold">Tipo Pedido</TableHead>
                 <TableHead className="font-semibold text-right">Acciones</TableHead>
                 <TableHead className="font-semibold">Fase Maquila</TableHead>
@@ -365,6 +386,38 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                             mode="single"
                             selected={row.fecha_cancelacion ? new Date(row.fecha_cancelacion + "T00:00:00") : undefined}
                             onSelect={(d) => handleFechaCancelacionChange(row, d)}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={savingConfirmId === row.id}
+                            className={cn(
+                              "h-auto gap-1.5 px-2 py-1 text-xs font-normal",
+                              savingConfirmId === row.id
+                                ? "opacity-60"
+                                : "text-muted-foreground hover:text-foreground",
+                            )}
+                          >
+                            {savingConfirmId === row.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <CalendarIcon className="size-3.5" />
+                            )}
+                            {formatDate(row.fecha_limite_confirmacion ?? null)}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={row.fecha_limite_confirmacion ? new Date(row.fecha_limite_confirmacion + "T00:00:00") : undefined}
+                            onSelect={(d) => handleFechaLimiteConfirmacionChange(row, d)}
                             initialFocus
                           />
                         </PopoverContent>
