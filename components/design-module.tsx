@@ -112,6 +112,15 @@ type DisenoProgramacion = {
   cumplimiento_costura: boolean
   rechazo_orden: boolean
   fecha_aprobacion_diseno?: string | null
+  // costura calc
+  idprenda?: number | null
+  categoria_demografica?: string | null
+  tipo_tela?: string | null
+  trazos?: number | null
+  comp_combinacion?: boolean | null
+  comp_entretela?: boolean | null
+  comp_poquetin?: boolean | null
+  comp_forro?: boolean | null
   disenadoras: { nombre: string } | null
   costureras: { nombre: string } | null
 }
@@ -427,6 +436,7 @@ export function DesignModule({ configMissing }: Props) {
                     <TableHead className="font-semibold text-right">Semana</TableHead>
                     <TableHead className="font-semibold text-right">Sem. Orig.</TableHead>
                     <TableHead className="font-semibold">Familia</TableHead>
+                    <TableHead className="font-semibold">Tipo Tela</TableHead>
                     <TableHead className="font-semibold">Categoría</TableHead>
                     <TableHead className="font-semibold">Tipo</TableHead>
                     <TableHead className="font-semibold">Diseñadora</TableHead>
@@ -442,21 +452,21 @@ export function DesignModule({ configMissing }: Props) {
                   {loading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 13 }).map((__, j) => (
+                        {Array.from({ length: 14 }).map((__, j) => (
                           <TableCell key={j}><Skeleton className="h-4 rounded" /></TableCell>
                         ))}
                       </TableRow>
                     ))
                   ) : error ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="h-24 text-center text-destructive">
+                      <TableCell colSpan={14} className="h-24 text-center text-destructive">
                         <AlertCircle className="inline size-4 mr-1.5 align-text-bottom" />
                         {error}
                       </TableCell>
                     </TableRow>
                   ) : filteredRecords.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="h-32 text-center text-muted-foreground">
+                      <TableCell colSpan={14} className="h-32 text-center text-muted-foreground">
                         {records.length === 0 ? "Sin registros en diseño." : "Sin registros para la semana seleccionada."}
                       </TableCell>
                     </TableRow>
@@ -474,6 +484,7 @@ export function DesignModule({ configMissing }: Props) {
                           {row.semana_original ?? "—"}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">{row.familia ?? "—"}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.tipo_tela ?? <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{row.categoria ?? "—"}</TableCell>
                         <TableCell>
                           {row.tipo
