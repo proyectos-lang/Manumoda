@@ -172,6 +172,7 @@ export function DesignModule({ configMissing }: Props) {
   const [selectedWeek, setSelectedWeek] = useState<string>("")
   const [selectedMonth, setSelectedMonth] = useState<string>("")
   const [filterFolio, setFilterFolio] = useState("")
+  const [filterModelo, setFilterModelo] = useState("")
   const [filterDisenadora, setFilterDisenadora] = useState("__all__")
   const [filterCosturera, setFilterCosturera] = useState("__all__")
   const [filterFamilia, setFilterFamilia] = useState("__all__")
@@ -225,6 +226,10 @@ export function DesignModule({ configMissing }: Props) {
           const q = filterFolio.trim().toLowerCase()
           if (!(r.folio ?? "").toLowerCase().includes(q)) return false
         }
+        if (filterModelo.trim()) {
+          const q = filterModelo.trim().toLowerCase()
+          if (!(r.modelo ?? "").toLowerCase().includes(q)) return false
+        }
         if (filterDisenadora !== "__all__" && String(r.iddisenadora ?? "") !== filterDisenadora) return false
         if (filterCosturera !== "__all__" && String(r.idcosturera ?? "") !== filterCosturera) return false
         if (filterFamilia !== "__all__" && r.familia !== filterFamilia) return false
@@ -232,7 +237,7 @@ export function DesignModule({ configMissing }: Props) {
         if (filterEstado !== "__all__" && getStatusKey(r) !== filterEstado) return false
         return true
       }),
-    [records, selectedWeek, selectedMonth, filterFolio, filterDisenadora, filterCosturera, filterFamilia, filterCategoria, filterEstado],
+    [records, selectedWeek, selectedMonth, filterFolio, filterModelo, filterDisenadora, filterCosturera, filterFamilia, filterCategoria, filterEstado],
   )
 
   const familiaOptions = useMemo(
@@ -247,6 +252,7 @@ export function DesignModule({ configMissing }: Props) {
 
   const hasActiveFilters =
     filterFolio.trim() !== "" ||
+    filterModelo.trim() !== "" ||
     filterDisenadora !== "__all__" ||
     filterCosturera !== "__all__" ||
     filterFamilia !== "__all__" ||
@@ -255,6 +261,7 @@ export function DesignModule({ configMissing }: Props) {
 
   const clearFilters = () => {
     setFilterFolio("")
+    setFilterModelo("")
     setFilterDisenadora("__all__")
     setFilterCosturera("__all__")
     setFilterFamilia("__all__")
@@ -416,6 +423,25 @@ export function DesignModule({ configMissing }: Props) {
                   <button
                     type="button"
                     onClick={() => setFilterFolio("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="relative min-w-[180px]">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar modelo…"
+                  value={filterModelo}
+                  onChange={(e) => setFilterModelo(e.target.value)}
+                  className="h-9 pl-8 pr-8 text-sm"
+                />
+                {filterModelo && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterModelo("")}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     <X className="size-3.5" />
