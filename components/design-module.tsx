@@ -1003,15 +1003,20 @@ function TiemposFueraTab({
     if (!supabase) return
     setSubmitting(true)
     try {
-      const { error } = await supabase.from("tiempos_fuera_area").insert({
+      const tfPayload: Record<string, unknown> = {
         idempresa: IDEMPRESA,
         fecha: format(form.fecha, "yyyy-MM-dd"),
-        iddisenadora: form.tipoColaborador === "disenadora" ? Number(form.idColaborador) : null,
-        idcosturera: form.tipoColaborador === "costurera" ? Number(form.idColaborador) : null,
         area_foranea: form.area_foranea.trim() || null,
         tiempo_af: form.tiempo_af ? Number(form.tiempo_af) : null,
         comentarios: form.comentarios.trim() || null,
-      })
+      }
+      if (form.tipoColaborador === "costurera") {
+        tfPayload.idcosturera = Number(form.idColaborador)
+        tfPayload.iddisenadora = null
+      } else {
+        tfPayload.iddisenadora = Number(form.idColaborador)
+      }
+      const { error } = await supabase.from("tiempos_fuera_area").insert(tfPayload)
       if (error) { toast.error("No se pudo registrar", { description: error.message }); return }
       toast.success("Tiempo fuera de área registrado.")
       setForm({ ...INIT_TF })
@@ -1040,16 +1045,21 @@ function TiemposFueraTab({
     if (!supabase) return
     setSaving(true)
     try {
+      const tfEditPayload: Record<string, unknown> = {
+        fecha: format(editForm.fecha, "yyyy-MM-dd"),
+        area_foranea: editForm.area_foranea.trim() || null,
+        tiempo_af: editForm.tiempo_af ? Number(editForm.tiempo_af) : null,
+        comentarios: editForm.comentarios.trim() || null,
+      }
+      if (editForm.tipoColaborador === "costurera") {
+        tfEditPayload.idcosturera = Number(editForm.idColaborador)
+        tfEditPayload.iddisenadora = null
+      } else {
+        tfEditPayload.iddisenadora = Number(editForm.idColaborador)
+      }
       const { error } = await supabase
         .from("tiempos_fuera_area")
-        .update({
-          fecha: format(editForm.fecha, "yyyy-MM-dd"),
-          iddisenadora: editForm.tipoColaborador === "disenadora" ? Number(editForm.idColaborador) : null,
-          idcosturera: editForm.tipoColaborador === "costurera" ? Number(editForm.idColaborador) : null,
-          area_foranea: editForm.area_foranea.trim() || null,
-          tiempo_af: editForm.tiempo_af ? Number(editForm.tiempo_af) : null,
-          comentarios: editForm.comentarios.trim() || null,
-        })
+        .update(tfEditPayload)
         .eq("id", editTarget.id)
         .eq("idempresa", IDEMPRESA)
       if (error) { toast.error("No se pudo actualizar", { description: error.message }); return }

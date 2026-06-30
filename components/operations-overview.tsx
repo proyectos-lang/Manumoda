@@ -11,6 +11,7 @@ import {
 import {
   BarChart,
   Bar,
+  LabelList,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -44,6 +45,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 type ResumenRow = {
   idempresa: number
@@ -179,6 +187,9 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
   const [rows, setRows] = useState<ResumenRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [filterMaquilero, setFilterMaquilero] = useState("__all__")
+  const [filterFamilia, setFilterFamilia] = useState("__all__")
+  const [filterRiesgo, setFilterRiesgo] = useState("__all__")
 
   const fetchData = useCallback(async () => {
     if (configMissing) {
@@ -212,19 +223,35 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
     void fetchData()
   }, [fetchData])
 
+  // Listas únicas para selects de filtro
+  const maquileroOptions = useMemo(() =>
+    [...new Set(rows.map((r) => r.maquilero_nombre?.trim() || "Sin asignar"))].sort(), [rows])
+  const familiaOptions = useMemo(() =>
+    [...new Set(rows.map((r) => r.familia?.trim() || "Sin Familia"))].sort(), [rows])
+  const riesgoOptions = useMemo(() =>
+    [...new Set(rows.map((r) => r.riesgo_entrega ?? "Sin Fecha"))].sort(), [rows])
+
+  // Filas filtradas — alimentan todos los gráficos y la tabla
+  const filteredRows = useMemo(() => rows.filter((r) => {
+    if (filterMaquilero !== "__all__" && (r.maquilero_nombre?.trim() || "Sin asignar") !== filterMaquilero) return false
+    if (filterFamilia !== "__all__" && (r.familia?.trim() || "Sin Familia") !== filterFamilia) return false
+    if (filterRiesgo !== "__all__" && (r.riesgo_entrega ?? "Sin Fecha") !== filterRiesgo) return false
+    return true
+  }), [rows, filterMaquilero, filterFamilia, filterRiesgo])
+
   // KPIs
   const kpis = useMemo(() => {
-    const total = rows.length
-    const aTiempo = rows.filter((r) => isAtTiempo(r.riesgo_entrega)).length
+    const total = filteredRows.length
+    const aTiempo = filteredRows.filter((r) => isAtTiempo(r.riesgo_entrega)).length
     const health = total > 0 ? Math.round((aTiempo / total) * 100) : 0
-    const piezas = rows.reduce((acc, r) => acc + (r.piezas ?? 0), 0)
+    const piezas = filteredRows.reduce((acc, r) => acc + (r.piezas ?? 0), 0)
     return { total, health, piezas }
-  }, [rows])
+  }, [filteredRows])
 
   // Bottlenecks: average days per phase gap
   const bottleneckData = useMemo(() => {
     return PHASE_GAPS.map((g) => {
-      const values = rows
+      const values = filteredRows
         .map((r) => r[g.key] as number | null)
         .filter((v): v is number => typeof v === "number" && !Number.isNaN(v))
       const avg =
@@ -233,40 +260,39 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           : 0
       return { fase: g.label, dias: avg }
     })
-  }, [rows])
+  }, [filteredRows])
 
   // Phase load (count per fase_actual)
   const phaseLoadData = useMemo(() => {
     const counts: Record<string, number> = {}
-    PHASE_BUCKETS.forEach((p) => {
-      counts[p] = 0
-    })
-    rows.forEach((r) => {
+    PHASE_BUCKETS.forEach((p) => { counts[p] = 0 })
+    filteredRows.forEach((r) => {
       const f = r.fase_actual ?? "Sin Fase"
       counts[f] = (counts[f] ?? 0) + 1
     })
     return Object.entries(counts)
       .filter(([, count]) => count > 0)
       .map(([fase, count]) => ({ fase, count }))
-  }, [rows])
+  }, [filteredRows])
 
   // Maquilero load
   const maquileroLoadData = useMemo(() => {
     const counts: Record<string, number> = {}
-    rows.forEach((r) => {
+    filteredRows.forEach((r) => {
       const name = r.maquilero_nombre?.trim() || "Sin asignar"
       counts[name] = (counts[name] ?? 0) + 1
     })
+    const total = filteredRows.length
     return Object.entries(counts)
-      .map(([nombre, count]) => ({ nombre, count }))
+      .map(([nombre, count]) => ({ nombre, count, pct: total > 0 ? Math.round((count / total) * 100) : 0 }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 12)
-  }, [rows])
+  }, [filteredRows])
 
   // Gráfico 1: órdenes por fase × riesgo_entrega (stacked)
   const statusRiskData = useMemo(() => {
     const map: Record<string, { fase: string; vencido: number; a_destiempo: number; a_tiempo: number }> = {}
-    rows.forEach((r) => {
+    filteredRows.forEach((r) => {
       const fase = r.fase_actual ?? "Sin Fase"
       if (!map[fase]) map[fase] = { fase, vencido: 0, a_destiempo: 0, a_tiempo: 0 }
       const v = (r.riesgo_entrega ?? "").toLowerCase()
@@ -284,12 +310,12 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       .filter((f) => !order.includes(f))
       .map((f) => map[f])
     return [...ordered, ...rest]
-  }, [rows])
+  }, [filteredRows])
 
   // Gráfico 2: calidad promedio por maquilero
   const calidadData = useMemo(() => {
     const map: Record<string, { sum: number; count: number }> = {}
-    rows.forEach((r) => {
+    filteredRows.forEach((r) => {
       const name = r.maquilero_nombre?.trim() || "Sin asignar"
       const q = r.calidad
       if (q != null && q > 0) {
@@ -304,19 +330,20 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
         promedio: Math.round((sum / count) * 10) / 10,
       }))
       .sort((a, b) => b.promedio - a.promedio)
-  }, [rows])
+  }, [filteredRows])
 
   // Gráfico 3: volumen por familia
   const familiaData = useMemo(() => {
     const map: Record<string, number> = {}
-    rows.forEach((r) => {
+    filteredRows.forEach((r) => {
       const f = r.familia?.trim() || "Sin Familia"
       map[f] = (map[f] ?? 0) + 1
     })
+    const total = filteredRows.length
     return Object.entries(map)
-      .map(([familia, count]) => ({ familia, count }))
+      .map(([familia, count]) => ({ familia, count, pct: total > 0 ? Math.round((count / total) * 100) : 0 }))
       .sort((a, b) => b.count - a.count)
-  }, [rows])
+  }, [filteredRows])
 
   if (configMissing) {
     return (
@@ -406,6 +433,51 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+
+      {/* FILTROS / SEGMENTADORES */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/60 bg-white/80 px-4 py-3 shadow-sm">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Filtrar por:</span>
+        <Select value={filterMaquilero} onValueChange={setFilterMaquilero}>
+          <SelectTrigger className="h-8 w-44 text-xs">
+            <SelectValue placeholder="Maquilero" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Todos los maquileros</SelectItem>
+            {maquileroOptions.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={filterFamilia} onValueChange={setFilterFamilia}>
+          <SelectTrigger className="h-8 w-40 text-xs">
+            <SelectValue placeholder="Familia" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Todas las familias</SelectItem>
+            {familiaOptions.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={filterRiesgo} onValueChange={setFilterRiesgo}>
+          <SelectTrigger className="h-8 w-40 text-xs">
+            <SelectValue placeholder="Riesgo" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Todos los riesgos</SelectItem>
+            {riesgoOptions.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {(filterMaquilero !== "__all__" || filterFamilia !== "__all__" || filterRiesgo !== "__all__") && (
+          <button
+            onClick={() => { setFilterMaquilero("__all__"); setFilterFamilia("__all__"); setFilterRiesgo("__all__") }}
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            Limpiar filtros
+          </button>
+        )}
+        {(filterMaquilero !== "__all__" || filterFamilia !== "__all__" || filterRiesgo !== "__all__") && (
+          <span className="ml-auto text-xs text-muted-foreground">
+            {filteredRows.length} de {rows.length} órdenes
+          </span>
+        )}
+      </div>
 
       {/* SECTION 2: CHARTS */}
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
@@ -546,7 +618,14 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 }}
                 formatter={(v: number) => [`${v} órdenes`, "Asignadas"]}
               />
-              <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="oklch(0.55 0.2 285)" />
+              <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="oklch(0.55 0.2 285)">
+                <LabelList
+                  dataKey="pct"
+                  position="right"
+                  style={{ fontSize: 10, fill: "oklch(0.45 0.04 280)" }}
+                  formatter={(v: number) => `${v}%`}
+                />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -706,7 +785,14 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                   labelStyle={{ color: "rgba(255,255,255,0.55)", marginBottom: 4 }}
                   formatter={(v: number) => [`${v} órdenes`, "Total"]}
                 />
-                <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="oklch(0.62 0.22 330)" />
+                <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="oklch(0.62 0.22 330)">
+                  <LabelList
+                    dataKey="pct"
+                    position="right"
+                    style={{ fontSize: 10, fill: "oklch(0.45 0.04 280)" }}
+                    formatter={(v: number) => `${v}%`}
+                  />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -736,10 +822,11 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
-                <TableHead className="w-[140px]">Folio</TableHead>
+                <TableHead className="w-[130px]">Folio</TableHead>
+                <TableHead>Modelo</TableHead>
                 <TableHead>Maquilador</TableHead>
-                <TableHead className="w-[120px]">F. Entrega</TableHead>
-                <TableHead className="w-[120px]">F. Límite Conf.</TableHead>
+                <TableHead className="w-[110px]">F. Entrega</TableHead>
+                <TableHead className="w-[110px]">F. Límite Conf.</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
@@ -750,7 +837,8 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                   {Array.from({ length: 6 }).map((_, i) => (
                     <TableRow key={`sk-${i}`}>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-28" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
@@ -762,7 +850,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-12 text-center">
+                  <TableCell colSpan={7} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -772,21 +860,17 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               )}
 
               {!loading &&
-                rows.map((r) => {
+                filteredRows.map((r) => {
                   const ri = getRiesgoVisuals(r.riesgo_entrega)
                   return (
                     <TableRow key={String(r.id)} className="hover:bg-muted/30">
                       <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-mono text-xs font-semibold text-foreground">
-                            {r.folio ?? "—"}
-                          </span>
-                          {r.modelo && (
-                            <span className="truncate text-[11px] text-muted-foreground">
-                              {r.modelo}
-                            </span>
-                          )}
-                        </div>
+                        <span className="font-mono text-xs font-semibold text-foreground">
+                          {r.folio ?? "—"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-sm text-foreground">
+                        {r.modelo ?? <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell>
                         <span className="text-sm text-foreground">
