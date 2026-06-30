@@ -22,6 +22,7 @@ import {
   MoreHorizontal,
   CalendarClock,
   X,
+  Search,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -170,6 +171,12 @@ export function DesignModule({ configMissing }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [selectedWeek, setSelectedWeek] = useState<string>("")
   const [selectedMonth, setSelectedMonth] = useState<string>("")
+  const [filterFolio, setFilterFolio] = useState("")
+  const [filterDisenadora, setFilterDisenadora] = useState("__all__")
+  const [filterCosturera, setFilterCosturera] = useState("__all__")
+  const [filterFamilia, setFilterFamilia] = useState("__all__")
+  const [filterCategoria, setFilterCategoria] = useState("__all__")
+  const [filterEstado, setFilterEstado] = useState("__all__")
 
   // Catálogos compartidos
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
@@ -214,10 +221,46 @@ export function DesignModule({ configMissing }: Props) {
       records.filter((r) => {
         if (selectedMonth && r.fecha?.slice(0, 7) !== selectedMonth) return false
         if (selectedWeek && String(r.semana) !== selectedWeek) return false
+        if (filterFolio.trim()) {
+          const q = filterFolio.trim().toLowerCase()
+          if (!(r.folio ?? "").toLowerCase().includes(q)) return false
+        }
+        if (filterDisenadora !== "__all__" && String(r.iddisenadora ?? "") !== filterDisenadora) return false
+        if (filterCosturera !== "__all__" && String(r.idcosturera ?? "") !== filterCosturera) return false
+        if (filterFamilia !== "__all__" && r.familia !== filterFamilia) return false
+        if (filterCategoria !== "__all__" && r.categoria !== filterCategoria) return false
+        if (filterEstado !== "__all__" && getStatusKey(r) !== filterEstado) return false
         return true
       }),
-    [records, selectedWeek, selectedMonth],
+    [records, selectedWeek, selectedMonth, filterFolio, filterDisenadora, filterCosturera, filterFamilia, filterCategoria, filterEstado],
   )
+
+  const familiaOptions = useMemo(
+    () => [...new Set(records.map((r) => r.familia).filter((f): f is string => !!f))].sort(),
+    [records],
+  )
+
+  const categoriaOptions = useMemo(
+    () => [...new Set(records.map((r) => r.categoria).filter((c): c is string => !!c))].sort(),
+    [records],
+  )
+
+  const hasActiveFilters =
+    filterFolio.trim() !== "" ||
+    filterDisenadora !== "__all__" ||
+    filterCosturera !== "__all__" ||
+    filterFamilia !== "__all__" ||
+    filterCategoria !== "__all__" ||
+    filterEstado !== "__all__"
+
+  const clearFilters = () => {
+    setFilterFolio("")
+    setFilterDisenadora("__all__")
+    setFilterCosturera("__all__")
+    setFilterFamilia("__all__")
+    setFilterCategoria("__all__")
+    setFilterEstado("__all__")
+  }
 
   const kpis = useMemo(
     () => ({
@@ -358,8 +401,27 @@ export function DesignModule({ configMissing }: Props) {
         {/* ── Tab 1: Seguimiento Semanal ── */}
         <TabsContent value="seguimiento" className="space-y-5 mt-0">
           {/* Toolbar */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <div className="flex flex-col gap-2">
+            {/* Fila 1: búsqueda + fechas + actualizar */}
             <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[180px]">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar folio…"
+                  value={filterFolio}
+                  onChange={(e) => setFilterFolio(e.target.value)}
+                  className="h-9 pl-8 pr-8 text-sm"
+                />
+                {filterFolio && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterFolio("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
               <Select
                 value={selectedMonth || "__all__"}
                 onValueChange={(v) => setSelectedMonth(v === "__all__" ? "" : v)}
@@ -404,6 +466,87 @@ export function DesignModule({ configMissing }: Props) {
                 <RefreshCw className={cn("size-4", loading && "animate-spin")} />
                 Actualizar
               </Button>
+            </div>
+
+            {/* Fila 2: filtros de entidad */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={filterDisenadora} onValueChange={setFilterDisenadora} disabled={loadingCatalogs}>
+                <SelectTrigger className="h-8 w-44 bg-transparent text-xs">
+                  <SelectValue placeholder="Diseñadora" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todas las diseñadoras</SelectItem>
+                  {disenadoras.map((d) => (
+                    <SelectItem key={d.id} value={String(d.id)}>{d.nombre}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filterCosturera} onValueChange={setFilterCosturera} disabled={loadingCatalogs}>
+                <SelectTrigger className="h-8 w-44 bg-transparent text-xs">
+                  <SelectValue placeholder="Costurera" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todas las costureras</SelectItem>
+                  {costureras.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filterFamilia} onValueChange={setFilterFamilia}>
+                <SelectTrigger className="h-8 w-36 bg-transparent text-xs">
+                  <SelectValue placeholder="Familia" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todas las familias</SelectItem>
+                  {familiaOptions.map((f) => (
+                    <SelectItem key={f} value={f}>{f}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filterCategoria} onValueChange={setFilterCategoria}>
+                <SelectTrigger className="h-8 w-36 bg-transparent text-xs">
+                  <SelectValue placeholder="Categoría" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todas las categorías</SelectItem>
+                  {categoriaOptions.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filterEstado} onValueChange={setFilterEstado}>
+                <SelectTrigger className="h-8 w-36 bg-transparent text-xs">
+                  <SelectValue placeholder="Estado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todos los estados</SelectItem>
+                  <SelectItem value="pendiente">Pendiente</SelectItem>
+                  <SelectItem value="diseno_ok">Diseño OK</SelectItem>
+                  <SelectItem value="costura_ok">Costura OK</SelectItem>
+                  <SelectItem value="completo">Completo</SelectItem>
+                  <SelectItem value="rechazado">Rechazado</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <div className="ml-auto flex items-center gap-2">
+                {hasActiveFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearFilters}
+                    className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3" /> Limpiar filtros
+                  </Button>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {filteredRecords.length} de {records.length}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -467,7 +610,9 @@ export function DesignModule({ configMissing }: Props) {
                   ) : filteredRecords.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={14} className="h-32 text-center text-muted-foreground">
-                        {records.length === 0 ? "Sin registros en diseño." : "Sin registros para la semana seleccionada."}
+                        {records.length === 0
+                          ? "Sin registros en diseño."
+                          : "Sin registros para los filtros seleccionados."}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -1979,6 +2124,14 @@ function AprobacionBadge({ fecha }: { fecha: string | null | undefined }) {
       {formatted}
     </span>
   )
+}
+
+function getStatusKey(row: DisenoProgramacion): string {
+  if (row.rechazo_orden) return "rechazado"
+  if (row.cumplimiento_diseno && row.cumplimiento_costura) return "completo"
+  if (row.cumplimiento_diseno) return "diseno_ok"
+  if (row.cumplimiento_costura) return "costura_ok"
+  return "pendiente"
 }
 
 function StatusBadge({ row }: { row: DisenoProgramacion }) {
