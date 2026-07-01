@@ -61,6 +61,14 @@ export type VwPlanCorteDetalle = {
   horas_plan_corte: number | null
   horas_plan_final: number | null
   horas_cumplimiento_corte: number | null
+  // New fields from multiplicative system
+  idfamilia_corte: number | null
+  categoria_corte: string | null
+  categoria_tela: string | null
+  tendidos: number | null
+  comp_entretela: boolean | null
+  comp_poquetin: boolean | null
+  comp_forro: boolean | null
 }
 
 export type VwBonosCorte = {

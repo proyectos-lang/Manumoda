@@ -1,15 +1,25 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { getISOWeek } from "date-fns"
 import { Loader2, Scissors } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
+import {
+  type CatFamiliaCorte,
+  type CatCategoriaCorte,
+  type CatTelaCorte,
+  type CatTrazosCorte,
+  type CatTendidosCorte,
+  type CatComplementoCorte,
+  calcHorasCorte,
+} from "@/lib/corte-calc"
 import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -26,35 +36,34 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Switch } from "@/components/ui/switch"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type CatTela = {
-  id: number
-  tipo_de_tela: string
-  complejidad_texto: string | null
-}
-
 type FormState = {
-  tipo_tela: string
-  complejidad_texto: string
-  metros_utilizar: string
+  idfamilia: string
+  categoriaCorte: string
+  categoriaTela: string
   trazos: string
-  combinacion: boolean
-  no_piezas: string
+  tendidos: string
+  compCombinacion: boolean
+  compEntretela: boolean
+  compPoquetin: boolean
+  compForro: boolean
 }
 
 const EMPTY_FORM: FormState = {
-  tipo_tela: "",
-  complejidad_texto: "",
-  metros_utilizar: "",
+  idfamilia: "",
+  categoriaCorte: "",
+  categoriaTela: "",
   trazos: "",
-  combinacion: false,
-  no_piezas: "",
+  tendidos: "",
+  compCombinacion: false,
+  compEntretela: false,
+  compPoquetin: false,
+  compForro: false,
 }
 
-// ─── Dark-theme styling constants (mirror de schedule-design-sheet) ───────────
+// ─── Dark-theme styling constants ─────────────────────────────────────────────
 
 const DARK_INPUT =
   "border-white/15 bg-white/10 text-white placeholder:text-white/30 focus-visible:ring-white/20 focus-visible:border-white/30"
@@ -104,6 +113,45 @@ function OrderField({
   )
 }
 
+function ComplementoCheck({
+  id,
+  label,
+  mult,
+  checked,
+  onChange,
+}: {
+  id: string
+  label: string
+  mult: number
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <div
+      className={cn(
+        "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
+        checked
+          ? "border-indigo-500/50 bg-indigo-500/20"
+          : "border-white/10 bg-white/5 hover:bg-white/10",
+      )}
+      onClick={() => onChange(!checked)}
+    >
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={onChange}
+        className="border-white/40 data-[state=checked]:bg-indigo-500 data-[state=checked]:border-indigo-500"
+      />
+      <div className="min-w-0 flex-1">
+        <label htmlFor={id} className="cursor-pointer text-xs font-medium text-white/80 pointer-events-none">
+          {label}
+        </label>
+        <p className="text-[10px] text-white/40">×{mult.toFixed(2)}</p>
+      </div>
+    </div>
+  )
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function ScheduleCutDialog({
@@ -117,12 +165,17 @@ export function ScheduleCutDialog({
   orden: OrdenProduccion | null
   onSaved: () => void
 }) {
-  const [telas, setTelas] = useState<CatTela[]>([])
+  const [familias, setFamilias] = useState<CatFamiliaCorte[]>([])
+  const [categorias, setCategorias] = useState<CatCategoriaCorte[]>([])
+  const [telas, setTelas] = useState<CatTelaCorte[]>([])
+  const [trazosOpts, setTrazosOpts] = useState<CatTrazosCorte[]>([])
+  const [tendidosOpts, setTendidosOpts] = useState<CatTendidosCorte[]>([])
+  const [complementos, setComplementos] = useState<CatComplementoCorte[]>([])
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
-  const [loadingTelas, setLoadingTelas] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // ── Load catalog & reset form on open ──────────────────────────────────────
+  // ── Load catalogs & reset form on open ────────────────────────────────────
   useEffect(() => {
     if (!open) {
       setForm(EMPTY_FORM)
@@ -131,38 +184,70 @@ export function ScheduleCutDialog({
     const supabase = getSupabase()
     if (!supabase) return
 
-    setLoadingTelas(true)
-    supabase
-      .from("cat_telas")
-      .select("id, tipo_de_tela, complejidad_texto")
-      .order("tipo_de_tela")
-      .then(({ data }) => {
-        setTelas((data as CatTela[]) ?? [])
-        setLoadingTelas(false)
-      })
+    setLoading(true)
+    Promise.all([
+      supabase.from("cat_familias_corte").select("id, nombre, grupo, horas_base").eq("idempresa", IDEMPRESA).order("grupo").order("nombre"),
+      supabase.from("cat_categorias_corte").select("id, nombre, multiplicador").eq("idempresa", IDEMPRESA).order("multiplicador"),
+      supabase.from("cat_telas_corte").select("id, nombre, multiplicador").eq("idempresa", IDEMPRESA).order("multiplicador"),
+      supabase.from("cat_trazos_corte").select("id, cantidad, multiplicador").eq("idempresa", IDEMPRESA).order("cantidad"),
+      supabase.from("cat_tendidos_corte").select("id, cantidad, multiplicador").eq("idempresa", IDEMPRESA).order("cantidad"),
+      supabase.from("cat_complementos_corte").select("id, nombre, clave, multiplicador").eq("idempresa", IDEMPRESA).order("id"),
+    ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes]) => {
+      setFamilias((fRes.data as CatFamiliaCorte[]) ?? [])
+      setCategorias((catRes.data as CatCategoriaCorte[]) ?? [])
+      setTelas((telaRes.data as CatTelaCorte[]) ?? [])
+      setTrazosOpts((trazRes.data as CatTrazosCorte[]) ?? [])
+      setTendidosOpts((tendRes.data as CatTendidosCorte[]) ?? [])
+      setComplementos((compRes.data as CatComplementoCorte[]) ?? [])
+      setLoading(false)
+    })
   }, [open])
 
-  // ── Auto-fill complejidad when tela changes ────────────────────────────────
-  const handleTelaChange = (value: string) => {
-    const found = telas.find((t) => t.tipo_de_tela === value)
-    setForm((f) => ({
-      ...f,
-      tipo_tela: value,
-      complejidad_texto: found?.complejidad_texto ?? "",
-    }))
-  }
+  // ── Real-time hours calculation ────────────────────────────────────────────
+  const horasCalculadas = useMemo(() => {
+    const familia = familias.find(f => String(f.id) === form.idfamilia)
+    const catData = categorias.find(c => c.nombre === form.categoriaCorte)
+    const telaData = telas.find(t => t.nombre === form.categoriaTela)
+    const trazosData = trazosOpts.find(t => t.cantidad === Number(form.trazos))
+    const tendData = tendidosOpts.find(t => t.cantidad === Number(form.tendidos))
+    if (!familia || !catData || !telaData || !trazosData || !tendData) return null
+    return calcHorasCorte({
+      horasBase: familia.horas_base,
+      catMult: catData.multiplicador,
+      telaMult: telaData.multiplicador,
+      trazosMult: trazosData.multiplicador,
+      tendidosMult: tendData.multiplicador,
+      compCombinacion: form.compCombinacion,
+      compEntretela: form.compEntretela,
+      compPoquetin: form.compPoquetin,
+      compForro: form.compForro,
+      complementos,
+    })
+  }, [form, familias, categorias, telas, trazosOpts, tendidosOpts, complementos])
+
+  // Complement combined multiplier for preview
+  const previewCompMult = useMemo(() => {
+    if (!complementos.length) return 1
+    let mult = 1
+    if (form.compCombinacion) mult *= complementos.find(c => c.clave === "comp_combinacion")?.multiplicador ?? 1
+    if (form.compEntretela)   mult *= complementos.find(c => c.clave === "comp_entretela")?.multiplicador ?? 1
+    if (form.compPoquetin)    mult *= complementos.find(c => c.clave === "comp_poquetin")?.multiplicador ?? 1
+    if (form.compForro)       mult *= complementos.find(c => c.clave === "comp_forro")?.multiplicador ?? 1
+    return mult
+  }, [form, complementos])
 
   // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!orden?.id || !orden.folio) return
 
-    if (!form.tipo_tela) { toast.error("Campo requerido", { description: "Selecciona un tipo de tela." }); return }
-    const metros = parseFloat(form.metros_utilizar)
-    const trazos = parseInt(form.trazos, 10)
-    const piezas = parseInt(form.no_piezas, 10)
-    if (isNaN(metros) || metros <= 0) { toast.error("Campo requerido", { description: "Ingresa los metros a utilizar." }); return }
-    if (isNaN(trazos) || trazos <= 0) { toast.error("Campo requerido", { description: "Ingresa el número de trazos." }); return }
-    if (isNaN(piezas) || piezas <= 0) { toast.error("Campo requerido", { description: "Ingresa el número de piezas." }); return }
+    if (!form.idfamilia) { toast.error("Campo requerido", { description: "Selecciona la familia de corte." }); return }
+    if (!form.categoriaCorte) { toast.error("Campo requerido", { description: "Selecciona la categoría." }); return }
+    if (!form.categoriaTela) { toast.error("Campo requerido", { description: "Selecciona el tipo de tela." }); return }
+    const trazosNum = parseInt(form.trazos, 10)
+    if (isNaN(trazosNum) || trazosNum < 1 || trazosNum > 5) { toast.error("Campo requerido", { description: "Ingresa los trazos (1–5)." }); return }
+    const tendidosNum = parseInt(form.tendidos, 10)
+    if (isNaN(tendidosNum) || tendidosNum < 1 || tendidosNum > 8) { toast.error("Campo requerido", { description: "Ingresa los tendidos (1–8)." }); return }
+    if (horasCalculadas === null) { toast.error("Error de cálculo", { description: "Verifica los valores ingresados." }); return }
 
     const supabase = getSupabase()
     if (!supabase) return
@@ -176,11 +261,16 @@ export function ScheduleCutDialog({
         idempresa: IDEMPRESA,
         folio: orden.folio,
         semana,
-        tipo_tela: form.tipo_tela,
-        metros_utilizar: metros,
-        trazos,
-        combinacion: form.combinacion,
-        no_piezas: piezas,
+        idfamilia_corte: Number(form.idfamilia),
+        categoria_corte: form.categoriaCorte,
+        categoria_tela: form.categoriaTela,
+        trazos: trazosNum,
+        tendidos: tendidosNum,
+        combinacion: form.compCombinacion,
+        comp_entretela: form.compEntretela,
+        comp_poquetin: form.compPoquetin,
+        comp_forro: form.compForro,
+        horas_plan_corte: horasCalculadas,
       })
 
     if (insertError) {
@@ -198,18 +288,32 @@ export function ScheduleCutDialog({
     setSaving(false)
 
     if (updateError) {
-      toast.error("Corte insertado pero no se pudo actualizar la orden", {
-        description: updateError.message,
-      })
+      toast.error("Corte insertado pero no se pudo actualizar la orden", { description: updateError.message })
       return
     }
 
     toast.success("Programación de Corte guardada", {
-      description: `Folio ${orden.folio} · Semana ${semana}`,
+      description: `Folio ${orden.folio} · Semana ${semana} · ${horasCalculadas} h`,
     })
     onOpenChange(false)
     onSaved()
   }
+
+  // Group families by grupo for the Select
+  const familiasByGrupo = useMemo(() => {
+    const groups: Record<string, CatFamiliaCorte[]> = {}
+    for (const f of familias) {
+      if (!groups[f.grupo]) groups[f.grupo] = []
+      groups[f.grupo].push(f)
+    }
+    return groups
+  }, [familias])
+
+  const selectedFamilia  = familias.find(f => String(f.id) === form.idfamilia)
+  const selectedCatData  = categorias.find(c => c.nombre === form.categoriaCorte)
+  const selectedTelaData = telas.find(t => t.nombre === form.categoriaTela)
+  const selectedTrazos   = trazosOpts.find(t => t.cantidad === Number(form.trazos))
+  const selectedTendidos = tendidosOpts.find(t => t.cantidad === Number(form.tendidos))
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -217,7 +321,7 @@ export function ScheduleCutDialog({
         side="right"
         className="w-full sm:max-w-xl flex flex-col gap-0 p-0 overflow-hidden border-l border-white/10"
       >
-        {/* ── Header con degradado oscuro ámbar ── */}
+        {/* ── Header ── */}
         <SheetHeader
           className="relative shrink-0 overflow-hidden p-6"
           style={{
@@ -225,7 +329,6 @@ export function ScheduleCutDialog({
               "linear-gradient(135deg, oklch(0.18 0.09 295) 0%, oklch(0.22 0.12 305) 50%, oklch(0.18 0.1 320) 100%)",
           }}
         >
-          {/* Capa de puntos decorativos */}
           <div
             className="pointer-events-none absolute inset-0 opacity-30"
             style={{
@@ -248,14 +351,14 @@ export function ScheduleCutDialog({
           </div>
         </SheetHeader>
 
-        {/* ── Cuerpo scrolleable con fondo oscuro ámbar ── */}
+        {/* ── Body ── */}
         <div
           className="flex-1 overflow-y-auto"
           style={{ background: "oklch(0.16 0.04 295)", color: "white" }}
         >
           <div className="space-y-6 p-6">
 
-            {/* ── Tarjeta de datos heredados (solo lectura) ── */}
+            {/* Datos de la Orden (solo lectura) */}
             <div className="rounded-xl border border-white/10 bg-white/5 p-4">
               <p className="mb-3 text-[10px] font-medium uppercase tracking-widest text-white/40">
                 Datos de la Orden
@@ -270,122 +373,196 @@ export function ScheduleCutDialog({
               </dl>
             </div>
 
-            {/* ── Sección: Tela ── */}
-            <FormSection title="Tela">
+            {/* Familia de Corte */}
+            <FormSection title="Familia de Corte — Horas Base">
+              <div className="space-y-1.5">
+                <DLabel htmlFor="idfamilia">Familia / Prenda <Req /></DLabel>
+                <Select
+                  value={form.idfamilia}
+                  onValueChange={(v) => setForm(f => ({ ...f, idfamilia: v }))}
+                  disabled={loading}
+                >
+                  <SelectTrigger id="idfamilia" className={DARK_SELECT_TRIGGER}>
+                    {loading ? (
+                      <span className="flex items-center gap-2 text-white/40">
+                        <Loader2 className="size-3.5 animate-spin" /> Cargando…
+                      </span>
+                    ) : (
+                      <SelectValue placeholder="Seleccionar prenda…" />
+                    )}
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(familiasByGrupo).map(([grupo, items]) => (
+                      <div key={grupo}>
+                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Grupo {grupo} — {items[0]?.horas_base} h base
+                        </div>
+                        {items.map(f => (
+                          <SelectItem key={f.id} value={String(f.id)}>
+                            {f.nombre}
+                          </SelectItem>
+                        ))}
+                      </div>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedFamilia && (
+                  <p className="text-[10px] text-white/40">
+                    Grupo {selectedFamilia.grupo} · {selectedFamilia.horas_base} h base
+                  </p>
+                )}
+              </div>
+            </FormSection>
+
+            {/* Multiplicadores */}
+            <FormSection title="Multiplicadores">
               <div className="grid grid-cols-2 gap-3">
+
+                {/* Categoría */}
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="tipo_tela">
-                    Tipo de Tela <Req />
-                  </DLabel>
+                  <DLabel htmlFor="categoriaCorte">Categoría <Req /></DLabel>
                   <Select
-                    value={form.tipo_tela}
-                    onValueChange={handleTelaChange}
-                    disabled={loadingTelas}
+                    value={form.categoriaCorte}
+                    onValueChange={(v) => setForm(f => ({ ...f, categoriaCorte: v }))}
+                    disabled={loading}
                   >
-                    <SelectTrigger id="tipo_tela" className={DARK_SELECT_TRIGGER}>
-                      {loadingTelas ? (
-                        <span className="flex items-center gap-2 text-white/40">
-                          <Loader2 className="size-3.5 animate-spin" /> Cargando…
-                        </span>
-                      ) : (
-                        <SelectValue placeholder="Seleccionar…" />
-                      )}
+                    <SelectTrigger id="categoriaCorte" className={DARK_SELECT_TRIGGER}>
+                      <SelectValue placeholder="Seleccionar…" />
                     </SelectTrigger>
                     <SelectContent>
-                      {telas.map((t) => (
-                        <SelectItem key={t.id} value={t.tipo_de_tela}>
-                          {t.tipo_de_tela}
+                      {categorias.map(c => (
+                        <SelectItem key={c.id} value={c.nombre}>
+                          <span>{c.nombre}</span>
+                          <span className="ml-2 text-muted-foreground">×{c.multiplicador}</span>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedCatData && (
+                    <p className="text-[10px] text-white/40">×{selectedCatData.multiplicador}</p>
+                  )}
                 </div>
 
+                {/* Tipo de Tela */}
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="complejidad">Complejidad</DLabel>
-                  <Input
-                    id="complejidad"
-                    value={form.complejidad_texto}
-                    readOnly
-                    placeholder="—"
-                    className={cn(DARK_INPUT, "cursor-default opacity-70")}
-                  />
-                </div>
-              </div>
-            </FormSection>
-
-            {/* ── Sección: Medidas ── */}
-            <FormSection title="Medidas">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <DLabel htmlFor="metros">
-                    Metros <Req />
-                  </DLabel>
-                  <Input
-                    id="metros"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={form.metros_utilizar}
-                    onChange={(e) => setForm((f) => ({ ...f, metros_utilizar: e.target.value }))}
-                    className={DARK_INPUT}
-                  />
+                  <DLabel htmlFor="categoriaTela">Tipo de Tela <Req /></DLabel>
+                  <Select
+                    value={form.categoriaTela}
+                    onValueChange={(v) => setForm(f => ({ ...f, categoriaTela: v }))}
+                    disabled={loading}
+                  >
+                    <SelectTrigger id="categoriaTela" className={DARK_SELECT_TRIGGER}>
+                      <SelectValue placeholder="Seleccionar…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {telas.map(t => (
+                        <SelectItem key={t.id} value={t.nombre}>
+                          <span>{t.nombre}</span>
+                          <span className="ml-2 text-muted-foreground">×{t.multiplicador}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedTelaData && (
+                    <p className="text-[10px] text-white/40">×{selectedTelaData.multiplicador}</p>
+                  )}
                 </div>
 
+                {/* Trazos */}
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="trazos">
-                    Trazos <Req />
-                  </DLabel>
+                  <DLabel htmlFor="trazos">Trazos (1–5) <Req /></DLabel>
                   <Input
                     id="trazos"
                     type="number"
                     min="1"
+                    max="5"
                     step="1"
-                    placeholder="0"
+                    placeholder="1"
                     value={form.trazos}
-                    onChange={(e) => setForm((f) => ({ ...f, trazos: e.target.value }))}
+                    onChange={(e) => setForm(f => ({ ...f, trazos: e.target.value }))}
                     className={DARK_INPUT}
                   />
+                  {selectedTrazos && (
+                    <p className="text-[10px] text-white/40">×{selectedTrazos.multiplicador}</p>
+                  )}
                 </div>
 
+                {/* Tendidos */}
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="no_piezas">
-                    No. Piezas <Req />
-                  </DLabel>
+                  <DLabel htmlFor="tendidos">Tendidos (1–8) <Req /></DLabel>
                   <Input
-                    id="no_piezas"
+                    id="tendidos"
                     type="number"
                     min="1"
+                    max="8"
                     step="1"
-                    placeholder="0"
-                    value={form.no_piezas}
-                    onChange={(e) => setForm((f) => ({ ...f, no_piezas: e.target.value }))}
+                    placeholder="1"
+                    value={form.tendidos}
+                    onChange={(e) => setForm(f => ({ ...f, tendidos: e.target.value }))}
                     className={DARK_INPUT}
                   />
+                  {selectedTendidos && (
+                    <p className="text-[10px] text-white/40">×{selectedTendidos.multiplicador}</p>
+                  )}
                 </div>
               </div>
             </FormSection>
 
-            {/* ── Sección: Configuración ── */}
-            <FormSection title="Configuración">
-              <div
-                className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5"
-              >
-                <label
-                  htmlFor="combinacion"
-                  className="cursor-pointer select-none text-xs font-medium leading-tight text-white/70"
-                >
-                  Corte combinado
-                </label>
-                <Switch
-                  id="combinacion"
-                  checked={form.combinacion}
-                  onCheckedChange={(v) => setForm((f) => ({ ...f, combinacion: v }))}
-                  className="shrink-0 data-[state=checked]:bg-indigo-500"
-                />
-              </div>
+            {/* Complementos */}
+            <FormSection title="Complementos">
+              {complementos.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {complementos.map(comp => {
+                    const checked =
+                      comp.clave === "comp_combinacion" ? form.compCombinacion :
+                      comp.clave === "comp_entretela"   ? form.compEntretela :
+                      comp.clave === "comp_poquetin"    ? form.compPoquetin :
+                      comp.clave === "comp_forro"       ? form.compForro : false
+                    return (
+                      <ComplementoCheck
+                        key={comp.clave}
+                        id={comp.clave}
+                        label={comp.nombre}
+                        mult={comp.multiplicador}
+                        checked={checked}
+                        onChange={(v) => setForm(f => ({
+                          ...f,
+                          ...(comp.clave === "comp_combinacion" ? { compCombinacion: v } :
+                              comp.clave === "comp_entretela"   ? { compEntretela: v } :
+                              comp.clave === "comp_poquetin"    ? { compPoquetin: v } :
+                              comp.clave === "comp_forro"       ? { compForro: v } : {}),
+                        }))}
+                      />
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-white/30">Cargando complementos…</p>
+              )}
             </FormSection>
+
+            {/* Preview Card */}
+            {horasCalculadas !== null && (
+              <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-indigo-300/70">
+                  Horas Plan Estimadas
+                </p>
+                <p className="text-2xl font-bold text-white">
+                  {horasCalculadas}{" "}
+                  <span className="text-sm font-normal text-white/50">h</span>
+                </p>
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-white/40">
+                  <span>Base: {selectedFamilia?.horas_base}</span>
+                  <span>× Cat: {selectedCatData?.multiplicador}</span>
+                  <span>× Tela: {selectedTelaData?.multiplicador}</span>
+                  <span>× Trazos: {selectedTrazos?.multiplicador}</span>
+                  <span>× Tendidos: {selectedTendidos?.multiplicador}</span>
+                  {previewCompMult > 1 && (
+                    <span>× Comp: {Math.round(previewCompMult * 10000) / 10000}</span>
+                  )}
+                </div>
+              </div>
+            )}
 
           </div>
         </div>
@@ -407,7 +584,7 @@ export function ScheduleCutDialog({
           <Button
             type="button"
             onClick={handleSubmit}
-            disabled={saving || !orden}
+            disabled={saving || !orden || horasCalculadas === null}
             className="bg-indigo-600 hover:bg-indigo-500 text-white border-0"
           >
             {saving ? (

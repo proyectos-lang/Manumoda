@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Loader2, RefreshCw, Search, X } from "lucide-react"
+import { Loader2, RefreshCw, Search, Settings2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { EditCorteVariablesSheet } from "@/components/edit-corte-variables-sheet"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -96,6 +97,7 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
   const [savingId, setSavingId] = useState<number | null>(null)
   const [filterSemana, setFilterSemana] = useState<string>("__all__")
   const [search, setSearch] = useState("")
+  const [editVarsOpen, setEditVarsOpen] = useState(false)
 
   // Local overrides for inline edits (keyed by registro_id)
   const [localRows, setLocalRows] = useState<Record<number, Partial<PatchRow>>>({})
@@ -160,7 +162,8 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
         (r) =>
           r.folio.toLowerCase().includes(q) ||
           (r.familia ?? "").toLowerCase().includes(q) ||
-          (r.tipo_tela ?? "").toLowerCase().includes(q),
+          (r.tipo_tela ?? "").toLowerCase().includes(q) ||
+          (r.categoria_tela ?? "").toLowerCase().includes(q),
       )
     }
     return list
@@ -205,6 +208,8 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
   }
 
   return (
+    <>
+    <EditCorteVariablesSheet open={editVarsOpen} onClose={() => setEditVarsOpen(false)} />
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -243,6 +248,15 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{filtered.length} registro{filtered.length !== 1 ? "s" : ""}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setEditVarsOpen(true)}
+            className="gap-1.5 bg-transparent"
+          >
+            <Settings2 className="size-3.5" />
+            Editar variables
+          </Button>
           <Button variant="outline" size="sm" onClick={fetchData} disabled={loading} className="gap-1.5 bg-transparent">
             {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
             Actualizar
@@ -259,10 +273,8 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
               <TableHead className="font-semibold">Familia</TableHead>
               <TableHead className="font-semibold">Categoría</TableHead>
               <TableHead className="font-semibold">Tela</TableHead>
-              <TableHead className="text-right font-semibold">Metros</TableHead>
-              <TableHead className="font-semibold">Complejidad</TableHead>
-              <TableHead className="text-center font-semibold">Comb.</TableHead>
-              <TableHead className="text-right font-semibold">Piezas</TableHead>
+              <TableHead className="text-right font-semibold">Tendidos</TableHead>
+              <TableHead className="font-semibold">Complementos</TableHead>
               <TableHead className="min-w-[140px] font-semibold">Cortador</TableHead>
               <TableHead className="min-w-[140px] font-semibold">Apoyo</TableHead>
               <TableHead className="min-w-[110px] font-semibold">Mesa</TableHead>
@@ -278,14 +290,14 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
             {loading && rows.length === 0 ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 17 }).map((__, j) => (
+                  {Array.from({ length: 15 }).map((__, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={17} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={15} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0 ? "No hay registros en el plan de corte." : "Sin resultados para esta búsqueda."}
                 </TableCell>
               </TableRow>
@@ -297,22 +309,28 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
                   <TableRow key={r.registro_id} className={cn("text-sm", isSaving && "opacity-60")}>
                     <TableCell className="font-mono font-semibold">{r.folio}</TableCell>
                     <TableCell className="text-muted-foreground">{r.familia ?? "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">{r.categoria ?? "—"}</TableCell>
-                    <TableCell className="max-w-[140px] truncate text-xs">{r.tipo_tela ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.metros_utilizar ?? "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">{r.categoria_corte ?? r.categoria ?? "—"}</TableCell>
+                    <TableCell className="max-w-[130px] truncate text-xs">{r.categoria_tela ?? r.tipo_tela ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.tendidos ?? "—"}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="text-xs font-normal">
-                        {r.complejidad_de_tela ?? "—"}
-                      </Badge>
+                      <div className="flex flex-wrap gap-1">
+                        {r.combinacion && (
+                          <span className="rounded px-1 py-0.5 text-[10px] bg-amber-100 text-amber-700">Comb</span>
+                        )}
+                        {r.comp_entretela && (
+                          <span className="rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700">Ent</span>
+                        )}
+                        {r.comp_poquetin && (
+                          <span className="rounded px-1 py-0.5 text-[10px] bg-purple-100 text-purple-700">Poq</span>
+                        )}
+                        {r.comp_forro && (
+                          <span className="rounded px-1 py-0.5 text-[10px] bg-green-100 text-green-700">Fro</span>
+                        )}
+                        {!r.combinacion && !r.comp_entretela && !r.comp_poquetin && !r.comp_forro && (
+                          <span className="text-xs text-muted-foreground/50">—</span>
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell className="text-center">
-                      {r.combinacion ? (
-                        <Badge className="bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100">Sí</Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground/50">No</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{r.no_piezas ?? "—"}</TableCell>
 
                     {/* Cortador — inline Select */}
                     <TableCell>
@@ -412,6 +430,7 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
         </Table>
       </div>
     </div>
+    </>
   )
 }
 
