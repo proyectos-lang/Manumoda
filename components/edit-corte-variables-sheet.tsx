@@ -1,12 +1,20 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Loader2, Settings2 } from "lucide-react"
+import { Loader2, Plus, Settings2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Sheet,
   SheetContent,
@@ -105,6 +113,11 @@ function VarTableWrapper({ loading, children }: { loading: boolean; children: Re
 function FamiliasTab() {
   const [rows, setRows] = useState<VarRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [showAdd, setShowAdd] = useState(false)
+  const [newNombre, setNewNombre] = useState("")
+  const [newGrupo, setNewGrupo] = useState("A")
+  const [newHoras, setNewHoras] = useState("")
+  const [adding, setAdding] = useState(false)
 
   useEffect(() => {
     const sb = getSupabase()
@@ -132,32 +145,99 @@ function FamiliasTab() {
     }
   }
 
+  const addRow = async () => {
+    const horas = parseFloat(newHoras)
+    if (!newNombre.trim() || isNaN(horas)) {
+      toast.error("Completa nombre y horas base")
+      return
+    }
+    setAdding(true)
+    const sb = getSupabase()
+    if (!sb) { setAdding(false); return }
+    const { data, error } = await sb
+      .from("cat_familias_corte")
+      .insert({ idempresa: IDEMPRESA, nombre: newNombre.trim().toUpperCase(), grupo: newGrupo, horas_base: horas })
+      .select("id, nombre, grupo, horas_base")
+      .single()
+    setAdding(false)
+    if (error) { toast.error("No se pudo agregar", { description: error.message }); return }
+    setRows(prev =>
+      [...prev, data as VarRow].sort((a, b) =>
+        (a.grupo ?? "").localeCompare(b.grupo ?? "") || (a.nombre ?? "").localeCompare(b.nombre ?? "")
+      )
+    )
+    setNewNombre(""); setNewHoras(""); setShowAdd(false)
+    toast.success("Fila agregada")
+  }
+
   return (
-    <VarTableWrapper loading={loading}>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Prenda</TableHead>
-          <TableHead className="text-center">Grupo</TableHead>
-          <TableHead className="text-right">Horas Base</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map(r => (
-          <TableRow key={r.id}>
-            <TableCell className="font-medium">{r.nombre}</TableCell>
-            <TableCell className="text-center text-muted-foreground">{r.grupo}</TableCell>
-            <TableCell className="text-right">
-              <EditableNumber
-                value={r.horas_base ?? 0}
-                min={0}
-                step="0.01"
-                onSave={(v) => save(r.id, v)}
-              />
-            </TableCell>
+    <div className="space-y-2">
+      <VarTableWrapper loading={loading}>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Prenda</TableHead>
+            <TableHead className="text-center">Grupo</TableHead>
+            <TableHead className="text-right">Horas Base</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </VarTableWrapper>
+        </TableHeader>
+        <TableBody>
+          {rows.map(r => (
+            <TableRow key={r.id}>
+              <TableCell className="font-medium">{r.nombre}</TableCell>
+              <TableCell className="text-center text-muted-foreground">{r.grupo}</TableCell>
+              <TableCell className="text-right">
+                <EditableNumber
+                  value={r.horas_base ?? 0}
+                  min={0}
+                  step="0.01"
+                  onSave={(v) => save(r.id, v)}
+                />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </VarTableWrapper>
+
+      {!showAdd ? (
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowAdd(true)}>
+          <Plus className="size-3.5" /> Agregar
+        </Button>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3">
+          <Input
+            placeholder="Nombre prenda"
+            value={newNombre}
+            onChange={e => setNewNombre(e.target.value)}
+            className="h-8 flex-1 min-w-[120px] text-xs"
+          />
+          <Select value={newGrupo} onValueChange={setNewGrupo}>
+            <SelectTrigger className="h-8 w-20 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {["A", "B", "C", "D"].map(g => (
+                <SelectItem key={g} value={g}>Grupo {g}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            placeholder="Horas base"
+            type="number"
+            min="0"
+            step="0.01"
+            value={newHoras}
+            onChange={e => setNewHoras(e.target.value)}
+            className="h-8 w-28 text-xs text-right"
+          />
+          <Button size="sm" onClick={addRow} disabled={adding} className="h-8">
+            {adding ? <Loader2 className="size-3 animate-spin" /> : "Guardar"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => { setShowAdd(false); setNewNombre(""); setNewHoras("") }} className="h-8">
+            Cancelar
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -176,6 +256,10 @@ function MultTab({
 }) {
   const [rows, setRows] = useState<VarRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [showAdd, setShowAdd] = useState(false)
+  const [newLabel, setNewLabel] = useState("")
+  const [newMult, setNewMult] = useState("")
+  const [adding, setAdding] = useState(false)
 
   useEffect(() => {
     const sb = getSupabase()
@@ -202,31 +286,100 @@ function MultTab({
     }
   }
 
+  const addRow = async () => {
+    const mult = parseFloat(newMult)
+    const labelVal = labelKey === "cantidad" ? parseInt(newLabel, 10) : newLabel.trim()
+    if ((labelKey === "nombre" && !newLabel.trim()) || (labelKey === "cantidad" && isNaN(labelVal as number)) || isNaN(mult)) {
+      toast.error("Completa todos los campos")
+      return
+    }
+    setAdding(true)
+    const sb = getSupabase()
+    if (!sb) { setAdding(false); return }
+    const payload = {
+      idempresa: IDEMPRESA,
+      [labelKey]: labelVal,
+      multiplicador: mult,
+    }
+    const { data, error } = await sb
+      .from(tableName)
+      .insert(payload)
+      .select("*")
+      .single()
+    setAdding(false)
+    if (error) { toast.error("No se pudo agregar", { description: error.message }); return }
+    setRows(prev => {
+      const updated = [...prev, data as VarRow]
+      return updated.sort((a, b) => {
+        const aVal = labelKey === "nombre" ? (a.nombre ?? "") : (a.cantidad ?? 0)
+        const bVal = labelKey === "nombre" ? (b.nombre ?? "") : (b.cantidad ?? 0)
+        return typeof aVal === "string" ? aVal.localeCompare(bVal as string) : (aVal as number) - (bVal as number)
+      })
+    })
+    setNewLabel(""); setNewMult(""); setShowAdd(false)
+    toast.success("Fila agregada")
+  }
+
   return (
-    <VarTableWrapper loading={loading}>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{labelTitle}</TableHead>
-          <TableHead className="text-right">Multiplicador</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map(r => (
-          <TableRow key={r.id}>
-            <TableCell className="font-medium">
-              {labelKey === "nombre" ? r.nombre : r.cantidad}
-            </TableCell>
-            <TableCell className="text-right">
-              <EditableNumber
-                value={r.multiplicador ?? 1}
-                min={0}
-                onSave={(v) => save(r.id, v)}
-              />
-            </TableCell>
+    <div className="space-y-2">
+      <VarTableWrapper loading={loading}>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{labelTitle}</TableHead>
+            <TableHead className="text-right">Multiplicador</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </VarTableWrapper>
+        </TableHeader>
+        <TableBody>
+          {rows.map(r => (
+            <TableRow key={r.id}>
+              <TableCell className="font-medium">
+                {labelKey === "nombre" ? r.nombre : r.cantidad}
+              </TableCell>
+              <TableCell className="text-right">
+                <EditableNumber
+                  value={r.multiplicador ?? 1}
+                  min={0}
+                  onSave={(v) => save(r.id, v)}
+                />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </VarTableWrapper>
+
+      {!showAdd ? (
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowAdd(true)}>
+          <Plus className="size-3.5" /> Agregar
+        </Button>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3">
+          <Input
+            placeholder={labelKey === "nombre" ? labelTitle : "Cantidad"}
+            type={labelKey === "cantidad" ? "number" : "text"}
+            min={labelKey === "cantidad" ? "1" : undefined}
+            step={labelKey === "cantidad" ? "1" : undefined}
+            value={newLabel}
+            onChange={e => setNewLabel(e.target.value)}
+            className="h-8 flex-1 min-w-[100px] text-xs"
+          />
+          <Input
+            placeholder="Multiplicador"
+            type="number"
+            min="0"
+            step="0.001"
+            value={newMult}
+            onChange={e => setNewMult(e.target.value)}
+            className="h-8 w-32 text-xs text-right"
+          />
+          <Button size="sm" onClick={addRow} disabled={adding} className="h-8">
+            {adding ? <Loader2 className="size-3 animate-spin" /> : "Guardar"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => { setShowAdd(false); setNewLabel(""); setNewMult("") }} className="h-8">
+            Cancelar
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }
 

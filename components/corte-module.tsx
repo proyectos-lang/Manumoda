@@ -88,6 +88,8 @@ type PatchRow = {
   mesa: string | null
   variable_subjetiva: number | null
   cumplimiento_corte: string | null
+  calificacion: number | null
+  comentarios: string | null
 }
 
 function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
@@ -274,6 +276,7 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
               <TableHead className="font-semibold">Categoría</TableHead>
               <TableHead className="font-semibold">Tela</TableHead>
               <TableHead className="text-right font-semibold">Tendidos</TableHead>
+              <TableHead className="text-right font-semibold">Piezas</TableHead>
               <TableHead className="font-semibold">Complementos</TableHead>
               <TableHead className="min-w-[140px] font-semibold">Cortador</TableHead>
               <TableHead className="min-w-[140px] font-semibold">Apoyo</TableHead>
@@ -284,20 +287,22 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
               <TableHead className="text-right font-semibold">Hrs Final</TableHead>
               <TableHead className="min-w-[130px] font-semibold">Cumplimiento</TableHead>
               <TableHead className="text-right font-semibold">Hrs Cum.</TableHead>
+              <TableHead className="text-center font-semibold">Calidad</TableHead>
+              <TableHead className="min-w-[160px] font-semibold">Comentarios</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading && rows.length === 0 ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 15 }).map((__, j) => (
+                  {Array.from({ length: 18 }).map((__, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={15} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={18} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0 ? "No hay registros en el plan de corte." : "Sin resultados para esta búsqueda."}
                 </TableCell>
               </TableRow>
@@ -312,6 +317,7 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
                     <TableCell className="text-muted-foreground">{r.categoria_corte ?? r.categoria ?? "—"}</TableCell>
                     <TableCell className="max-w-[130px] truncate text-xs">{r.categoria_tela ?? r.tipo_tela ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.tendidos ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.piezas_cortadas ?? "—"}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {r.combinacion && (
@@ -422,6 +428,24 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
                         <span className="text-muted-foreground/50">—</span>
                       )}
                     </TableCell>
+
+                    {/* Calificación — inline Select 1–10 */}
+                    <TableCell className="text-center">
+                      <CalificacionCell
+                        value={m.calificacion ?? null}
+                        disabled={isSaving}
+                        onSave={(v) => handleFieldSave(r.registro_id, "calificacion", v)}
+                      />
+                    </TableCell>
+
+                    {/* Comentarios — inline text input */}
+                    <TableCell>
+                      <ComentariosCell
+                        value={m.comentarios ?? ""}
+                        disabled={isSaving}
+                        onSave={(v) => handleFieldSave(r.registro_id, "comentarios", v || null)}
+                      />
+                    </TableCell>
                   </TableRow>
                 )
               })
@@ -487,6 +511,52 @@ function VariableCell({ value, disabled, onSave }: { value: number; disabled: bo
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
       disabled={disabled}
       className="h-8 w-20 text-right text-xs"
+    />
+  )
+}
+
+function CalificacionCell({ value, disabled, onSave }: {
+  value: number | null; disabled: boolean; onSave: (v: number | null) => void
+}) {
+  const colorClass = value == null ? "text-muted-foreground"
+    : value >= 8 ? "text-emerald-700 font-semibold"
+    : value >= 5 ? "text-amber-700 font-semibold"
+    : "text-rose-700 font-semibold"
+  return (
+    <Select
+      value={value != null ? String(value) : "__none__"}
+      onValueChange={(v) => onSave(v === "__none__" ? null : Number(v))}
+      disabled={disabled}
+    >
+      <SelectTrigger className={cn("h-8 w-16 text-xs", colorClass)}>
+        <SelectValue placeholder="—" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">—</SelectItem>
+        {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+          <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+function ComentariosCell({ value, disabled, onSave }: {
+  value: string; disabled: boolean; onSave: (v: string) => void
+}) {
+  const [local, setLocal] = useState(value)
+  const initialRef = useRef(value)
+  useEffect(() => { setLocal(value); initialRef.current = value }, [value])
+  return (
+    <Input
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => { if (local !== initialRef.current) onSave(local) }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
+      disabled={disabled}
+      maxLength={200}
+      placeholder="—"
+      className="h-8 min-w-[150px] text-xs"
     />
   )
 }

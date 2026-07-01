@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { getISOWeek } from "date-fns"
-import { Loader2, Scissors } from "lucide-react"
+import { Check, ChevronsUpDown, Loader2, Scissors } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -20,7 +20,16 @@ import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -39,6 +48,8 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type Cortador = { id: number; nombre: string }
+
 type FormState = {
   idfamilia: string
   categoriaCorte: string
@@ -49,6 +60,9 @@ type FormState = {
   compEntretela: boolean
   compPoquetin: boolean
   compForro: boolean
+  idcortador: string
+  idapoyo: string
+  piezas_cortadas: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -61,6 +75,9 @@ const EMPTY_FORM: FormState = {
   compEntretela: false,
   compPoquetin: false,
   compForro: false,
+  idcortador: "",
+  idapoyo: "",
+  piezas_cortadas: "",
 }
 
 // ─── Dark-theme styling constants ─────────────────────────────────────────────
@@ -171,7 +188,9 @@ export function ScheduleCutDialog({
   const [trazosOpts, setTrazosOpts] = useState<CatTrazosCorte[]>([])
   const [tendidosOpts, setTendidosOpts] = useState<CatTendidosCorte[]>([])
   const [complementos, setComplementos] = useState<CatComplementoCorte[]>([])
+  const [cortadores, setCortadores] = useState<Cortador[]>([])
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
+  const [telaPopoverOpen, setTelaPopoverOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -179,6 +198,7 @@ export function ScheduleCutDialog({
   useEffect(() => {
     if (!open) {
       setForm(EMPTY_FORM)
+      setTelaPopoverOpen(false)
       return
     }
     const supabase = getSupabase()
@@ -192,13 +212,20 @@ export function ScheduleCutDialog({
       supabase.from("cat_trazos_corte").select("id, cantidad, multiplicador").eq("idempresa", IDEMPRESA).order("cantidad"),
       supabase.from("cat_tendidos_corte").select("id, cantidad, multiplicador").eq("idempresa", IDEMPRESA).order("cantidad"),
       supabase.from("cat_complementos_corte").select("id, nombre, clave, multiplicador").eq("idempresa", IDEMPRESA).order("id"),
-    ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes]) => {
-      setFamilias((fRes.data as CatFamiliaCorte[]) ?? [])
+      supabase.from("cortadores").select("id, nombre").eq("activo", true).order("nombre"),
+    ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes, cortRes]) => {
+      const familiasList = (fRes.data as CatFamiliaCorte[]) ?? []
+      setFamilias(familiasList)
+      const matched = familiasList.find(
+        f => f.nombre.toUpperCase() === (orden?.familia ?? "").toUpperCase()
+      )
+      if (matched) setForm(prev => ({ ...prev, idfamilia: String(matched.id) }))
       setCategorias((catRes.data as CatCategoriaCorte[]) ?? [])
       setTelas((telaRes.data as CatTelaCorte[]) ?? [])
       setTrazosOpts((trazRes.data as CatTrazosCorte[]) ?? [])
       setTendidosOpts((tendRes.data as CatTendidosCorte[]) ?? [])
       setComplementos((compRes.data as CatComplementoCorte[]) ?? [])
+      setCortadores((cortRes.data as Cortador[]) ?? [])
       setLoading(false)
     })
   }, [open])
@@ -271,6 +298,9 @@ export function ScheduleCutDialog({
         comp_poquetin: form.compPoquetin,
         comp_forro: form.compForro,
         horas_plan_corte: horasCalculadas,
+        idcortador: form.idcortador && form.idcortador !== "__none__" ? Number(form.idcortador) : null,
+        idapoyo: form.idapoyo && form.idapoyo !== "__none__" ? Number(form.idapoyo) : null,
+        piezas_cortadas: form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null,
       })
 
     if (insertError) {
@@ -443,26 +473,49 @@ export function ScheduleCutDialog({
                   )}
                 </div>
 
-                {/* Tipo de Tela */}
+                {/* Tipo de Tela — Combobox con búsqueda */}
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="categoriaTela">Tipo de Tela <Req /></DLabel>
-                  <Select
-                    value={form.categoriaTela}
-                    onValueChange={(v) => setForm(f => ({ ...f, categoriaTela: v }))}
-                    disabled={loading}
-                  >
-                    <SelectTrigger id="categoriaTela" className={DARK_SELECT_TRIGGER}>
-                      <SelectValue placeholder="Seleccionar…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {telas.map(t => (
-                        <SelectItem key={t.id} value={t.nombre}>
-                          <span>{t.nombre}</span>
-                          <span className="ml-2 text-muted-foreground">×{t.multiplicador}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <DLabel>Tipo de Tela <Req /></DLabel>
+                  <Popover open={telaPopoverOpen} onOpenChange={setTelaPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={loading}
+                        className={cn(
+                          "flex h-9 w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors",
+                          DARK_SELECT_TRIGGER,
+                          !form.categoriaTela && "text-white/40",
+                        )}
+                      >
+                        <span className="truncate">{form.categoriaTela || "Seleccionar tela…"}</span>
+                        <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[280px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar tela…" className="h-9" />
+                        <CommandList className="max-h-[220px]">
+                          <CommandEmpty>No se encontró la tela.</CommandEmpty>
+                          <CommandGroup>
+                            {telas.map(t => (
+                              <CommandItem
+                                key={t.id}
+                                value={t.nombre}
+                                onSelect={() => {
+                                  setForm(f => ({ ...f, categoriaTela: t.nombre }))
+                                  setTelaPopoverOpen(false)
+                                }}
+                              >
+                                <Check className={cn("mr-2 size-4 shrink-0", form.categoriaTela === t.nombre ? "opacity-100" : "opacity-0")} />
+                                <span className="flex-1 truncate">{t.nombre}</span>
+                                <span className="ml-2 text-xs text-muted-foreground">×{t.multiplicador}</span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                   {selectedTelaData && (
                     <p className="text-[10px] text-white/40">×{selectedTelaData.multiplicador}</p>
                   )}
@@ -539,6 +592,61 @@ export function ScheduleCutDialog({
               ) : (
                 <p className="text-xs text-white/30">Cargando complementos…</p>
               )}
+            </FormSection>
+
+            {/* Asignación */}
+            <FormSection title="Asignación">
+              <div className="space-y-1.5">
+                <DLabel htmlFor="piezas_cortadas">Piezas Cortadas</DLabel>
+                <Input
+                  id="piezas_cortadas"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="0"
+                  value={form.piezas_cortadas}
+                  onChange={(e) => setForm(f => ({ ...f, piezas_cortadas: e.target.value }))}
+                  className={DARK_INPUT}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <DLabel htmlFor="idcortador">Cortador</DLabel>
+                  <Select
+                    value={form.idcortador || "__none__"}
+                    onValueChange={(v) => setForm(f => ({ ...f, idcortador: v }))}
+                    disabled={loading}
+                  >
+                    <SelectTrigger id="idcortador" className={DARK_SELECT_TRIGGER}>
+                      <SelectValue placeholder="Sin asignar" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Sin asignar</SelectItem>
+                      {cortadores.map(c => (
+                        <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <DLabel htmlFor="idapoyo">Ayudante</DLabel>
+                  <Select
+                    value={form.idapoyo || "__none__"}
+                    onValueChange={(v) => setForm(f => ({ ...f, idapoyo: v }))}
+                    disabled={loading}
+                  >
+                    <SelectTrigger id="idapoyo" className={DARK_SELECT_TRIGGER}>
+                      <SelectValue placeholder="Sin ayudante" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Sin ayudante</SelectItem>
+                      {cortadores.map(c => (
+                        <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </FormSection>
 
             {/* Preview Card */}

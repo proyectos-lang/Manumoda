@@ -69,6 +69,9 @@ export type VwPlanCorteDetalle = {
   comp_entretela: boolean | null
   comp_poquetin: boolean | null
   comp_forro: boolean | null
+  calificacion: number | null
+  comentarios: string | null
+  piezas_cortadas: number | null
 }
 
 export type VwBonosCorte = {
