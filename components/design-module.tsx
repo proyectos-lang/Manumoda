@@ -179,6 +179,32 @@ export function DesignModule({ configMissing }: Props) {
   const [filterCategoria, setFilterCategoria] = useState("__all__")
   const [filterEstado, setFilterEstado] = useState("__all__")
 
+  // Restaurar filtros guardados al montar
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("design:filters")
+      if (!raw) return
+      const f = JSON.parse(raw) as Record<string, string>
+      if (f.filterFolio      !== undefined) setFilterFolio(f.filterFolio)
+      if (f.filterModelo     !== undefined) setFilterModelo(f.filterModelo)
+      if (f.filterDisenadora !== undefined) setFilterDisenadora(f.filterDisenadora)
+      if (f.filterCosturera  !== undefined) setFilterCosturera(f.filterCosturera)
+      if (f.filterFamilia    !== undefined) setFilterFamilia(f.filterFamilia)
+      if (f.filterCategoria  !== undefined) setFilterCategoria(f.filterCategoria)
+      if (f.filterEstado     !== undefined) setFilterEstado(f.filterEstado)
+    } catch { /* sessionStorage no disponible o JSON inválido */ }
+  }, [])
+
+  // Persistir filtros cuando cambian
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("design:filters", JSON.stringify({
+        filterFolio, filterModelo, filterDisenadora,
+        filterCosturera, filterFamilia, filterCategoria, filterEstado,
+      }))
+    } catch { /* ignorar */ }
+  }, [filterFolio, filterModelo, filterDisenadora, filterCosturera, filterFamilia, filterCategoria, filterEstado])
+
   // Catálogos compartidos
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
   const [costureras, setCostureraCatalog] = useState<Catalog[]>([])
@@ -267,6 +293,7 @@ export function DesignModule({ configMissing }: Props) {
     setFilterFamilia("__all__")
     setFilterCategoria("__all__")
     setFilterEstado("__all__")
+    try { sessionStorage.removeItem("design:filters") } catch { /* ignorar */ }
   }
 
   const kpis = useMemo(
