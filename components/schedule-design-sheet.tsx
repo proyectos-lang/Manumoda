@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { CalendarIcon, Loader2, AlertCircle, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import { format, getISOWeek } from "date-fns"
@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils"
 import { getSupabase, getSupabaseConfigStatus, IDEMPRESA } from "@/lib/supabase/client"
 
 type Catalog = { id: number; nombre: string }
+type PrendaCatalog = Catalog & { horas_base: number }
 
 type OrdenContext = {
   folio: string | null
@@ -74,6 +75,20 @@ const DARK_SELECT_TRIGGER =
 
 const CATEGORIAS_DEMOGRAFICAS = ["Bebe", "Niña", "Teen", "Dama", "Extras"]
 
+const TIPO_MULT: Record<string, number> = {
+  "NUEVO":     1.00,
+  "RESURTIDO": 0.75,
+  "RECHAZADO": 1.15,
+}
+
+const CATEGORIA_MULT: Record<string, number> = {
+  "Bebe":   0.85,
+  "Niña":   0.90,
+  "Teen":   0.95,
+  "Dama":   1.00,
+  "Extras": 1.10,
+}
+
 export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }: Props) {
   const cfg = getSupabaseConfigStatus()
   const configMissing = !cfg.hasUrl || !cfg.hasKey
@@ -85,15 +100,45 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
 
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
   const [costureras, setCostureras] = useState<Catalog[]>([])
-  const [prendas, setPrendas] = useState<Catalog[]>([])
+  const [prendas, setPrendas] = useState<PrendaCatalog[]>([])
   const [orden, setOrden] = useState<OrdenContext | null>(null)
 
   const [form, setForm] = useState({ ...INITIAL_FORM })
+  const autoMatchedRef = useRef(false)
 
   const set = <K extends keyof typeof INITIAL_FORM>(
     key: K,
     value: (typeof INITIAL_FORM)[K],
   ) => setForm((prev) => ({ ...prev, [key]: value }))
+
+  // Horas estimadas de diseño (multiplicativo: base × tipo × categoría)
+  const horasDiseno = useMemo(() => {
+    const prenda = prendas.find((p) => String(p.id) === form.idprenda)
+    if (!prenda) return null
+    const tipoMult = TIPO_MULT[form.tipo] ?? 1
+    const catMult  = CATEGORIA_MULT[form.categoriaDemografica] ?? 1
+    return Math.round(prenda.horas_base * tipoMult * catMult * 100) / 100
+  }, [form.idprenda, form.tipo, form.categoriaDemografica, prendas])
+
+  // Auto-match prenda ← orden.familia · categoría ← orden.categoria (solo si no es reprogramar)
+  useEffect(() => {
+    if (autoMatchedRef.current) return
+    if (editRegistroId != null) { autoMatchedRef.current = true; return }
+    if (!orden || prendas.length === 0) return
+    autoMatchedRef.current = true
+
+    const matchPrenda = prendas.find(
+      (p) => p.nombre.toUpperCase() === (orden.familia ?? "").toUpperCase(),
+    )
+    const matchCat = CATEGORIAS_DEMOGRAFICAS.find(
+      (c) => c.toUpperCase() === (orden.categoria ?? "").toUpperCase(),
+    )
+    setForm((prev) => ({
+      ...prev,
+      ...(matchPrenda ? { idprenda: String(matchPrenda.id) } : {}),
+      ...(matchCat    ? { categoriaDemografica: matchCat }   : {}),
+    }))
+  }, [orden, prendas, editRegistroId])
 
   // Reset al cerrar
   useEffect(() => {
@@ -101,6 +146,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
       setForm({ ...INITIAL_FORM })
       setOrden(null)
       setEditRegistroId(null)
+      autoMatchedRef.current = false
     }
   }, [open])
 
@@ -128,7 +174,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
             .order("nombre", { ascending: true }),
           supabase
             .from("cat_prendas")
-            .select("id, nombre")
+            .select("id, nombre, horas_base")
             .eq("idempresa", IDEMPRESA)
             .order("nombre", { ascending: true }),
         ])
@@ -148,7 +194,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         if (prendaRes.error) {
           toast.error("Error al cargar prendas", { description: prendaRes.error.message })
         } else {
-          setPrendas((prendaRes.data ?? []) as Catalog[])
+          setPrendas((prendaRes.data ?? []) as PrendaCatalog[])
         }
       } finally {
         if (!cancelled) setLoadingCatalogs(false)
@@ -255,6 +301,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         // detalles diseño
         idprenda: form.idprenda ? Number(form.idprenda) : null,
         categoria_demografica: form.categoriaDemografica || null,
+        horas_plan_diseno: horasDiseno,
         // asignación
         numero_muestras: Number(form.numeroMuestras) || 1,
         iddisenadora: Number(form.iddisenadora),
@@ -439,28 +486,13 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                 </div>
               </FormSection>
 
-              {/* Tipo de Programación */}
-              <FormSection title="Tipo de Programación">
-                <div className="space-y-1.5">
-                  <DLabel htmlFor="tipo">Tipo <Req /></DLabel>
-                  <Select value={form.tipo} onValueChange={(v) => set("tipo", v)}>
-                    <SelectTrigger id="tipo" className={DARK_SELECT_TRIGGER}>
-                      <SelectValue placeholder="Selecciona un tipo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="NUEVO">NUEVO</SelectItem>
-                      <SelectItem value="RESURTIDO">RESURTIDO</SelectItem>
-                      <SelectItem value="RECHAZADO">RECHAZADO</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </FormSection>
+              {/* Cálculo de Horas de Diseño */}
+              <FormSection title="Cálculo de Horas de Diseño">
+                <div className="space-y-3">
 
-              {/* Detalles de Diseño */}
-              <FormSection title="Detalles de Diseño">
-                <div className="grid grid-cols-2 gap-3">
+                  {/* Prenda — horas base */}
                   <div className="space-y-1.5">
-                    <DLabel htmlFor="prenda">Prenda</DLabel>
+                    <DLabel htmlFor="prenda">Prenda — Horas Base <Req /></DLabel>
                     <Select
                       value={form.idprenda}
                       onValueChange={(v) => set("idprenda", v)}
@@ -472,35 +504,92 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                             <Loader2 className="size-3.5 animate-spin" /> Cargando…
                           </span>
                         ) : (
-                          <SelectValue placeholder="Selecciona prenda" />
+                          <SelectValue placeholder="Seleccionar prenda…" />
                         )}
                       </SelectTrigger>
                       <SelectContent>
                         {prendas.map((p) => (
                           <SelectItem key={String(p.id)} value={String(p.id)}>
                             {p.nombre}
+                            <span className="ml-2 text-xs text-muted-foreground">{p.horas_base} h</span>
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {form.idprenda && (() => {
+                      const p = prendas.find((x) => String(x.id) === form.idprenda)
+                      return p ? <p className="text-[10px] text-white/40">{p.horas_base} h base</p> : null
+                    })()}
                   </div>
 
-                  <div className="space-y-1.5">
-                    <DLabel htmlFor="cat-demo">Categoría</DLabel>
-                    <Select
-                      value={form.categoriaDemografica}
-                      onValueChange={(v) => set("categoriaDemografica", v)}
-                    >
-                      <SelectTrigger id="cat-demo" className={DARK_SELECT_TRIGGER}>
-                        <SelectValue placeholder="Selecciona" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CATEGORIAS_DEMOGRAFICAS.map((c) => (
-                          <SelectItem key={c} value={c}>{c}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Tipo */}
+                    <div className="space-y-1.5">
+                      <DLabel htmlFor="tipo">Tipo <Req /></DLabel>
+                      <Select value={form.tipo} onValueChange={(v) => set("tipo", v)}>
+                        <SelectTrigger id="tipo" className={DARK_SELECT_TRIGGER}>
+                          <SelectValue placeholder="Seleccionar…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(TIPO_MULT).map(([t, m]) => (
+                            <SelectItem key={t} value={t}>
+                              {t}
+                              <span className="ml-2 text-xs text-muted-foreground">×{m.toFixed(2)}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {form.tipo && (
+                        <p className="text-[10px] text-white/40">×{TIPO_MULT[form.tipo]?.toFixed(2)}</p>
+                      )}
+                    </div>
+
+                    {/* Categoría demográfica */}
+                    <div className="space-y-1.5">
+                      <DLabel htmlFor="cat-demo">Categoría</DLabel>
+                      <Select
+                        value={form.categoriaDemografica}
+                        onValueChange={(v) => set("categoriaDemografica", v)}
+                      >
+                        <SelectTrigger id="cat-demo" className={DARK_SELECT_TRIGGER}>
+                          <SelectValue placeholder="Seleccionar…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CATEGORIAS_DEMOGRAFICAS.map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {c}
+                              <span className="ml-2 text-xs text-muted-foreground">×{CATEGORIA_MULT[c]?.toFixed(2)}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {form.categoriaDemografica && (
+                        <p className="text-[10px] text-white/40">×{CATEGORIA_MULT[form.categoriaDemografica]?.toFixed(2)}</p>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Preview */}
+                  {horasDiseno !== null ? (
+                    <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-indigo-300/70 mb-1">
+                        Horas de diseño estimadas
+                      </p>
+                      <p className="text-2xl font-bold text-white">
+                        {horasDiseno}{" "}
+                        <span className="text-base font-normal text-white/60">h</span>
+                      </p>
+                      <p className="mt-1.5 text-[11px] text-white/45">
+                        {prendas.find((p) => String(p.id) === form.idprenda)?.horas_base ?? "—"} h base
+                        {form.tipo && ` · Tipo ×${TIPO_MULT[form.tipo]?.toFixed(2)}`}
+                        {form.categoriaDemografica && ` · Cat. ×${CATEGORIA_MULT[form.categoriaDemografica]?.toFixed(2)}`}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-white/8 bg-white/4 px-4 py-3 text-xs text-white/30">
+                      Selecciona Prenda y Tipo para ver la estimación de horas.
+                    </div>
+                  )}
                 </div>
               </FormSection>
 
