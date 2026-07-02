@@ -391,6 +391,19 @@ export function DesignModule({ configMissing }: Props) {
     [],
   )
 
+  const handleDisenadoraChange = useCallback(
+    (recordId: number, iddisenadora: number | null, nombre: string | null) => {
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === recordId
+            ? { ...r, iddisenadora, disenadoras: nombre ? { nombre } : null }
+            : r,
+        ),
+      )
+    },
+    [],
+  )
+
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return
     const supabase = getSupabase()
@@ -689,7 +702,14 @@ export function DesignModule({ configMissing }: Props) {
                             ? <span className="inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium">{row.tipo}</span>
                             : <span className="text-muted-foreground">—</span>}
                         </TableCell>
-                        <TableCell className="text-sm">{row.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell className="text-sm min-w-[140px]">
+                          <DisenadoraCell
+                            recordId={row.id}
+                            value={row.iddisenadora}
+                            disenadoras={disenadoras}
+                            onSave={(id, nombre) => handleDisenadoraChange(row.id, id, nombre)}
+                          />
+                        </TableCell>
                         <TableCell className="text-right tabular-nums text-sm font-medium text-indigo-700">
                           {fmtH(row.horas_plan_diseno)} <span className="text-muted-foreground text-xs font-normal">h</span>
                         </TableCell>
@@ -2228,6 +2248,64 @@ function ReadField({ label, value, mono }: { label: string; value: string | null
         {value ?? <span className="text-muted-foreground">—</span>}
       </dd>
     </div>
+  )
+}
+
+function DisenadoraCell({
+  recordId,
+  value,
+  disenadoras,
+  onSave,
+}: {
+  recordId: number
+  value: number | null
+  disenadoras: Catalog[]
+  onSave: (id: number | null, nombre: string | null) => void
+}) {
+  const [saving, setSaving] = useState(false)
+
+  const handleChange = async (v: string) => {
+    const id = v === "__none__" ? null : Number(v)
+    const nombre = id != null ? (disenadoras.find((d) => d.id === id)?.nombre ?? null) : null
+    setSaving(true)
+    const supabase = getSupabase()
+    if (!supabase) { setSaving(false); return }
+    const { error } = await supabase
+      .from("diseno_programacion")
+      .update({ iddisenadora: id })
+      .eq("id", recordId)
+      .eq("idempresa", IDEMPRESA)
+    setSaving(false)
+    if (error) {
+      toast.error("No se pudo actualizar la diseñadora", { description: error.message })
+      return
+    }
+    onSave(id, nombre)
+    toast.success("Diseñadora actualizada")
+  }
+
+  return (
+    <Select value={value != null ? String(value) : "__none__"} onValueChange={handleChange} disabled={saving}>
+      <SelectTrigger
+        className={cn(
+          "h-8 min-w-[130px] border-transparent bg-transparent text-xs shadow-none hover:border-border hover:bg-muted/40 focus:ring-1",
+          saving && "opacity-60",
+        )}
+      >
+        {saving
+          ? <span className="flex items-center gap-1.5 text-muted-foreground"><Loader2 className="size-3 animate-spin" />Guardando…</span>
+          : <SelectValue placeholder={<span className="text-muted-foreground">—</span>} />
+        }
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">
+          <span className="text-muted-foreground">Sin asignar</span>
+        </SelectItem>
+        {disenadoras.map((d) => (
+          <SelectItem key={d.id} value={String(d.id)}>{d.nombre}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
