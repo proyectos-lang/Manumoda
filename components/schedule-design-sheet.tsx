@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { CalendarIcon, Loader2, AlertCircle, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import { format, getISOWeek } from "date-fns"
@@ -17,7 +17,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
   SelectContent,
@@ -34,10 +33,8 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { cn } from "@/lib/utils"
 import { getSupabase, getSupabaseConfigStatus, IDEMPRESA } from "@/lib/supabase/client"
-import { calcHorasCostura, FACTOR_TELA, getValorTrazos, COMPLEMENTOS_HORAS } from "@/lib/costura-calc"
 
 type Catalog = { id: number; nombre: string }
-type PrendaCatalog = Catalog & { horas_base: number }
 
 type OrdenContext = {
   folio: string | null
@@ -59,15 +56,9 @@ const INITIAL_FORM = {
   semana: "",
   semanaOriginal: "",
   tipo: "",
-  // costura calc
+  // detalles diseño
   idprenda: "",
   categoriaDemografica: "",
-  tipoTela: "",
-  trazos: "",
-  compCombinacion: false,
-  compEntretela: false,
-  compPoquetin: false,
-  compForro: false,
   // asignación
   numeroMuestras: "1",
   iddisenadora: "",
@@ -82,7 +73,6 @@ const DARK_SELECT_TRIGGER =
   "border-white/15 bg-white/10 text-white data-[placeholder]:text-white/40 focus:ring-white/20"
 
 const CATEGORIAS_DEMOGRAFICAS = ["Bebe", "Niña", "Teen", "Dama", "Extras"]
-const TIPOS_TELA = ["LIGERA", "MEDIA", "PESADA", "MUY PESADA"]
 
 export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }: Props) {
   const cfg = getSupabaseConfigStatus()
@@ -95,7 +85,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
 
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
   const [costureras, setCostureras] = useState<Catalog[]>([])
-  const [prendas, setPrendas] = useState<PrendaCatalog[]>([])
+  const [prendas, setPrendas] = useState<Catalog[]>([])
   const [orden, setOrden] = useState<OrdenContext | null>(null)
 
   const [form, setForm] = useState({ ...INITIAL_FORM })
@@ -104,34 +94,6 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
     key: K,
     value: (typeof INITIAL_FORM)[K],
   ) => setForm((prev) => ({ ...prev, [key]: value }))
-
-  // Preview de horas de costura en tiempo real
-  const horasCalculadas = useMemo(() => {
-    const prenda = prendas.find((p) => String(p.id) === form.idprenda)
-    if (!prenda || !form.tipoTela || !form.trazos) return null
-    return calcHorasCostura({
-      horasBase: prenda.horas_base,
-      tipoTela: form.tipoTela,
-      trazos: Number(form.trazos),
-      comp_combinacion: form.compCombinacion,
-      comp_entretela: form.compEntretela,
-      comp_poquetin: form.compPoquetin,
-      comp_forro: form.compForro,
-    })
-  }, [form, prendas])
-
-  // Desglose del preview
-  const previewDetalle = useMemo(() => {
-    const prenda = prendas.find((p) => String(p.id) === form.idprenda)
-    if (!prenda || !form.tipoTela || !form.trazos) return null
-    const factorTela  = FACTOR_TELA[form.tipoTela] ?? 0
-    const valorTrazos = getValorTrazos(form.tipoTela, Number(form.trazos))
-    const complementos = (form.compCombinacion ? COMPLEMENTOS_HORAS.comp_combinacion : 0)
-                       + (form.compEntretela   ? COMPLEMENTOS_HORAS.comp_entretela   : 0)
-                       + (form.compPoquetin    ? COMPLEMENTOS_HORAS.comp_poquetin    : 0)
-                       + (form.compForro       ? COMPLEMENTOS_HORAS.comp_forro       : 0)
-    return { base: prenda.horas_base, factorTela, valorTrazos, complementos }
-  }, [form, prendas])
 
   // Reset al cerrar
   useEffect(() => {
@@ -166,7 +128,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
             .order("nombre", { ascending: true }),
           supabase
             .from("cat_prendas")
-            .select("id, nombre, horas_base")
+            .select("id, nombre")
             .eq("idempresa", IDEMPRESA)
             .order("nombre", { ascending: true }),
         ])
@@ -186,7 +148,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         if (prendaRes.error) {
           toast.error("Error al cargar prendas", { description: prendaRes.error.message })
         } else {
-          setPrendas((prendaRes.data ?? []) as PrendaCatalog[])
+          setPrendas((prendaRes.data ?? []) as Catalog[])
         }
       } finally {
         if (!cancelled) setLoadingCatalogs(false)
@@ -223,7 +185,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
 
       const { data: dp } = await supabase
         .from("diseno_programacion")
-        .select("id, fecha, semana, semana_original, tipo, idprenda, categoria_demografica, tipo_tela, trazos, comp_combinacion, comp_entretela, comp_poquetin, comp_forro, numero_muestras, iddisenadora, idcosturera, comentarios")
+        .select("id, fecha, semana, semana_original, tipo, idprenda, categoria_demografica, numero_muestras, iddisenadora, idcosturera, comentarios")
         .eq("idempresa", IDEMPRESA)
         .eq("folio", d.folio)
         .order("id", { ascending: false })
@@ -240,12 +202,6 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
           tipo: (r.tipo as string) ?? "",
           idprenda: r.idprenda != null ? String(r.idprenda) : "",
           categoriaDemografica: (r.categoria_demografica as string) ?? "",
-          tipoTela: (r.tipo_tela as string) ?? "",
-          trazos: r.trazos != null ? String(r.trazos) : "",
-          compCombinacion: (r.comp_combinacion as boolean) ?? false,
-          compEntretela: (r.comp_entretela as boolean) ?? false,
-          compPoquetin: (r.comp_poquetin as boolean) ?? false,
-          compForro: (r.comp_forro as boolean) ?? false,
           numeroMuestras: r.numero_muestras != null ? String(r.numero_muestras) : "1",
           iddisenadora: r.iddisenadora != null ? String(r.iddisenadora) : "",
           idcosturera: r.idcosturera != null ? String(r.idcosturera) : "__none__",
@@ -296,16 +252,9 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         semana: form.semana ? Number(form.semana) : null,
         semana_original: form.semanaOriginal ? Number(form.semanaOriginal) : null,
         tipo: form.tipo,
-        // campos costura
+        // detalles diseño
         idprenda: form.idprenda ? Number(form.idprenda) : null,
         categoria_demografica: form.categoriaDemografica || null,
-        tipo_tela: form.tipoTela || null,
-        trazos: form.trazos ? Number(form.trazos) : null,
-        comp_combinacion: form.compCombinacion,
-        comp_entretela: form.compEntretela,
-        comp_poquetin: form.compPoquetin,
-        comp_forro: form.compForro,
-        horas_plan_costura: horasCalculadas,
         // asignación
         numero_muestras: Number(form.numeroMuestras) || 1,
         iddisenadora: Number(form.iddisenadora),
@@ -337,10 +286,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
           toast.error("No se pudo guardar la programación", { description: error.message })
           return
         }
-        const row = data as Record<string, unknown>
-        toast.success("Programación de Diseño guardada", {
-          description: `Horas planificadas — Diseño: ${row.horas_plan_diseno ?? "—"} h · Costura: ${row.horas_plan_costura ?? "—"} h`,
-        })
+        toast.success("Programación de Diseño guardada")
       }
 
       onOpenChange(false)
@@ -510,152 +456,51 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                 </div>
               </FormSection>
 
-              {/* Costura — Cálculo de Horas */}
-              <FormSection title="Costura — Cálculo de Horas">
-                <div className="space-y-4">
-                  {/* Fila 1: Prenda + Categoría demográfica */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <DLabel htmlFor="prenda">Prenda</DLabel>
-                      <Select
-                        value={form.idprenda}
-                        onValueChange={(v) => set("idprenda", v)}
-                        disabled={loadingCatalogs}
-                      >
-                        <SelectTrigger id="prenda" className={DARK_SELECT_TRIGGER}>
-                          {loadingCatalogs ? (
-                            <span className="flex items-center gap-2 text-white/40">
-                              <Loader2 className="size-3.5 animate-spin" /> Cargando…
-                            </span>
-                          ) : (
-                            <SelectValue placeholder="Selecciona prenda" />
-                          )}
-                        </SelectTrigger>
-                        <SelectContent>
-                          {prendas.map((p) => (
-                            <SelectItem key={String(p.id)} value={String(p.id)}>
-                              {p.nombre}
-                              <span className="ml-1.5 text-xs text-muted-foreground">
-                                ({p.horas_base} h)
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <DLabel htmlFor="cat-demo">Categoría</DLabel>
-                      <Select
-                        value={form.categoriaDemografica}
-                        onValueChange={(v) => set("categoriaDemografica", v)}
-                      >
-                        <SelectTrigger id="cat-demo" className={DARK_SELECT_TRIGGER}>
-                          <SelectValue placeholder="Selecciona" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {CATEGORIAS_DEMOGRAFICAS.map((c) => (
-                            <SelectItem key={c} value={c}>{c}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+              {/* Detalles de Diseño */}
+              <FormSection title="Detalles de Diseño">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <DLabel htmlFor="prenda">Prenda</DLabel>
+                    <Select
+                      value={form.idprenda}
+                      onValueChange={(v) => set("idprenda", v)}
+                      disabled={loadingCatalogs}
+                    >
+                      <SelectTrigger id="prenda" className={DARK_SELECT_TRIGGER}>
+                        {loadingCatalogs ? (
+                          <span className="flex items-center gap-2 text-white/40">
+                            <Loader2 className="size-3.5 animate-spin" /> Cargando…
+                          </span>
+                        ) : (
+                          <SelectValue placeholder="Selecciona prenda" />
+                        )}
+                      </SelectTrigger>
+                      <SelectContent>
+                        {prendas.map((p) => (
+                          <SelectItem key={String(p.id)} value={String(p.id)}>
+                            {p.nombre}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
-                  {/* Fila 2: Tipo Tela + Trazos */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <DLabel htmlFor="tipo-tela">Tipo de Tela</DLabel>
-                      <Select
-                        value={form.tipoTela}
-                        onValueChange={(v) => set("tipoTela", v)}
-                      >
-                        <SelectTrigger id="tipo-tela" className={DARK_SELECT_TRIGGER}>
-                          <SelectValue placeholder="Selecciona" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TIPOS_TELA.map((t) => (
-                            <SelectItem key={t} value={t}>
-                              {t}
-                              <span className="ml-1.5 text-xs text-muted-foreground">
-                                (×{FACTOR_TELA[t]})
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <DLabel htmlFor="trazos">Cant. de Trazos</DLabel>
-                      <Input
-                        id="trazos"
-                        type="number"
-                        min={1}
-                        placeholder="Ej: 1800"
-                        value={form.trazos}
-                        onChange={(e) => set("trazos", e.target.value)}
-                        className={DARK_INPUT}
-                      />
-                    </div>
+                  <div className="space-y-1.5">
+                    <DLabel htmlFor="cat-demo">Categoría</DLabel>
+                    <Select
+                      value={form.categoriaDemografica}
+                      onValueChange={(v) => set("categoriaDemografica", v)}
+                    >
+                      <SelectTrigger id="cat-demo" className={DARK_SELECT_TRIGGER}>
+                        <SelectValue placeholder="Selecciona" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIAS_DEMOGRAFICAS.map((c) => (
+                          <SelectItem key={c} value={c}>{c}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-
-                  {/* Complementos */}
-                  <div>
-                    <p className="mb-2.5 text-[11px] font-medium uppercase tracking-wide text-white/40">
-                      Complementos
-                    </p>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <ComplementoCheck
-                        id="comp-comb"
-                        label="Combinación"
-                        horas={COMPLEMENTOS_HORAS.comp_combinacion}
-                        checked={form.compCombinacion}
-                        onCheckedChange={(v) => set("compCombinacion", v)}
-                      />
-                      <ComplementoCheck
-                        id="comp-entretela"
-                        label="Entretela"
-                        horas={COMPLEMENTOS_HORAS.comp_entretela}
-                        checked={form.compEntretela}
-                        onCheckedChange={(v) => set("compEntretela", v)}
-                      />
-                      <ComplementoCheck
-                        id="comp-poquetin"
-                        label="Poquetin"
-                        horas={COMPLEMENTOS_HORAS.comp_poquetin}
-                        checked={form.compPoquetin}
-                        onCheckedChange={(v) => set("compPoquetin", v)}
-                      />
-                      <ComplementoCheck
-                        id="comp-forro"
-                        label="Forro"
-                        horas={COMPLEMENTOS_HORAS.comp_forro}
-                        checked={form.compForro}
-                        onCheckedChange={(v) => set("compForro", v)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Preview card */}
-                  {horasCalculadas !== null && previewDetalle ? (
-                    <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-indigo-300/70 mb-1">
-                        Horas de costura estimadas
-                      </p>
-                      <p className="text-2xl font-bold text-white">
-                        {horasCalculadas}{" "}
-                        <span className="text-base font-normal text-white/60">h</span>
-                      </p>
-                      <p className="mt-1.5 text-[11px] text-white/45">
-                        Base {previewDetalle.base} · Tela {previewDetalle.factorTela} · Trazos {previewDetalle.valorTrazos} · Complementos {previewDetalle.complementos}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-white/8 bg-white/4 px-4 py-3 text-xs text-white/30">
-                      Completa Prenda, Tipo de Tela y Trazos para ver la estimación de horas.
-                    </div>
-                  )}
                 </div>
               </FormSection>
 
@@ -829,37 +674,6 @@ function DLabel({
   )
 }
 
-function ComplementoCheck({
-  id,
-  label,
-  horas,
-  checked,
-  onCheckedChange,
-}: {
-  id: string
-  label: string
-  horas: number
-  checked: boolean
-  onCheckedChange: (v: boolean) => void
-}) {
-  return (
-    <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
-      <Checkbox
-        id={id}
-        checked={checked}
-        onCheckedChange={(v) => onCheckedChange(v === true)}
-        className="border-white/30 data-[state=checked]:bg-indigo-500 data-[state=checked]:border-indigo-500 shrink-0"
-      />
-      <label
-        htmlFor={id}
-        className="cursor-pointer select-none flex-1 text-xs font-medium text-white/70 leading-tight"
-      >
-        {label}
-        <span className="ml-1 text-white/35">+{horas} h</span>
-      </label>
-    </div>
-  )
-}
 
 function Req() {
   return <span className="ml-0.5 text-rose-400">*</span>

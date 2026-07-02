@@ -490,8 +490,8 @@ export function ScheduleCutDialog({
               </div>
             </FormSection>
 
-            {/* Multiplicadores */}
-            <FormSection title="Multiplicadores">
+            {/* Variables de Corte */}
+            <FormSection title="Variables de Corte">
               <div className="grid grid-cols-2 gap-3">
 
                 {/* Categoría */}
@@ -625,7 +625,7 @@ export function ScheduleCutDialog({
             </FormSection>
 
             {/* Complementos */}
-            <FormSection title="Complementos">
+            <FormSection title="Complementos de Corte">
               {complementos.length > 0 ? (
                 <div className="grid grid-cols-2 gap-2">
                   {complementos.map(comp => {
