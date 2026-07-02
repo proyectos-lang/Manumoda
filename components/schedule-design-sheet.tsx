@@ -91,6 +91,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
   const [loadingCatalogs, setLoadingCatalogs] = useState(false)
   const [loadingOrden, setLoadingOrden] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [editRegistroId, setEditRegistroId] = useState<number | null>(null)
 
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
   const [costureras, setCostureras] = useState<Catalog[]>([])
@@ -137,6 +138,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
     if (!open) {
       setForm({ ...INITIAL_FORM })
       setOrden(null)
+      setEditRegistroId(null)
     }
   }, [open])
 
@@ -205,24 +207,52 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
       if (error) {
         toast.error("Error al cargar la orden", { description: error.message })
         setOrden(null)
-      } else if (data) {
-        const d = data as {
-          folio: string | null
-          modelo: string | null
-          familia: string | null
-          categoria: string | null
-          cliente: string | null
-        }
-        setOrden({
-          folio: d.folio,
-          modelo: d.modelo,
-          familia: d.familia,
-          categoria: d.categoria ?? null,
-          cliente: d.cliente,
-        })
-      } else {
-        setOrden(null)
+        setLoadingOrden(false)
+        return
       }
+
+      if (!data) { setOrden(null); setLoadingOrden(false); return }
+
+      const d = data as {
+        folio: string | null; modelo: string | null; familia: string | null
+        categoria: string | null; cliente: string | null
+      }
+      setOrden({ folio: d.folio, modelo: d.modelo, familia: d.familia, categoria: d.categoria ?? null, cliente: d.cliente })
+
+      if (!d.folio) { setLoadingOrden(false); return }
+
+      const { data: dp } = await supabase
+        .from("diseno_programacion")
+        .select("id, fecha, semana, semana_original, tipo, idprenda, categoria_demografica, tipo_tela, trazos, comp_combinacion, comp_entretela, comp_poquetin, comp_forro, numero_muestras, iddisenadora, idcosturera, comentarios")
+        .eq("idempresa", IDEMPRESA)
+        .eq("folio", d.folio)
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!cancelled && dp) {
+        const r = dp as Record<string, unknown>
+        setEditRegistroId(r.id as number)
+        setForm({
+          fecha: r.fecha ? new Date((r.fecha as string) + "T00:00:00") : undefined,
+          semana: r.semana != null ? String(r.semana) : "",
+          semanaOriginal: r.semana_original != null ? String(r.semana_original) : "",
+          tipo: (r.tipo as string) ?? "",
+          idprenda: r.idprenda != null ? String(r.idprenda) : "",
+          categoriaDemografica: (r.categoria_demografica as string) ?? "",
+          tipoTela: (r.tipo_tela as string) ?? "",
+          trazos: r.trazos != null ? String(r.trazos) : "",
+          compCombinacion: (r.comp_combinacion as boolean) ?? false,
+          compEntretela: (r.comp_entretela as boolean) ?? false,
+          compPoquetin: (r.comp_poquetin as boolean) ?? false,
+          compForro: (r.comp_forro as boolean) ?? false,
+          numeroMuestras: r.numero_muestras != null ? String(r.numero_muestras) : "1",
+          iddisenadora: r.iddisenadora != null ? String(r.iddisenadora) : "",
+          idcosturera: r.idcosturera != null ? String(r.idcosturera) : "__none__",
+          comentarios: (r.comentarios as string) ?? "",
+        })
+      }
+
       setLoadingOrden(false)
     }
 
@@ -286,22 +316,32 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         comentarios: form.comentarios.trim() || null,
       }
 
-      const { data, error } = await supabase
-        .from("diseno_programacion")
-        .insert(payload)
-        .select("*")
-        .single()
-
-      if (error) {
-        console.error("[v0] diseno insert error:", error)
-        toast.error("No se pudo guardar la programación", { description: error.message })
-        return
+      if (editRegistroId) {
+        const { error } = await supabase
+          .from("diseno_programacion")
+          .update(payload)
+          .eq("id", editRegistroId)
+        if (error) {
+          toast.error("No se pudo actualizar la programación", { description: error.message })
+          return
+        }
+        toast.success("Programación de Diseño actualizada")
+      } else {
+        const { data, error } = await supabase
+          .from("diseno_programacion")
+          .insert(payload)
+          .select("*")
+          .single()
+        if (error) {
+          console.error("[v0] diseno insert error:", error)
+          toast.error("No se pudo guardar la programación", { description: error.message })
+          return
+        }
+        const row = data as Record<string, unknown>
+        toast.success("Programación de Diseño guardada", {
+          description: `Horas planificadas — Diseño: ${row.horas_plan_diseno ?? "—"} h · Costura: ${row.horas_plan_costura ?? "—"} h`,
+        })
       }
-
-      const row = data as Record<string, unknown>
-      toast.success("Programación de Diseño guardada", {
-        description: `Horas planificadas — Diseño: ${row.horas_plan_diseno ?? "—"} h · Costura: ${row.horas_plan_costura ?? "—"} h`,
-      })
 
       onOpenChange(false)
       onScheduled?.()
@@ -337,12 +377,14 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
             </div>
             <div className="min-w-0">
               <SheetTitle className="text-white text-base font-semibold leading-tight">
-                Programar en Diseño
+                {editRegistroId ? "Reprogramar Diseño" : "Programar en Diseño"}
               </SheetTitle>
               <SheetDescription className="text-white/55 text-xs mt-0.5">
                 {loadingOrden
                   ? "Cargando orden..."
-                  : `Folio: ${orden?.folio ?? ordenId ?? "—"}`}
+                  : editRegistroId
+                    ? `Actualizando · Folio: ${orden?.folio ?? "—"}`
+                    : `Folio: ${orden?.folio ?? ordenId ?? "—"}`}
               </SheetDescription>
             </div>
           </div>
@@ -728,9 +770,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                 <Loader2 className="size-4 animate-spin" />
                 Guardando…
               </>
-            ) : (
-              "Guardar Programación"
-            )}
+            ) : editRegistroId ? "Actualizar Programación" : "Guardar Programación"}
           </Button>
         </SheetFooter>
       </SheetContent>

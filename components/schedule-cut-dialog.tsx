@@ -63,6 +63,7 @@ type FormState = {
   idcortador: string
   idapoyo: string
   piezas_cortadas: string
+  metros_utilizar: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -78,6 +79,7 @@ const EMPTY_FORM: FormState = {
   idcortador: "",
   idapoyo: "",
   piezas_cortadas: "",
+  metros_utilizar: "",
 }
 
 // ─── Dark-theme styling constants ─────────────────────────────────────────────
@@ -191,6 +193,7 @@ export function ScheduleCutDialog({
   const [cortadores, setCortadores] = useState<Cortador[]>([])
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [telaPopoverOpen, setTelaPopoverOpen] = useState(false)
+  const [editRegistroId, setEditRegistroId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -199,6 +202,7 @@ export function ScheduleCutDialog({
     if (!open) {
       setForm(EMPTY_FORM)
       setTelaPopoverOpen(false)
+      setEditRegistroId(null)
       return
     }
     const supabase = getSupabase()
@@ -213,19 +217,54 @@ export function ScheduleCutDialog({
       supabase.from("cat_tendidos_corte").select("id, cantidad, multiplicador").eq("idempresa", IDEMPRESA).order("cantidad"),
       supabase.from("cat_complementos_corte").select("id, nombre, clave, multiplicador").eq("idempresa", IDEMPRESA).order("id"),
       supabase.from("cortadores").select("id, nombre").eq("activo", true).order("nombre"),
-    ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes, cortRes]) => {
+      supabase.from("corte_programacion")
+        .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar")
+        .eq("idempresa", IDEMPRESA)
+        .eq("folio", orden?.folio ?? "")
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes, cortRes, cpRes]) => {
       const familiasList = (fRes.data as CatFamiliaCorte[]) ?? []
       setFamilias(familiasList)
-      const matched = familiasList.find(
-        f => f.nombre.toUpperCase() === (orden?.familia ?? "").toUpperCase()
-      )
-      if (matched) setForm(prev => ({ ...prev, idfamilia: String(matched.id) }))
       setCategorias((catRes.data as CatCategoriaCorte[]) ?? [])
       setTelas((telaRes.data as CatTelaCorte[]) ?? [])
       setTrazosOpts((trazRes.data as CatTrazosCorte[]) ?? [])
       setTendidosOpts((tendRes.data as CatTendidosCorte[]) ?? [])
       setComplementos((compRes.data as CatComplementoCorte[]) ?? [])
       setCortadores((cortRes.data as Cortador[]) ?? [])
+
+      type ExistingCorte = {
+        id: number; idfamilia_corte: number | null; categoria_corte: string | null
+        categoria_tela: string | null; trazos: number | null; tendidos: number | null
+        combinacion: boolean | null; comp_entretela: boolean | null; comp_poquetin: boolean | null
+        comp_forro: boolean | null; idcortador: number | null; idapoyo: number | null
+        piezas_cortadas: number | null; metros_utilizar: number | null
+      }
+      const existing = cpRes.data as ExistingCorte | null
+      if (existing) {
+        setEditRegistroId(existing.id)
+        setForm({
+          idfamilia: existing.idfamilia_corte ? String(existing.idfamilia_corte) : "",
+          categoriaCorte: existing.categoria_corte ?? "",
+          categoriaTela: existing.categoria_tela ?? "",
+          trazos: existing.trazos ? String(existing.trazos) : "",
+          tendidos: existing.tendidos ? String(existing.tendidos) : "",
+          compCombinacion: existing.combinacion ?? false,
+          compEntretela: existing.comp_entretela ?? false,
+          compPoquetin: existing.comp_poquetin ?? false,
+          compForro: existing.comp_forro ?? false,
+          idcortador: existing.idcortador ? String(existing.idcortador) : "__none__",
+          idapoyo: existing.idapoyo ? String(existing.idapoyo) : "__none__",
+          piezas_cortadas: existing.piezas_cortadas ? String(existing.piezas_cortadas) : "",
+          metros_utilizar: existing.metros_utilizar ? String(existing.metros_utilizar) : "",
+        })
+      } else {
+        const matched = familiasList.find(
+          f => f.nombre.toUpperCase() === (orden?.familia ?? "").toUpperCase()
+        )
+        if (matched) setForm(prev => ({ ...prev, idfamilia: String(matched.id) }))
+      }
       setLoading(false)
     })
   }, [open])
@@ -282,49 +321,56 @@ export function ScheduleCutDialog({
     setSaving(true)
     const semana = getISOWeek(new Date())
 
-    const { error: insertError } = await supabase
-      .from("corte_programacion")
-      .insert({
-        idempresa: IDEMPRESA,
-        folio: orden.folio,
-        semana,
-        idfamilia_corte: Number(form.idfamilia),
-        categoria_corte: form.categoriaCorte,
-        categoria_tela: form.categoriaTela,
-        trazos: trazosNum,
-        tendidos: tendidosNum,
-        combinacion: form.compCombinacion,
-        comp_entretela: form.compEntretela,
-        comp_poquetin: form.compPoquetin,
-        comp_forro: form.compForro,
-        horas_plan_corte: horasCalculadas,
-        idcortador: form.idcortador && form.idcortador !== "__none__" ? Number(form.idcortador) : null,
-        idapoyo: form.idapoyo && form.idapoyo !== "__none__" ? Number(form.idapoyo) : null,
-        piezas_cortadas: form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null,
-      })
+    const payload = {
+      idfamilia_corte: Number(form.idfamilia),
+      categoria_corte: form.categoriaCorte,
+      categoria_tela: form.categoriaTela,
+      trazos: trazosNum,
+      tendidos: tendidosNum,
+      combinacion: form.compCombinacion,
+      comp_entretela: form.compEntretela,
+      comp_poquetin: form.compPoquetin,
+      comp_forro: form.compForro,
+      horas_plan_corte: horasCalculadas,
+      idcortador: form.idcortador && form.idcortador !== "__none__" ? Number(form.idcortador) : null,
+      idapoyo: form.idapoyo && form.idapoyo !== "__none__" ? Number(form.idapoyo) : null,
+      piezas_cortadas: form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null,
+      metros_utilizar: form.metros_utilizar ? parseFloat(form.metros_utilizar) : null,
+    }
 
-    if (insertError) {
-      toast.error("No se pudo programar el corte", { description: insertError.message })
+    if (editRegistroId) {
+      const { error } = await supabase
+        .from("corte_programacion")
+        .update(payload)
+        .eq("id", editRegistroId)
       setSaving(false)
-      return
+      if (error) { toast.error("No se pudo actualizar el corte", { description: error.message }); return }
+      toast.success("Programación de Corte actualizada", {
+        description: `Folio ${orden.folio} · ${horasCalculadas} h`,
+      })
+    } else {
+      const { error: insertError } = await supabase
+        .from("corte_programacion")
+        .insert({ idempresa: IDEMPRESA, folio: orden.folio, semana, ...payload })
+      if (insertError) {
+        toast.error("No se pudo programar el corte", { description: insertError.message })
+        setSaving(false)
+        return
+      }
+      const { error: updateError } = await supabase
+        .from("ordenes_produccion")
+        .update({ corte_programado: true })
+        .eq("id", orden.id)
+        .eq("idempresa", IDEMPRESA)
+      setSaving(false)
+      if (updateError) {
+        toast.error("Corte insertado pero no se pudo actualizar la orden", { description: updateError.message })
+        return
+      }
+      toast.success("Programación de Corte guardada", {
+        description: `Folio ${orden.folio} · Semana ${semana} · ${horasCalculadas} h`,
+      })
     }
-
-    const { error: updateError } = await supabase
-      .from("ordenes_produccion")
-      .update({ corte_programado: true })
-      .eq("id", orden.id)
-      .eq("idempresa", IDEMPRESA)
-
-    setSaving(false)
-
-    if (updateError) {
-      toast.error("Corte insertado pero no se pudo actualizar la orden", { description: updateError.message })
-      return
-    }
-
-    toast.success("Programación de Corte guardada", {
-      description: `Folio ${orden.folio} · Semana ${semana} · ${horasCalculadas} h`,
-    })
     onOpenChange(false)
     onSaved()
   }
@@ -372,10 +418,10 @@ export function ScheduleCutDialog({
             </div>
             <div className="min-w-0">
               <SheetTitle className="text-white text-base font-semibold leading-tight">
-                Programar en Corte
+                {editRegistroId ? "Reprogramar Corte" : "Programar en Corte"}
               </SheetTitle>
               <SheetDescription className="text-white/55 text-xs mt-0.5">
-                {`Folio: ${orden?.folio ?? "—"}`}
+                {editRegistroId ? `Actualizando · Folio: ${orden?.folio ?? "—"}` : `Folio: ${orden?.folio ?? "—"}`}
               </SheetDescription>
             </div>
           </div>
@@ -561,6 +607,23 @@ export function ScheduleCutDialog({
               </div>
             </FormSection>
 
+            {/* Metros a Utilizar */}
+            <FormSection title="Metros a Utilizar">
+              <div className="space-y-1.5">
+                <DLabel htmlFor="metros_utilizar">Metros de tela</DLabel>
+                <Input
+                  id="metros_utilizar"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={form.metros_utilizar}
+                  onChange={(e) => setForm(f => ({ ...f, metros_utilizar: e.target.value }))}
+                  className={DARK_INPUT}
+                />
+              </div>
+            </FormSection>
+
             {/* Complementos */}
             <FormSection title="Complementos">
               {complementos.length > 0 ? (
@@ -700,9 +763,7 @@ export function ScheduleCutDialog({
                 <Loader2 className="size-4 animate-spin" />
                 Guardando…
               </>
-            ) : (
-              "Programar Corte"
-            )}
+            ) : editRegistroId ? "Actualizar Programación" : "Programar Corte"}
           </Button>
         </SheetFooter>
       </SheetContent>

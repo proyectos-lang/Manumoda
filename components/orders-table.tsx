@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -432,9 +432,19 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                       <div className="flex items-center justify-end gap-2">
                         {/* ── Botón Diseño ── */}
                         {row.diseno_programado ? (
-                          <Button size="sm" disabled className="cursor-default gap-1.5 bg-slate-100 text-emerald-700 hover:bg-slate-100 border border-emerald-200">
-                            <CheckCircle2 className="size-3.5 text-emerald-500" />
-                            Diseño Programado
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                            onClick={() => {
+                              if (row.id == null) return
+                              setScheduleId(row.id)
+                              setScheduleOpen(true)
+                            }}
+                            disabled={row.id == null}
+                          >
+                            <Pencil className="size-3.5" />
+                            Reprogramar Diseño
                           </Button>
                         ) : row.no_requiere_diseno ? (
                           <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
@@ -458,9 +468,19 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
 
                         {/* ── Botón Corte ── */}
                         {row.corte_programado ? (
-                          <Button size="sm" disabled className="cursor-default gap-1.5 bg-slate-100 text-emerald-700 hover:bg-slate-100 border border-emerald-200">
-                            <CheckCircle2 className="size-3.5 text-emerald-500" />
-                            Corte Programado
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                            onClick={() => {
+                              if (row.id == null) return
+                              setScheduleCutId(row.id)
+                              setScheduleCutOpen(true)
+                            }}
+                            disabled={row.id == null}
+                          >
+                            <Pencil className="size-3.5" />
+                            Reprogramar Corte
                           </Button>
                         ) : row.no_requiere_corte ? (
                           <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
