@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil, XCircle } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -182,13 +182,14 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const handleSkipPhase = async (
     row: OrdenProduccion,
     field: "no_requiere_diseno" | "no_requiere_corte",
+    value = true,
   ) => {
     const supabase = getSupabase()
     if (!supabase || row.id == null) return
     setSkippingId(row.id)
     const { error } = await supabase
       .from("ordenes_produccion")
-      .update({ [field]: true })
+      .update({ [field]: value })
       .eq("id", row.id)
       .eq("idempresa", IDEMPRESA)
     setSkippingId(null)
@@ -196,8 +197,12 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
       toast.error("No se pudo actualizar la orden", { description: error.message })
     } else {
       const label = field === "no_requiere_diseno" ? "Diseño" : "Corte"
-      toast.success(`Folio ${row.folio} marcado como: No pasa por ${label}.`)
-      void fetchOrders()
+      if (value) {
+        toast.success(`Folio ${row.folio} marcado como: No pasa por ${label}.`)
+      } else {
+        toast.success(`${label} habilitado para programar`, { description: `Folio ${row.folio}` })
+      }
+      setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, [field]: value } : o))
     }
   }
 
@@ -574,6 +579,24 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                                 Anular programación de Corte
                               </DropdownMenuItem>
                             )}
+                            {row.no_requiere_diseno && !row.diseno_programado && (
+                              <DropdownMenuItem
+                                onClick={() => handleSkipPhase(row, "no_requiere_diseno", false)}
+                                className="text-indigo-700 focus:text-indigo-700"
+                              >
+                                <RotateCcw className="size-3.5 mr-2 shrink-0" />
+                                Revertir: Habilitar Diseño
+                              </DropdownMenuItem>
+                            )}
+                            {row.no_requiere_corte && !row.corte_programado && (
+                              <DropdownMenuItem
+                                onClick={() => handleSkipPhase(row, "no_requiere_corte", false)}
+                                className="text-indigo-700 focus:text-indigo-700"
+                              >
+                                <RotateCcw className="size-3.5 mr-2 shrink-0" />
+                                Revertir: Habilitar Corte
+                              </DropdownMenuItem>
+                            )}
                             {!row.diseno_programado && !row.no_requiere_diseno && (
                               <DropdownMenuItem
                                 onClick={() => handleSkipPhase(row, "no_requiere_diseno")}
@@ -590,12 +613,6 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                               >
                                 <Ban className="size-3.5 mr-2 shrink-0" />
                                 Marcar: No pasa por Corte
-                              </DropdownMenuItem>
-                            )}
-                            {!row.diseno_programado && row.no_requiere_diseno &&
-                             !row.corte_programado && row.no_requiere_corte && (
-                              <DropdownMenuItem disabled className="text-muted-foreground text-xs">
-                                Sin acciones disponibles
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
