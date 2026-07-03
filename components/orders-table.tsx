@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil, XCircle } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -91,6 +91,8 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<OrdenProduccion | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [skippingId, setSkippingId] = useState<number | string | null>(null)
+  const [anularTarget, setAnularTarget] = useState<{ row: OrdenProduccion; tipo: "diseno" | "corte" } | null>(null)
+  const [anulando, setAnulando] = useState(false)
   const [savingDateId, setSavingDateId] = useState<number | string | null>(null)
   const [savingConfirmId, setSavingConfirmId] = useState<number | string | null>(null)
   const [editingClienteId, setEditingClienteId] = useState<number | string | null>(null)
@@ -196,6 +198,43 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
       const label = field === "no_requiere_diseno" ? "Diseño" : "Corte"
       toast.success(`Folio ${row.folio} marcado como: No pasa por ${label}.`)
       void fetchOrders()
+    }
+  }
+
+  const handleConfirmAnular = async () => {
+    if (!anularTarget) return
+    const { row, tipo } = anularTarget
+    if (row.id == null || row.folio == null) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setAnulando(true)
+    try {
+      const table = tipo === "diseno" ? "diseno_programacion" : "corte_programacion"
+      const { error: deleteError } = await supabase
+        .from(table)
+        .delete()
+        .eq("folio", row.folio)
+        .eq("idempresa", IDEMPRESA)
+      if (deleteError) {
+        toast.error("No se pudo anular la programación", { description: deleteError.message })
+        return
+      }
+      const field = tipo === "diseno" ? "diseno_programado" : "corte_programado"
+      const { error: updateError } = await supabase
+        .from("ordenes_produccion")
+        .update({ [field]: false })
+        .eq("id", row.id)
+        .eq("idempresa", IDEMPRESA)
+      if (updateError) {
+        toast.error("Registros eliminados pero no se pudo actualizar la orden", { description: updateError.message })
+        return
+      }
+      const label = tipo === "diseno" ? "Diseño" : "Corte"
+      toast.success(`Programación de ${label} anulada`, { description: `Folio ${row.folio}` })
+      setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, [field]: false } : o))
+    } finally {
+      setAnulando(false)
+      setAnularTarget(null)
     }
   }
 
@@ -516,7 +555,25 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                                 : <ChevronDown className="size-3.5" />}
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-52">
+                          <DropdownMenuContent align="end" className="w-56">
+                            {row.diseno_programado && (
+                              <DropdownMenuItem
+                                onClick={() => setAnularTarget({ row, tipo: "diseno" })}
+                                className="text-orange-700 focus:text-orange-700"
+                              >
+                                <XCircle className="size-3.5 mr-2 shrink-0" />
+                                Anular programación de Diseño
+                              </DropdownMenuItem>
+                            )}
+                            {row.corte_programado && (
+                              <DropdownMenuItem
+                                onClick={() => setAnularTarget({ row, tipo: "corte" })}
+                                className="text-orange-700 focus:text-orange-700"
+                              >
+                                <XCircle className="size-3.5 mr-2 shrink-0" />
+                                Anular programación de Corte
+                              </DropdownMenuItem>
+                            )}
                             {!row.diseno_programado && !row.no_requiere_diseno && (
                               <DropdownMenuItem
                                 onClick={() => handleSkipPhase(row, "no_requiere_diseno")}
@@ -535,8 +592,8 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                                 Marcar: No pasa por Corte
                               </DropdownMenuItem>
                             )}
-                            {(row.diseno_programado || row.no_requiere_diseno) &&
-                             (row.corte_programado || row.no_requiere_corte) && (
+                            {!row.diseno_programado && row.no_requiere_diseno &&
+                             !row.corte_programado && row.no_requiere_corte && (
                               <DropdownMenuItem disabled className="text-muted-foreground text-xs">
                                 Sin acciones disponibles
                               </DropdownMenuItem>
@@ -620,6 +677,32 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
           void fetchOrders()
         }}
       />
+
+      <AlertDialog open={anularTarget !== null} onOpenChange={(o) => { if (!o && !anulando) setAnularTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              ¿Anular programación de {anularTarget?.tipo === "diseno" ? "Diseño" : "Corte"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará el registro de{" "}
+              {anularTarget?.tipo === "diseno" ? "diseño" : "corte"} del folio{" "}
+              <span className="font-mono font-medium">{anularTarget?.row.folio ?? ""}</span>{" "}
+              y el folio quedará disponible para ser programado nuevamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={anulando}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-orange-600 hover:bg-orange-700 text-white"
+              onClick={handleConfirmAnular}
+              disabled={anulando}
+            >
+              {anulando ? "Anulando…" : "Anular programación"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>
         <AlertDialogContent>

@@ -40,7 +40,7 @@ export type VwPlanCorteDetalle = {
   registro_id: number
   fecha: string | null
   semana: number | null
-  no_origen: number | null
+  no_origen: string | null
   folio: string
   piezas_orden: number | null
   familia: string | null
