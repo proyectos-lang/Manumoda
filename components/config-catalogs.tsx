@@ -5,6 +5,8 @@ import { Pencil, Plus, Trash2, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import type { SessionUser } from "@/lib/types"
+import { UserManagement } from "@/components/user-management"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -361,9 +363,10 @@ function CatalogTab({ table, singular, configMissing }: CatalogTabProps) {
 
 interface ConfigCatalogsProps {
   configMissing: boolean
+  user: SessionUser
 }
 
-export function ConfigCatalogs({ configMissing }: ConfigCatalogsProps) {
+export function ConfigCatalogs({ configMissing, user }: ConfigCatalogsProps) {
   return (
     <Tabs defaultValue="compradores" className="w-full">
       <TabsList className="mb-6 h-10 rounded-xl border border-border/60 bg-white/60 p-1 backdrop-blur-sm">
@@ -376,6 +379,14 @@ export function ConfigCatalogs({ configMissing }: ConfigCatalogsProps) {
             {t.label}
           </TabsTrigger>
         ))}
+        {user.es_admin && (
+          <TabsTrigger
+            value="usuarios"
+            className="rounded-lg text-sm font-medium data-[state=active]:bg-violet-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+          >
+            Usuarios
+          </TabsTrigger>
+        )}
       </TabsList>
 
       {TABS.map((t) => (
@@ -387,6 +398,12 @@ export function ConfigCatalogs({ configMissing }: ConfigCatalogsProps) {
           />
         </TabsContent>
       ))}
+
+      {user.es_admin && (
+        <TabsContent value="usuarios">
+          <UserManagement currentUser={user} />
+        </TabsContent>
+      )}
     </Tabs>
   )
 }

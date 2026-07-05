@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, Database, Scissors, Settings as SettingsIcon, Palette } from "lucide-react"
+import { AlertTriangle, Database, Loader2, Scissors, Settings as SettingsIcon, Palette } from "lucide-react"
 import { ExcelUploader } from "@/components/excel-uploader"
 import { OrdersTable } from "@/components/orders-table"
 import { ProductionTrackingDashboard } from "@/components/production-tracking-dashboard"
@@ -14,8 +14,10 @@ import { OperationsOverview } from "@/components/operations-overview"
 import { DesignModule } from "@/components/design-module"
 import { CorteModule } from "@/components/corte-module"
 import { ColaboradoresModule } from "@/components/colaboradores-module"
+import { LoginScreen } from "@/components/login-screen"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Toaster } from "@/components/ui/sonner"
+import { useAuth } from "@/lib/auth-context"
 
 const TITLES: Record<ModuleKey, string> = {
   inicio: "Página de Inicio",
@@ -30,6 +32,7 @@ const TITLES: Record<ModuleKey, string> = {
 }
 
 export default function Page() {
+  const { user, loading, logout } = useAuth()
   const [active, setActive] = useState<ModuleKey>("inicio")
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -37,9 +40,21 @@ export default function Page() {
   const hasKey = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
   const configMissing = !hasUrl || !hasKey
 
+  if (loading) {
+    return (
+      <div className="sidebar-cmyk-gradient flex min-h-screen items-center justify-center">
+        <Loader2 className="size-8 animate-spin text-white/60" />
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <LoginScreen />
+  }
+
   return (
     <main className="content-cmyk-gradient min-h-screen">
-      <AppSidebar active={active} onChange={setActive} />
+      <AppSidebar active={active} onChange={setActive} user={user} onLogout={logout} />
 
       <div className="lg:pl-[280px]">
         <AppHeader title={TITLES[active]} />
@@ -274,7 +289,7 @@ export default function Page() {
                   </div>
                 </div>
 
-                <ConfigCatalogs configMissing={configMissing} />
+                <ConfigCatalogs configMissing={configMissing} user={user} />
               </section>
             </div>
           )}

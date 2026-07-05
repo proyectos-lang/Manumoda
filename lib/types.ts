@@ -92,6 +92,14 @@ export type VwBonosCorte = {
   porcentaje_productividad_directa: number | null
 }
 
+export type SessionUser = {
+  id: number
+  nombre: string
+  username: string
+  es_admin: boolean
+  permisos: string[]
+}
+
 export type ParsedRow = Pick<
   OrdenProduccion,
   | "idempresa"
