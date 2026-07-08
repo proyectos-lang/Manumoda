@@ -34,6 +34,7 @@ export type OrdenProduccion = {
   no_requiere_corte?: boolean | null
   corte_programado?: boolean | null
   fecha_limite_confirmacion?: string | null
+  fecha_contra_muestra?: string | null
 }
 
 export type VwPlanCorteDetalle = {

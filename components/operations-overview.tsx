@@ -65,6 +65,7 @@ type ResumenRow = {
   riesgo_entrega: string | null
   fecha_cancelacion: string | null
   fecha_limite_confirmacion: string | null
+  fecha_contra_muestra: string | null
   calidad: number | null
   familia: string | null
   fecha_s1: string | null
@@ -825,8 +826,9 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead className="w-[130px]">Folio</TableHead>
                 <TableHead>Modelo</TableHead>
                 <TableHead>Maquilador</TableHead>
-                <TableHead className="w-[110px]">F. Entrega</TableHead>
-                <TableHead className="w-[110px]">F. Límite Conf.</TableHead>
+                <TableHead className="w-[110px]">Fecha Límite</TableHead>
+                <TableHead className="w-[110px]">Contra Muestra</TableHead>
+                <TableHead className="w-[110px]">Fecha Entrega</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
@@ -841,6 +843,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       <TableCell><Skeleton className="h-4 w-28" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-44" /></TableCell>
                     </TableRow>
@@ -850,7 +853,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-12 text-center">
+                  <TableCell colSpan={8} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -882,13 +885,18 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                         </span>
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
-                        {r.fecha_cancelacion
-                          ? formatDate(r.fecha_cancelacion)
+                        {r.fecha_limite_confirmacion
+                          ? formatDate(r.fecha_limite_confirmacion)
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
-                        {r.fecha_limite_confirmacion
-                          ? formatDate(r.fecha_limite_confirmacion)
+                        {r.fecha_contra_muestra
+                          ? formatDate(r.fecha_contra_muestra)
+                          : <span className="text-muted-foreground/60 italic">—</span>}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-sm">
+                        {r.fecha_cancelacion
+                          ? formatDate(r.fecha_cancelacion)
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell>

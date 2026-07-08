@@ -113,6 +113,11 @@ type DisenoProgramacion = {
   cumplimiento_costura: boolean
   rechazo_orden: boolean
   fecha_aprobacion_diseno?: string | null
+  // adiciones al proceso
+  muchas_operaciones?: boolean | null
+  telas_pesadas?: boolean | null
+  muchas_habilitaciones?: boolean | null
+  prenda_compleja?: boolean | null
   // costura calc
   idprenda?: number | null
   categoria_demografica?: string | null
@@ -793,6 +798,7 @@ export function DesignModule({ configMissing }: Props) {
         open={reprogramarOpen}
         onOpenChange={(o) => { setReprogramarOpen(o); if (!o) setReprogramarRecord(null) }}
         onReprogramado={handleRecordUpdated}
+        onRefresh={fetchRecords}
       />
 
       <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>
@@ -1056,16 +1062,21 @@ function ReprogramarDialog({
   open,
   onOpenChange,
   onReprogramado,
+  onRefresh,
 }: {
   record: DisenoProgramacion | null
   open: boolean
   onOpenChange: (v: boolean) => void
   onReprogramado: (updated: DisenoProgramacion) => void
+  onRefresh?: () => void
 }) {
   const [nuevaSemana, setNuevaSemana] = useState("")
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => { if (!open) setNuevaSemana("") }, [open])
+
+  // Orden rechazada → clonar como nueva fila con evaluación limpia
+  const esRechazada = record?.rechazo_orden === true
 
   const handleSubmit = async () => {
     if (!record || !nuevaSemana) return
@@ -1074,28 +1085,75 @@ function ReprogramarDialog({
 
     setSubmitting(true)
     try {
-      const { data, error } = await supabase
-        .from("diseno_programacion")
-        .update({
-          semana: Number(nuevaSemana),
-          semana_original: record.semana, // la semana actual pasa a ser la original
+      if (esRechazada) {
+        // Insertar nueva fila: mismos datos, evaluación reseteada, nueva semana
+        const { data, error } = await supabase
+          .from("diseno_programacion")
+          .insert({
+            idempresa: record.idempresa,
+            folio: record.folio,
+            modelo: record.modelo,
+            familia: record.familia,
+            categoria: record.categoria,
+            cliente: record.cliente,
+            fecha: record.fecha,
+            semana: Number(nuevaSemana),
+            semana_original: record.semana_original ?? record.semana,
+            tipo: record.tipo,
+            idprenda: record.idprenda ?? null,
+            categoria_demografica: record.categoria_demografica ?? null,
+            muchas_operaciones: record.muchas_operaciones ?? false,
+            telas_pesadas: record.telas_pesadas ?? false,
+            muchas_habilitaciones: record.muchas_habilitaciones ?? false,
+            prenda_compleja: record.prenda_compleja ?? false,
+            horas_plan_diseno: record.horas_plan_diseno,
+            numero_muestras: record.numero_muestras ?? 1,
+            iddisenadora: record.iddisenadora,
+            idcosturera: record.idcosturera ?? null,
+            // evaluación limpia
+            cumplimiento_diseno: false,
+            cumplimiento_costura: false,
+            rechazo_orden: false,
+            horas_costura_cumplidas: null,
+            comentarios: null,
+          })
+          .select("*, disenadoras(nombre), costureras(nombre)")
+          .single()
+
+        if (error) {
+          toast.error("No se pudo crear la reprogramación", { description: error.message })
+          return
+        }
+
+        toast.success("Orden duplicada para reprogramación", {
+          description: `Nueva entrada para semana ${nuevaSemana} · La fila rechazada se mantiene como historial.`,
         })
-        .eq("id", record.id)
-        .eq("idempresa", IDEMPRESA)
-        .select("*, disenadoras(nombre), costureras(nombre)")
-        .single()
+        onReprogramado(data as DisenoProgramacion)
+        onRefresh?.()
+        onOpenChange(false)
+      } else {
+        const { data, error } = await supabase
+          .from("diseno_programacion")
+          .update({
+            semana: Number(nuevaSemana),
+            semana_original: record.semana,
+          })
+          .eq("id", record.id)
+          .eq("idempresa", IDEMPRESA)
+          .select("*, disenadoras(nombre), costureras(nombre)")
+          .single()
 
-      if (error) {
-        console.error("[v0] reprogramar error:", error)
-        toast.error("No se pudo reprogramar", { description: error.message })
-        return
+        if (error) {
+          toast.error("No se pudo reprogramar", { description: error.message })
+          return
+        }
+
+        toast.success("Orden reprogramada", {
+          description: `Semana ${record.semana ?? "—"} → Semana ${nuevaSemana}`,
+        })
+        onReprogramado(data as DisenoProgramacion)
+        onOpenChange(false)
       }
-
-      toast.success("Orden reprogramada", {
-        description: `Semana ${record.semana ?? "—"} → Semana ${nuevaSemana}`,
-      })
-      onReprogramado(data as DisenoProgramacion)
-      onOpenChange(false)
     } finally {
       setSubmitting(false)
     }
@@ -1106,11 +1164,18 @@ function ReprogramarDialog({
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <div className="flex items-center gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 ring-1 ring-violet-200">
-              <CalendarClock className="size-4 text-violet-600" />
+            <div className={cn(
+              "flex size-9 shrink-0 items-center justify-center rounded-lg ring-1",
+              esRechazada
+                ? "bg-rose-50 ring-rose-200"
+                : "bg-violet-100 ring-violet-200",
+            )}>
+              <CalendarClock className={cn("size-4", esRechazada ? "text-rose-600" : "text-violet-600")} />
             </div>
             <div>
-              <DialogTitle>Reprogramar Orden</DialogTitle>
+              <DialogTitle>
+                {esRechazada ? "Reprogramar Orden Rechazada" : "Reprogramar Orden"}
+              </DialogTitle>
               <DialogDescription>
                 Folio: <span className="font-mono font-medium">{record?.folio ?? "—"}</span>
               </DialogDescription>
@@ -1119,6 +1184,12 @@ function ReprogramarDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {esRechazada && (
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-700">
+              Esta orden está rechazada. Se creará una <strong>nueva fila</strong> con la misma información pero con evaluación limpia. La fila rechazada se mantiene como historial.
+            </p>
+          )}
+
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm space-y-1">
             <p className="text-muted-foreground">
               Semana actual:{" "}
@@ -1153,12 +1224,17 @@ function ReprogramarDialog({
           <Button
             onClick={handleSubmit}
             disabled={submitting || !nuevaSemana}
-            className="bg-violet-600 hover:bg-violet-700 text-white"
+            className={cn(
+              "text-white",
+              esRechazada
+                ? "bg-rose-600 hover:bg-rose-700"
+                : "bg-violet-600 hover:bg-violet-700",
+            )}
           >
             {submitting ? (
-              <><Loader2 className="size-4 animate-spin" />Reprogramando…</>
+              <><Loader2 className="size-4 animate-spin" />{esRechazada ? "Creando…" : "Reprogramando…"}</>
             ) : (
-              "Reprogramar"
+              esRechazada ? "Crear nueva programación" : "Reprogramar"
             )}
           </Button>
         </DialogFooter>

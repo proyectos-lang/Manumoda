@@ -86,6 +86,7 @@ type FormState = {
   habilitaciones_insumos: string
   comentarios_generales: string
   fecha_limite_confirmacion: Date | null
+  fecha_contra_muestra: Date | null
 }
 
 const EMPTY_FORM: FormState = {
@@ -101,6 +102,7 @@ const EMPTY_FORM: FormState = {
   habilitaciones_insumos: "",
   comentarios_generales: "",
   fecha_limite_confirmacion: null,
+  fecha_contra_muestra: null,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -170,7 +172,7 @@ export function ProductionTrackingDashboard({
     const { data, error } = await supabase
       .from("ordenes_produccion")
       .select(
-        "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion",
+        "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra",
       )
       .eq("idempresa", IDEMPRESA)
       .neq("fase_actual", "Por Programar")
@@ -333,6 +335,7 @@ function TableView({
             <TableHead className="font-semibold">#ID</TableHead>
             <TableHead className="font-semibold">Folio</TableHead>
             <TableHead className="font-semibold">F. Entrega</TableHead>
+            <TableHead className="font-semibold">Contra Muestra</TableHead>
             <TableHead className="font-semibold">Maquilero</TableHead>
             <TableHead className="font-semibold">Cliente</TableHead>
             <TableHead className="font-semibold">Modelo</TableHead>
@@ -348,7 +351,7 @@ function TableView({
           {loading && orders.length === 0 ? (
             Array.from({ length: 5 }).map((_, i) => (
               <TableRow key={i}>
-                {Array.from({ length: 12 }).map((__, j) => (
+                {Array.from({ length: 13 }).map((__, j) => (
                   <TableCell key={j}>
                     <Skeleton className="h-4 w-full" />
                   </TableCell>
@@ -358,7 +361,7 @@ function TableView({
           ) : orders.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={12}
+                colSpan={13}
                 className="h-28 text-center text-sm text-muted-foreground"
               >
                 No hay órdenes en seguimiento.
@@ -375,6 +378,9 @@ function TableView({
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                   {fmtShort(o.fecha_cancelacion)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                  {fmtShort(o.fecha_contra_muestra)}
                 </TableCell>
                 <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
                   {o.maquilero ?? "—"}
@@ -599,6 +605,7 @@ function UpdateProgressSheet({
       habilitaciones_insumos: order.habilitaciones_insumos ?? "",
       comentarios_generales: order.comentarios_generales ?? "",
       fecha_limite_confirmacion: parseDate(order.fecha_limite_confirmacion),
+      fecha_contra_muestra: parseDate(order.fecha_contra_muestra),
     })
   }, [order])
 
@@ -648,6 +655,7 @@ function UpdateProgressSheet({
       fecha_ultima_revision: new Date().toISOString(),
       fase_actual: detectedPhase,
       fecha_limite_confirmacion: toISODate(form.fecha_limite_confirmacion),
+      fecha_contra_muestra: toISODate(form.fecha_contra_muestra),
     }
 
     const { error } = await supabase
@@ -902,49 +910,96 @@ function UpdateProgressSheet({
                   </span>
                   <h3 className="text-sm font-semibold text-foreground">Confirmación</h3>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    Fecha Límite de Confirmación
-                  </Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left text-xs font-normal h-9",
-                          !form.fecha_limite_confirmacion && "text-muted-foreground",
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Fecha Límite de Confirmación
+                    </Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-full justify-start text-left text-xs font-normal h-9",
+                            !form.fecha_limite_confirmacion && "text-muted-foreground",
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 size-3.5 shrink-0" />
+                          <span className="truncate">
+                            {form.fecha_limite_confirmacion
+                              ? format(form.fecha_limite_confirmacion, "dd MMM yyyy", { locale: es })
+                              : "Sin fecha"}
+                          </span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={form.fecha_limite_confirmacion ?? undefined}
+                          onSelect={(d) => setForm((f) => ({ ...f, fecha_limite_confirmacion: d ?? null }))}
+                          locale={es}
+                          initialFocus
+                        />
+                        {form.fecha_limite_confirmacion && (
+                          <div className="flex justify-end border-t border-border p-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs text-muted-foreground"
+                              onClick={() => setForm((f) => ({ ...f, fecha_limite_confirmacion: null }))}
+                            >
+                              Limpiar fecha
+                            </Button>
+                          </div>
                         )}
-                      >
-                        <CalendarIcon className="mr-2 size-3.5 shrink-0" />
-                        <span className="truncate">
-                          {form.fecha_limite_confirmacion
-                            ? format(form.fecha_limite_confirmacion, "dd MMM yyyy", { locale: es })
-                            : "Sin fecha de confirmación"}
-                        </span>
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={form.fecha_limite_confirmacion ?? undefined}
-                        onSelect={(d) => setForm((f) => ({ ...f, fecha_limite_confirmacion: d ?? null }))}
-                        locale={es}
-                        initialFocus
-                      />
-                      {form.fecha_limite_confirmacion && (
-                        <div className="flex justify-end border-t border-border p-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs text-muted-foreground"
-                            onClick={() => setForm((f) => ({ ...f, fecha_limite_confirmacion: null }))}
-                          >
-                            Limpiar fecha
-                          </Button>
-                        </div>
-                      )}
-                    </PopoverContent>
-                  </Popover>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Fecha Contra Muestra Maquilero
+                    </Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-full justify-start text-left text-xs font-normal h-9",
+                            !form.fecha_contra_muestra && "text-muted-foreground",
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 size-3.5 shrink-0" />
+                          <span className="truncate">
+                            {form.fecha_contra_muestra
+                              ? format(form.fecha_contra_muestra, "dd MMM yyyy", { locale: es })
+                              : "Sin fecha"}
+                          </span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={form.fecha_contra_muestra ?? undefined}
+                          onSelect={(d) => setForm((f) => ({ ...f, fecha_contra_muestra: d ?? null }))}
+                          locale={es}
+                          initialFocus
+                        />
+                        {form.fecha_contra_muestra && (
+                          <div className="flex justify-end border-t border-border p-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs text-muted-foreground"
+                              onClick={() => setForm((f) => ({ ...f, fecha_contra_muestra: null }))}
+                            >
+                              Limpiar fecha
+                            </Button>
+                          </div>
+                        )}
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                 </div>
               </div>
             </div>
