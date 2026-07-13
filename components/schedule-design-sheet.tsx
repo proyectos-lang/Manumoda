@@ -67,15 +67,9 @@ const INITIAL_FORM = {
   semana: "",
   semanaOriginal: "",
   tipo: "",
-  // detalles diseño
   idprenda: "",
   categoriaDemografica: "",
-  // adiciones (+1 h cada una)
-  muchasOperaciones:    false,
-  telasPesadas:         false,
-  muchasHabilitaciones: false,
-  prendaCompleja:       false,
-  // asignación
+  adiciones: {} as Record<string, boolean>,
   numeroMuestras: "1",
   iddisenadora: "",
   idcosturera: "",
@@ -88,21 +82,12 @@ const DARK_INPUT =
 const DARK_SELECT_TRIGGER =
   "border-white/15 bg-white/10 text-white data-[placeholder]:text-white/40 focus:ring-white/20"
 
-const CATEGORIAS_DEMOGRAFICAS = ["Bebe", "Niña", "Teen", "Dama", "Extras"]
+// Tipos y categorías se cargan desde Supabase (cat_tipo_diseno, cat_categoria_demografica, cat_adiciones_diseno)
+type CatTipoDiseno    = { id: number; nombre: string; multiplicador: number }
+type CatCatDemo       = { id: number; nombre: string; multiplicador: number }
+type CatAdicionDiseno = { id: number; clave: string;  nombre: string; horas: number }
 
-const TIPO_MULT: Record<string, number> = {
-  "NUEVO":     1.00,
-  "RESURTIDO": 0.75,
-  "RECHAZADO": 1.15,
-}
-
-const CATEGORIA_MULT: Record<string, number> = {
-  "Bebe":   0.85,
-  "Niña":   0.90,
-  "Teen":   0.95,
-  "Dama":   1.00,
-  "Extras": 1.10,
-}
+const KNOWN_ADICION_CLAVES = ["muchas_operaciones", "telas_pesadas", "muchas_habilitaciones", "prenda_compleja"]
 
 export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }: Props) {
   const cfg = getSupabaseConfigStatus()
@@ -116,6 +101,9 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
   const [costureras, setCostureras] = useState<Catalog[]>([])
   const [prendas, setPrendas] = useState<PrendaCatalog[]>([])
+  const [tiposDB, setTiposDB]       = useState<CatTipoDiseno[]>([])
+  const [categoriasDB, setCategoriasDB] = useState<CatCatDemo[]>([])
+  const [adicionesDB, setAdicionesDB]   = useState<CatAdicionDiseno[]>([])
   const [orden, setOrden] = useState<OrdenContext | null>(null)
 
   const [form, setForm] = useState({ ...INITIAL_FORM })
@@ -126,37 +114,36 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
     value: (typeof INITIAL_FORM)[K],
   ) => setForm((prev) => ({ ...prev, [key]: value }))
 
-  // Horas estimadas de diseño: (base × tipo × categoría) + adiciones (cada check = +1 h)
+  // Horas estimadas de diseño: (base × tipo × categoría) + Σ adiciones
   const horasDiseno = useMemo(() => {
     const prenda = prendas.find((p) => String(p.id) === form.idprenda)
     if (!prenda) return null
-    const tipoMult = TIPO_MULT[form.tipo] ?? 1
-    const catMult  = CATEGORIA_MULT[form.categoriaDemografica] ?? 1
-    const adiciones = ADICIONES_DISENO.filter((a) => form[a.key]).length
-    return Math.round((prenda.horas_base * tipoMult * catMult + adiciones) * 100) / 100
-  }, [form.idprenda, form.tipo, form.categoriaDemografica,
-      form.muchasOperaciones, form.telasPesadas, form.muchasHabilitaciones, form.prendaCompleja,
-      prendas])
+    const tipoMult = tiposDB.find((t) => t.nombre === form.tipo)?.multiplicador ?? 1
+    const catMult  = categoriasDB.find((c) => c.nombre === form.categoriaDemografica)?.multiplicador ?? 1
+    const adicionHoras = adicionesDB.reduce((s, a) => s + (form.adiciones[a.clave] ? Number(a.horas) : 0), 0)
+    return Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
+  }, [form.idprenda, form.tipo, form.categoriaDemografica, form.adiciones,
+      prendas, tiposDB, categoriasDB, adicionesDB])
 
   // Auto-match prenda ← orden.familia · categoría ← orden.categoria (solo si no es reprogramar)
   useEffect(() => {
     if (autoMatchedRef.current) return
     if (editRegistroId != null) { autoMatchedRef.current = true; return }
-    if (!orden || prendas.length === 0) return
+    if (!orden || prendas.length === 0 || categoriasDB.length === 0) return
     autoMatchedRef.current = true
 
     const matchPrenda = prendas.find(
       (p) => p.nombre.toUpperCase() === (orden.familia ?? "").toUpperCase(),
     )
-    const matchCat = CATEGORIAS_DEMOGRAFICAS.find(
-      (c) => c.toUpperCase() === (orden.categoria ?? "").toUpperCase(),
+    const matchCat = categoriasDB.find(
+      (c) => c.nombre.toUpperCase() === (orden.categoria ?? "").toUpperCase(),
     )
     setForm((prev) => ({
       ...prev,
       ...(matchPrenda ? { idprenda: String(matchPrenda.id) } : {}),
-      ...(matchCat    ? { categoriaDemografica: matchCat }   : {}),
+      ...(matchCat    ? { categoriaDemografica: matchCat.nombre } : {}),
     }))
-  }, [orden, prendas, editRegistroId])
+  }, [orden, prendas, categoriasDB, editRegistroId])
 
   // Reset al cerrar
   useEffect(() => {
@@ -180,7 +167,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
     const loadCatalogs = async () => {
       setLoadingCatalogs(true)
       try {
-        const [disRes, cosRes, prendaRes] = await Promise.all([
+        const [disRes, cosRes, prendaRes, tipoRes, catRes, adicRes] = await Promise.all([
           supabase
             .from("disenadoras")
             .select("id, nombre")
@@ -195,6 +182,21 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
             .select("id, nombre, horas_base")
             .eq("idempresa", IDEMPRESA)
             .order("nombre", { ascending: true }),
+          supabase
+            .from("cat_tipo_diseno")
+            .select("id, nombre, multiplicador")
+            .eq("idempresa", IDEMPRESA)
+            .order("id"),
+          supabase
+            .from("cat_categoria_demografica")
+            .select("id, nombre, multiplicador")
+            .eq("idempresa", IDEMPRESA)
+            .order("id"),
+          supabase
+            .from("cat_adiciones_diseno")
+            .select("id, clave, nombre, horas")
+            .eq("idempresa", IDEMPRESA)
+            .order("id"),
         ])
 
         if (cancelled) return
@@ -214,6 +216,9 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         } else {
           setPrendas((prendaRes.data ?? []) as PrendaCatalog[])
         }
+        if (!tipoRes.error) setTiposDB((tipoRes.data ?? []) as CatTipoDiseno[])
+        if (!catRes.error)  setCategoriasDB((catRes.data ?? []) as CatCatDemo[])
+        if (!adicRes.error) setAdicionesDB((adicRes.data ?? []) as CatAdicionDiseno[])
       } finally {
         if (!cancelled) setLoadingCatalogs(false)
       }
@@ -266,10 +271,12 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
           tipo: (r.tipo as string) ?? "",
           idprenda: r.idprenda != null ? String(r.idprenda) : "",
           categoriaDemografica: (r.categoria_demografica as string) ?? "",
-          muchasOperaciones:    Boolean(r.muchas_operaciones),
-          telasPesadas:         Boolean(r.telas_pesadas),
-          muchasHabilitaciones: Boolean(r.muchas_habilitaciones),
-          prendaCompleja:       Boolean(r.prenda_compleja),
+          adiciones: {
+            muchas_operaciones:    Boolean(r.muchas_operaciones),
+            telas_pesadas:         Boolean(r.telas_pesadas),
+            muchas_habilitaciones: Boolean(r.muchas_habilitaciones),
+            prenda_compleja:       Boolean(r.prenda_compleja),
+          },
           numeroMuestras: r.numero_muestras != null ? String(r.numero_muestras) : "1",
           iddisenadora: r.iddisenadora != null ? String(r.iddisenadora) : "",
           idcosturera: r.idcosturera != null ? String(r.idcosturera) : "__none__",
@@ -320,13 +327,12 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         semana: form.semana ? Number(form.semana) : null,
         semana_original: form.semanaOriginal ? Number(form.semanaOriginal) : null,
         tipo: form.tipo,
-        // detalles diseño
         idprenda: form.idprenda ? Number(form.idprenda) : null,
         categoria_demografica: form.categoriaDemografica || null,
-        muchas_operaciones:    form.muchasOperaciones,
-        telas_pesadas:         form.telasPesadas,
-        muchas_habilitaciones: form.muchasHabilitaciones,
-        prenda_compleja:       form.prendaCompleja,
+        muchas_operaciones:    Boolean(form.adiciones["muchas_operaciones"]),
+        telas_pesadas:         Boolean(form.adiciones["telas_pesadas"]),
+        muchas_habilitaciones: Boolean(form.adiciones["muchas_habilitaciones"]),
+        prenda_compleja:       Boolean(form.adiciones["prenda_compleja"]),
         horas_plan_diseno: horasDiseno,
         // asignación
         numero_muestras: Number(form.numeroMuestras) || 1,
@@ -552,22 +558,23 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                     {/* Tipo */}
                     <div className="space-y-1.5">
                       <DLabel htmlFor="tipo">Tipo <Req /></DLabel>
-                      <Select value={form.tipo} onValueChange={(v) => set("tipo", v)}>
+                      <Select value={form.tipo} onValueChange={(v) => set("tipo", v)} disabled={loadingCatalogs}>
                         <SelectTrigger id="tipo" className={DARK_SELECT_TRIGGER}>
                           <SelectValue placeholder="Seleccionar…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {Object.entries(TIPO_MULT).map(([t, m]) => (
-                            <SelectItem key={t} value={t}>
-                              {t}
-                              <span className="ml-2 text-xs text-muted-foreground">×{m.toFixed(2)}</span>
+                          {tiposDB.map((t) => (
+                            <SelectItem key={t.id} value={t.nombre}>
+                              {t.nombre}
+                              <span className="ml-2 text-xs text-muted-foreground">×{Number(t.multiplicador).toFixed(2)}</span>
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      {form.tipo && (
-                        <p className="text-[10px] text-white/40">×{TIPO_MULT[form.tipo]?.toFixed(2)}</p>
-                      )}
+                      {form.tipo && (() => {
+                        const m = tiposDB.find(t => t.nombre === form.tipo)?.multiplicador
+                        return m != null ? <p className="text-[10px] text-white/40">×{Number(m).toFixed(2)}</p> : null
+                      })()}
                     </div>
 
                     {/* Categoría demográfica */}
@@ -576,46 +583,59 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                       <Select
                         value={form.categoriaDemografica}
                         onValueChange={(v) => set("categoriaDemografica", v)}
+                        disabled={loadingCatalogs}
                       >
                         <SelectTrigger id="cat-demo" className={DARK_SELECT_TRIGGER}>
                           <SelectValue placeholder="Seleccionar…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {CATEGORIAS_DEMOGRAFICAS.map((c) => (
-                            <SelectItem key={c} value={c}>
-                              {c}
-                              <span className="ml-2 text-xs text-muted-foreground">×{CATEGORIA_MULT[c]?.toFixed(2)}</span>
+                          {categoriasDB.map((c) => (
+                            <SelectItem key={c.id} value={c.nombre}>
+                              {c.nombre}
+                              <span className="ml-2 text-xs text-muted-foreground">×{Number(c.multiplicador).toFixed(2)}</span>
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      {form.categoriaDemografica && (
-                        <p className="text-[10px] text-white/40">×{CATEGORIA_MULT[form.categoriaDemografica]?.toFixed(2)}</p>
-                      )}
+                      {form.categoriaDemografica && (() => {
+                        const m = categoriasDB.find(c => c.nombre === form.categoriaDemografica)?.multiplicador
+                        return m != null ? <p className="text-[10px] text-white/40">×{Number(m).toFixed(2)}</p> : null
+                      })()}
                     </div>
                   </div>
 
                   {/* Adiciones al proceso */}
-                  <div className="space-y-2">
-                    <DLabel>Adiciones al proceso <span className="text-white/35 font-normal">(+1 h c/u)</span></DLabel>
-                    <div className="grid grid-cols-2 gap-2">
-                      {ADICIONES_DISENO.map((a) => (
-                        <label
-                          key={a.key}
-                          className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 transition-colors hover:bg-white/10"
-                        >
-                          <Checkbox
-                            checked={form[a.key]}
-                            onCheckedChange={(v) =>
-                              setForm((prev) => ({ ...prev, [a.key]: Boolean(v) }))
-                            }
-                            className="border-white/30 data-[state=checked]:bg-indigo-500 data-[state=checked]:border-indigo-500"
-                          />
-                          <span className="text-xs text-white/80">{a.label}</span>
-                        </label>
-                      ))}
+                  {adicionesDB.length > 0 && (
+                    <div className="space-y-2">
+                      <DLabel>
+                        Adiciones al proceso{" "}
+                        <span className="text-white/35 font-normal">(suman horas)</span>
+                      </DLabel>
+                      <div className="grid grid-cols-2 gap-2">
+                        {adicionesDB.map((a) => (
+                          <label
+                            key={a.clave}
+                            className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 transition-colors hover:bg-white/10"
+                          >
+                            <Checkbox
+                              checked={Boolean(form.adiciones[a.clave])}
+                              onCheckedChange={(v) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  adiciones: { ...prev.adiciones, [a.clave]: Boolean(v) },
+                                }))
+                              }
+                              className="border-white/30 data-[state=checked]:bg-indigo-500 data-[state=checked]:border-indigo-500"
+                            />
+                            <span className="text-xs text-white/80">
+                              {a.nombre}
+                              <span className="ml-1 text-white/35">+{Number(a.horas).toFixed(1)} h</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Preview */}
                   {horasDiseno !== null ? (
@@ -629,9 +649,16 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                       </p>
                       <p className="mt-1.5 text-[11px] text-white/45">
                         {prendas.find((p) => String(p.id) === form.idprenda)?.horas_base ?? "—"} h base
-                        {form.tipo && ` · Tipo ×${TIPO_MULT[form.tipo]?.toFixed(2)}`}
-                        {form.categoriaDemografica && ` · Cat. ×${CATEGORIA_MULT[form.categoriaDemografica]?.toFixed(2)}`}
-                        {ADICIONES_DISENO.some((a) => form[a.key]) && ` · +${ADICIONES_DISENO.filter((a) => form[a.key]).length} h adiciones`}
+                        {form.tipo && (() => {
+                          const m = tiposDB.find(t => t.nombre === form.tipo)?.multiplicador
+                          return m != null ? ` · Tipo ×${Number(m).toFixed(2)}` : ""
+                        })()}
+                        {form.categoriaDemografica && (() => {
+                          const m = categoriasDB.find(c => c.nombre === form.categoriaDemografica)?.multiplicador
+                          return m != null ? ` · Cat. ×${Number(m).toFixed(2)}` : ""
+                        })()}
+                        {adicionesDB.some(a => form.adiciones[a.clave]) &&
+                          ` · +${adicionesDB.filter(a => form.adiciones[a.clave]).reduce((s, a) => s + Number(a.horas), 0).toFixed(1)} h adiciones`}
                       </p>
                     </div>
                   ) : (

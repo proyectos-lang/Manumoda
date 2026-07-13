@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Loader2, RefreshCw, Search, Settings2, X } from "lucide-react"
+import { Loader2, RefreshCw, Search, Settings2, SlidersHorizontal, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EditCorteVariablesSheet } from "@/components/edit-corte-variables-sheet"
+import { CorteMultipliersDialog } from "@/components/corte-multipliers-dialog"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -100,6 +101,7 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
   const [filterSemana, setFilterSemana] = useState<string>("__all__")
   const [search, setSearch] = useState("")
   const [editVarsOpen, setEditVarsOpen] = useState(false)
+  const [multipliersOpen, setMultipliersOpen] = useState(false)
 
   // Local overrides for inline edits (keyed by registro_id)
   const [localRows, setLocalRows] = useState<Record<number, Partial<PatchRow>>>({})
@@ -211,6 +213,7 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
 
   return (
     <>
+    <CorteMultipliersDialog open={multipliersOpen} onOpenChange={setMultipliersOpen} />
     <EditCorteVariablesSheet open={editVarsOpen} onClose={() => setEditVarsOpen(false)} />
     <div className="space-y-4">
       {/* Toolbar */}
@@ -250,6 +253,15 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{filtered.length} registro{filtered.length !== 1 ? "s" : ""}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMultipliersOpen(true)}
+            className="gap-1.5 bg-transparent"
+          >
+            <SlidersHorizontal className="size-3.5" />
+            Multiplicadores
+          </Button>
           <Button
             variant="outline"
             size="sm"

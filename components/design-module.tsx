@@ -23,6 +23,7 @@ import {
   CalendarClock,
   X,
   Search,
+  SlidersHorizontal,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -86,6 +87,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import * as XLSX from "xlsx"
+import { DisenoMultipliersDialog } from "@/components/diseno-multipliers-dialog"
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -183,6 +185,7 @@ export function DesignModule({ configMissing }: Props) {
   const [filterFamilia, setFilterFamilia] = useState("__all__")
   const [filterCategoria, setFilterCategoria] = useState("__all__")
   const [filterEstado, setFilterEstado] = useState("__all__")
+  const [multipliersOpen, setMultipliersOpen] = useState(false)
 
   // Restaurar filtros guardados al montar
   useEffect(() => {
@@ -530,6 +533,15 @@ export function DesignModule({ configMissing }: Props) {
               <Button
                 variant="outline"
                 size="sm"
+                onClick={() => setMultipliersOpen(true)}
+                className="gap-1.5 bg-transparent"
+              >
+                <SlidersHorizontal className="size-3.5" />
+                Multiplicadores
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={fetchRecords}
                 disabled={loading || configMissing}
                 className="gap-2 bg-transparent"
@@ -793,6 +805,11 @@ export function DesignModule({ configMissing }: Props) {
       </Tabs>
 
       {/* Modales — fuera del árbol de Tabs para evitar problemas de z-index */}
+      <DisenoMultipliersDialog
+        open={multipliersOpen}
+        onOpenChange={setMultipliersOpen}
+      />
+
       <ReprogramarDialog
         record={reprogramarRecord}
         open={reprogramarOpen}
