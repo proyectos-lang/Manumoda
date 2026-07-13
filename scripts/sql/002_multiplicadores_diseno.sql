@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS manumoda.cat_adiciones_diseno (
     idempresa INTEGER     NOT NULL DEFAULT 1,
     clave     TEXT        NOT NULL,
     nombre    TEXT        NOT NULL,
-    horas     NUMERIC(5,2) NOT NULL DEFAULT 1.00
+    horas     NUMERIC(5,2) NOT NULL DEFAULT 1.00,
+    CONSTRAINT uq_cat_adiciones_diseno_clave UNIQUE (idempresa, clave)
 );
 
 -- ── Datos iniciales: tipos de orden ─────────────────────────
