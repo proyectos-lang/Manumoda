@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS manumoda.cat_tipo_diseno (
     id            SERIAL PRIMARY KEY,
     idempresa     INTEGER      NOT NULL DEFAULT 1,
     nombre        TEXT         NOT NULL,
-    multiplicador NUMERIC(6,2) NOT NULL DEFAULT 1.00
+    multiplicador NUMERIC(6,2) NOT NULL DEFAULT 1.00,
+    CONSTRAINT uq_cat_tipo_diseno_nombre UNIQUE (idempresa, nombre)
 );
 
 -- ── Categoría demográfica ────────────────────────────────────
@@ -22,7 +23,8 @@ CREATE TABLE IF NOT EXISTS manumoda.cat_categoria_demografica (
     id            SERIAL PRIMARY KEY,
     idempresa     INTEGER      NOT NULL DEFAULT 1,
     nombre        TEXT         NOT NULL,
-    multiplicador NUMERIC(6,2) NOT NULL DEFAULT 1.00
+    multiplicador NUMERIC(6,2) NOT NULL DEFAULT 1.00,
+    CONSTRAINT uq_cat_categoria_demografica_nombre UNIQUE (idempresa, nombre)
 );
 
 -- ── Adiciones al proceso (suman horas) ──────────────────────
