@@ -331,7 +331,6 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
                 <TableHead className="font-semibold">Folio</TableHead>
-                <TableHead className="font-semibold">Pedido</TableHead>
                 <TableHead className="font-semibold">Modelo</TableHead>
                 <TableHead className="font-semibold">Familia</TableHead>
                 <TableHead className="font-semibold">Cliente</TableHead>
@@ -346,19 +345,19 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
             <TableBody>
               {loading && pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
                     <Loader2 className="mx-auto size-5 animate-spin" />
                   </TableCell>
                 </TableRow>
               ) : error ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-24 text-center text-destructive">
+                  <TableCell colSpan={9} className="h-24 text-center text-destructive">
                     {error}
                   </TableCell>
                 </TableRow>
               ) : pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
                     {orders.length === 0 ? "Sin órdenes registradas." : "Sin coincidencias para los filtros aplicados."}
                   </TableCell>
                 </TableRow>
@@ -368,7 +367,6 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                     <TableCell className="font-mono text-xs font-medium text-foreground">
                       {row.folio}
                     </TableCell>
-                    <TableCell className="text-sm">{row.num_pedido ?? "-"}</TableCell>
                     <TableCell className="text-sm">{row.modelo ?? "-"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {row.familia ?? "-"}

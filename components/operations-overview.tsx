@@ -136,7 +136,7 @@ function getRiesgoVisuals(r: string | null | undefined) {
 }
 
 function isAtTiempo(r: string | null | undefined) {
-  return (r ?? "").toLowerCase().includes("tiempo")
+  return r === "A Tiempo"
 }
 
 function MasterBubbleTimeline({ row }: { row: ResumenRow }) {
@@ -344,6 +344,20 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
     return Object.entries(map)
       .map(([familia, count]) => ({ familia, count, pct: total > 0 ? Math.round((count / total) * 100) : 0 }))
       .sort((a, b) => b.count - a.count)
+  }, [filteredRows])
+
+  // Gráfico 4: pedidos por cliente (top 10)
+  const clienteData = useMemo(() => {
+    const map: Record<string, number> = {}
+    filteredRows.forEach((r) => {
+      const c = r.cliente?.trim() || "Sin Cliente"
+      map[c] = (map[c] ?? 0) + 1
+    })
+    const total = filteredRows.length
+    return Object.entries(map)
+      .map(([cliente, count]) => ({ cliente, count, pct: total > 0 ? Math.round((count / total) * 100) : 0 }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
   }, [filteredRows])
 
   if (configMissing) {
@@ -797,6 +811,61 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
+
+          {/* Gráfico 4 – Pedidos por Cliente (horizontal, top 10) */}
+          <ChartCard
+            title="Pedidos por Cliente"
+            subtitle="Top 10 clientes por volumen de órdenes activas"
+            loading={loading}
+            empty={clienteData.length === 0}
+          >
+            <ResponsiveContainer width="100%" height={Math.max(260, clienteData.length * 32)}>
+              <BarChart
+                data={clienteData}
+                layout="vertical"
+                margin={{ top: 4, right: 16, left: 0, bottom: 4 }}
+              >
+                <CartesianGrid stroke="oklch(0.92 0.02 280)" strokeDasharray="3 3" horizontal={false} />
+                <XAxis
+                  type="number"
+                  stroke="oklch(0.45 0.04 280)"
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  allowDecimals={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="cliente"
+                  stroke="oklch(0.45 0.04 280)"
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={120}
+                />
+                <RechartsTooltip
+                  cursor={{ fill: "oklch(0.15 0.04 295 / 0.12)" }}
+                  contentStyle={{
+                    background: "oklch(0.15 0.04 295)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: "rgba(255,255,255,0.9)",
+                  }}
+                  labelStyle={{ color: "rgba(255,255,255,0.55)", marginBottom: 4 }}
+                  formatter={(v: number) => [`${v} órdenes`, "Total"]}
+                />
+                <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="oklch(0.65 0.18 160)">
+                  <LabelList
+                    dataKey="pct"
+                    position="right"
+                    style={{ fontSize: 10, fill: "oklch(0.45 0.04 280)" }}
+                    formatter={(v: number) => `${v}%`}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </div>
       </div>
 
@@ -825,6 +894,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead className="w-[130px]">Folio</TableHead>
                 <TableHead>Modelo</TableHead>
+                <TableHead>Familia</TableHead>
                 <TableHead>Maquilador</TableHead>
                 <TableHead className="w-[110px]">Fecha Límite</TableHead>
                 <TableHead className="w-[110px]">Contra Muestra</TableHead>
@@ -840,6 +910,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                     <TableRow key={`sk-${i}`}>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-28" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
@@ -853,7 +924,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-12 text-center">
+                  <TableCell colSpan={9} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -874,6 +945,9 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       </TableCell>
                       <TableCell className="text-sm text-foreground">
                         {r.modelo ?? <span className="text-muted-foreground/60 italic">—</span>}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {r.familia ?? <span className="text-muted-foreground/40 italic">—</span>}
                       </TableCell>
                       <TableCell>
                         <span className="text-sm text-foreground">

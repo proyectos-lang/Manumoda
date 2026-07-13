@@ -68,14 +68,14 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
 
         // 2. Fetch folios existentes con su maquilero, cliente y fecha_aprobacion_diseno actual
         const allFolios = Array.from(new Set(allRows.map((r) => r.folio)))
-        const existingMap = new Map<string, { id: number | string; maquilero: string | null; cliente: string | null; fecha_aprobacion_diseno: string | null; modelo: string | null }>()
+        const existingMap = new Map<string, { id: number | string; maquilero: string | null; cliente: string | null; fecha_aprobacion_diseno: string | null; modelo: string | null; fecha_cancelacion: string | null }>()
         const FOLIO_BATCH = 500
 
         for (let i = 0; i < allFolios.length; i += FOLIO_BATCH) {
           const slice = allFolios.slice(i, i + FOLIO_BATCH)
           const { data, error } = await supabase
             .from("ordenes_produccion")
-            .select("id, folio, maquilero, cliente, fecha_aprobacion_diseno, modelo")
+            .select("id, folio, maquilero, cliente, fecha_aprobacion_diseno, modelo, fecha_cancelacion")
             .eq("idempresa", IDEMPRESA)
             .in("folio", slice)
 
@@ -94,6 +94,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             cliente: string | null
             fecha_aprobacion_diseno: string | null
             modelo: string | null
+            fecha_cancelacion: string | null
           }[]) {
             if (row?.folio) {
               existingMap.set(row.folio, {
@@ -102,6 +103,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
                 cliente: row.cliente ?? null,
                 fecha_aprobacion_diseno: row.fecha_aprobacion_diseno ?? null,
                 modelo: row.modelo ?? null,
+                fecha_cancelacion: row.fecha_cancelacion ?? null,
               })
             }
           }
@@ -120,7 +122,8 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           const excelHasMaq = !!r.maquilero_nombre?.trim()
           const clienteDifiere = r.cliente?.trim() && r.cliente.trim() !== (existing.cliente ?? "").trim()
           const modeloCambia = !!(r.modelo?.trim()) && r.modelo.trim() !== (existing.modelo ?? "").trim()
-          return (!dbHasMaq && excelHasMaq) || !!clienteDifiere || modeloCambia
+          const fechaCancelCambia = r.fecha_cancelacion != null && r.fecha_cancelacion !== existing.fecha_cancelacion
+          return (!dbHasMaq && excelHasMaq) || !!clienteDifiere || modeloCambia || fechaCancelCambia
         })
 
         // Folios existentes que ya tenían maquilero (no se tocan)
@@ -230,6 +233,9 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           }
           if (r.modelo?.trim() && r.modelo.trim() !== (existing.modelo ?? "").trim()) {
             updatePayload.modelo = r.modelo.trim()
+          }
+          if (r.fecha_cancelacion != null && r.fecha_cancelacion !== existing.fecha_cancelacion) {
+            updatePayload.fecha_cancelacion = r.fecha_cancelacion
           }
 
           if (Object.keys(updatePayload).length === 0) continue
