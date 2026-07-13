@@ -53,15 +53,6 @@ type Props = {
   onScheduled?: () => void
 }
 
-const ADICIONES_DISENO = [
-  { key: "muchasOperaciones",    label: "Muchas operaciones" },
-  { key: "telasPesadas",         label: "Telas pesadas" },
-  { key: "muchasHabilitaciones", label: "Muchas habilitaciones" },
-  { key: "prendaCompleja",       label: "Prenda compleja" },
-] as const
-
-type AdicionKey = (typeof ADICIONES_DISENO)[number]["key"]
-
 const INITIAL_FORM = {
   fecha: undefined as Date | undefined,
   semana: "",
@@ -128,22 +119,27 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
   // Auto-match prenda ← orden.familia · categoría ← orden.categoria (solo si no es reprogramar)
   useEffect(() => {
     if (autoMatchedRef.current) return
+    // Esperar a que terminen ambas cargas antes de decidir si hacer auto-match
+    if (loadingCatalogs || loadingOrden) return
+    if (!orden) return
     if (editRegistroId != null) { autoMatchedRef.current = true; return }
-    if (!orden || prendas.length === 0 || categoriasDB.length === 0) return
     autoMatchedRef.current = true
 
+    const familiaKey  = (orden.familia  ?? "").trim().toUpperCase()
+    const categoriaKey = (orden.categoria ?? "").trim().toUpperCase()
+
     const matchPrenda = prendas.find(
-      (p) => p.nombre.toUpperCase() === (orden.familia ?? "").toUpperCase(),
+      (p) => p.nombre.trim().toUpperCase() === familiaKey,
     )
     const matchCat = categoriasDB.find(
-      (c) => c.nombre.toUpperCase() === (orden.categoria ?? "").toUpperCase(),
+      (c) => c.nombre.trim().toUpperCase() === categoriaKey,
     )
     setForm((prev) => ({
       ...prev,
       ...(matchPrenda ? { idprenda: String(matchPrenda.id) } : {}),
       ...(matchCat    ? { categoriaDemografica: matchCat.nombre } : {}),
     }))
-  }, [orden, prendas, categoriasDB, editRegistroId])
+  }, [loadingCatalogs, loadingOrden, orden, prendas, categoriasDB, editRegistroId])
 
   // Reset al cerrar
   useEffect(() => {
@@ -212,13 +208,25 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
           setCostureras((cosRes.data ?? []) as Catalog[])
         }
         if (prendaRes.error) {
-          toast.error("Error al cargar prendas", { description: prendaRes.error.message })
+          toast.error("Error al cargar tipos de prenda", { description: prendaRes.error.message })
         } else {
           setPrendas((prendaRes.data ?? []) as PrendaCatalog[])
         }
-        if (!tipoRes.error) setTiposDB((tipoRes.data ?? []) as CatTipoDiseno[])
-        if (!catRes.error)  setCategoriasDB((catRes.data ?? []) as CatCatDemo[])
-        if (!adicRes.error) setAdicionesDB((adicRes.data ?? []) as CatAdicionDiseno[])
+        if (tipoRes.error) {
+          toast.error("Error al cargar tipos de diseño", { description: tipoRes.error.message })
+        } else {
+          setTiposDB((tipoRes.data ?? []) as CatTipoDiseno[])
+        }
+        if (catRes.error) {
+          toast.error("Error al cargar categorías demográficas", { description: catRes.error.message })
+        } else {
+          setCategoriasDB((catRes.data ?? []) as CatCatDemo[])
+        }
+        if (adicRes.error) {
+          toast.error("Error al cargar adiciones de diseño", { description: adicRes.error.message })
+        } else {
+          setAdicionesDB((adicRes.data ?? []) as CatAdicionDiseno[])
+        }
       } finally {
         if (!cancelled) setLoadingCatalogs(false)
       }
@@ -302,7 +310,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
       toast.error("Campo requerido", { description: "Selecciona una fecha." })
       return
     }
-    if (!form.tipo) {
+    if (!form.tipo && tiposDB.length > 0) {
       toast.error("Campo requerido", { description: "Selecciona el tipo de programación." })
       return
     }
@@ -557,7 +565,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                   <div className="grid grid-cols-2 gap-3">
                     {/* Tipo */}
                     <div className="space-y-1.5">
-                      <DLabel htmlFor="tipo">Tipo <Req /></DLabel>
+                      <DLabel htmlFor="tipo">Tipo {tiposDB.length > 0 && <Req />}</DLabel>
                       <Select value={form.tipo} onValueChange={(v) => set("tipo", v)} disabled={loadingCatalogs}>
                         <SelectTrigger id="tipo" className={DARK_SELECT_TRIGGER}>
                           <SelectValue placeholder="Seleccionar…" />
