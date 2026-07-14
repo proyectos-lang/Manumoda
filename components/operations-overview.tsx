@@ -186,6 +186,7 @@ function MasterBubbleTimeline({ row }: { row: ResumenRow }) {
 
 export function OperationsOverview({ configMissing }: { configMissing: boolean }) {
   const [rows, setRows] = useState<ResumenRow[]>([])
+  const [calidadRows, setCalidadRows] = useState<{ maquilero: string | null; calidad: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filterMaquilero, setFilterMaquilero] = useState("__all__")
@@ -203,14 +204,26 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       const supabase = getSupabase()
       if (!supabase) throw new Error("Supabase no configurado")
 
-      const { data, error: err } = await supabase
-        .from("vw_resumen_operacion")
-        .select("*")
-        .eq("idempresa", IDEMPRESA)
-        .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
+      const [{ data, error: err }, { data: calData }] = await Promise.all([
+        supabase
+          .from("vw_resumen_operacion")
+          .select("*")
+          .eq("idempresa", IDEMPRESA)
+          .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
+        supabase
+          .from("ordenes_produccion")
+          .select("maquilero, calidad")
+          .eq("idempresa", IDEMPRESA)
+          .not("calidad", "is", null)
+          .gt("calidad", 0),
+      ])
 
       if (err) throw err
       setRows((data ?? []) as ResumenRow[])
+      setCalidadRows(
+        ((calData ?? []) as { maquilero: string | null; calidad: number }[])
+          .filter((r) => r.calidad != null && r.calidad > 0),
+      )
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error al consultar vw_resumen_operacion"
       setError(msg)
@@ -313,17 +326,15 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
     return [...ordered, ...rest]
   }, [filteredRows])
 
-  // Gráfico 2: calidad promedio por maquilero
+  // Gráfico 2: calidad promedio por maquilero (todas las órdenes con calidad registrada,
+  // incluyendo S7 y completadas — la vista principal excluye S7)
   const calidadData = useMemo(() => {
     const map: Record<string, { sum: number; count: number }> = {}
-    filteredRows.forEach((r) => {
-      const name = r.maquilero_nombre?.trim() || "Sin asignar"
-      const q = r.calidad
-      if (q != null && q > 0) {
-        if (!map[name]) map[name] = { sum: 0, count: 0 }
-        map[name].sum += q
-        map[name].count++
-      }
+    calidadRows.forEach((r) => {
+      const name = r.maquilero?.trim() || "Sin asignar"
+      if (!map[name]) map[name] = { sum: 0, count: 0 }
+      map[name].sum += r.calidad
+      map[name].count++
     })
     return Object.entries(map)
       .map(([nombre, { sum, count }]) => ({
@@ -331,7 +342,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
         promedio: Math.round((sum / count) * 10) / 10,
       }))
       .sort((a, b) => b.promedio - a.promedio)
-  }, [filteredRows])
+  }, [calidadRows])
 
   // Gráfico 3: volumen por familia
   const familiaData = useMemo(() => {
