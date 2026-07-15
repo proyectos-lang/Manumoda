@@ -363,17 +363,42 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         }
         toast.success("Programación de Diseño actualizada")
       } else {
-        const { data, error } = await supabase
+        // Determinar el folio a usar: si ya existe un registro con el folio base,
+        // generar el siguiente sufijo disponible (ej. ABC.2, ABC.3…)
+        const baseFolio = orden?.folio ?? null
+        let insertFolio = baseFolio
+
+        if (baseFolio) {
+          const { count: exactCount } = await supabase
+            .from("diseno_programacion")
+            .select("*", { count: "exact", head: true })
+            .eq("idempresa", IDEMPRESA)
+            .eq("folio", baseFolio)
+
+          if ((exactCount ?? 0) > 0) {
+            const { count: suffixCount } = await supabase
+              .from("diseno_programacion")
+              .select("*", { count: "exact", head: true })
+              .eq("idempresa", IDEMPRESA)
+              .like("folio", `${baseFolio}.%`)
+
+            insertFolio = `${baseFolio}.${(suffixCount ?? 0) + 2}`
+          }
+        }
+
+        const { error } = await supabase
           .from("diseno_programacion")
-          .insert(payload)
-          .select("*")
-          .single()
+          .insert({ ...payload, folio: insertFolio })
         if (error) {
           console.error("[v0] diseno insert error:", error)
           toast.error("No se pudo guardar la programación", { description: error.message })
           return
         }
-        toast.success("Programación de Diseño guardada")
+        toast.success(
+          insertFolio !== baseFolio
+            ? `Reprogramación guardada (${insertFolio})`
+            : "Programación de Diseño guardada"
+        )
       }
 
       onOpenChange(false)
