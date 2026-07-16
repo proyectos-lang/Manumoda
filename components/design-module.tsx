@@ -873,6 +873,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
   const [detailCache, setDetailCache] = useState<Record<string, DesignFolioRow[]>>({})
   const [loadingDetail, setLoadingDetail] = useState<string | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
+  const [recalculating, setRecalculating] = useState(false)
   const disMultCats = useDisenoMultiplierCatalogs(configMissing)
 
   // Fetch desde la vista SQL (sin matemáticas en frontend)
@@ -960,6 +961,49 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
     setLoadingDetail(null)
   }, [expandedKey, detailCache])
 
+  const recalcularHorasDiseno = useCallback(async () => {
+    if (configMissing || disMultCats.prendas.length === 0) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setRecalculating(true)
+    try {
+      const { data, error } = await supabase
+        .from("diseno_programacion")
+        .select("id, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja, cumplimiento_diseno")
+        .eq("idempresa", IDEMPRESA)
+        .not("idprenda", "is", null)
+      if (error) { toast.error("Error al obtener registros", { description: error.message }); return }
+      const rows = (data ?? []) as { id: number; idprenda: number; tipo: string | null; categoria_demografica: string | null; muchas_operaciones: boolean | null; telas_pesadas: boolean | null; muchas_habilitaciones: boolean | null; prenda_compleja: boolean | null; cumplimiento_diseno: boolean }[]
+
+      let ok = 0
+      await Promise.all(rows.map(async (row) => {
+        const prenda = disMultCats.prendas.find((p) => p.id === row.idprenda)
+        if (!prenda) return
+        const tipoMult = disMultCats.tipos.find((t) => t.nombre === row.tipo)?.multiplicador ?? 1
+        const catMult  = disMultCats.categorias.find((c) => c.nombre === row.categoria_demografica)?.multiplicador ?? 1
+        const adicionHoras = disMultCats.adiciones.reduce((s, a) => {
+          return s + ((row as Record<string, unknown>)[a.clave] === true ? Number(a.horas) : 0)
+        }, 0)
+        const computed = Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
+        const { error: ue } = await supabase
+          .from("diseno_programacion")
+          .update({
+            horas_plan_diseno: computed,
+            horas_diseno_cumplidas: row.cumplimiento_diseno ? computed : null,
+          })
+          .eq("id", row.id)
+          .eq("idempresa", IDEMPRESA)
+        if (!ue) ok++
+      }))
+
+      toast.success(`Recalculadas: ${ok} de ${rows.length} órdenes de diseño`)
+      setDetailCache({})
+      fetchBonos()
+    } finally {
+      setRecalculating(false)
+    }
+  }, [configMissing, disMultCats, fetchBonos])
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -999,6 +1043,16 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
           >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
             Actualizar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={recalcularHorasDiseno}
+            disabled={recalculating || configMissing || disMultCats.prendas.length === 0}
+            className="gap-2 bg-transparent text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+          >
+            <RefreshCw className={cn("size-4", recalculating && "animate-spin")} />
+            Recalcular horas
           </Button>
         </div>
 

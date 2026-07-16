@@ -497,6 +497,7 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
   const [detailCache, setDetailCache] = useState<Record<string, CorteFolioRow[]>>({})
   const [loadingDetail, setLoadingDetail] = useState<string | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
+  const [recalculating, setRecalculating] = useState(false)
   const disMultCats = useDisenoMultiplierCatalogs(configMissing)
 
   const fetchBonos = useCallback(async () => {
@@ -615,6 +616,68 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
     setLoadingDetail(null)
   }, [expandedKey, detailCache])
 
+  const recalcularHorasCorte = useCallback(async () => {
+    if (configMissing) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setRecalculating(true)
+    try {
+      // Paso 1: recalcular horas_cumplimiento_corte = horas_plan_final cuando cumplimiento = 'Si'
+      const { data: corteRows, error: ce } = await supabase
+        .from("vw_plan_corte_detalle")
+        .select("registro_id, horas_plan_final, cumplimiento_corte")
+      if (ce) { toast.error("Error al obtener registros de corte", { description: ce.message }); return }
+
+      let okCorte = 0
+      await Promise.all(
+        ((corteRows ?? []) as { registro_id: number; horas_plan_final: number | null; cumplimiento_corte: string | null }[])
+          .map(async (row) => {
+            const { error } = await supabase
+              .from("corte_programacion")
+              .update({ horas_cumplimiento_corte: row.cumplimiento_corte === "Si" ? row.horas_plan_final : null })
+              .eq("id", row.registro_id)
+              .eq("idempresa", IDEMPRESA)
+            if (!error) okCorte++
+          }),
+      )
+
+      // Paso 2: recalcular horas_plan_diseno en diseno_programacion usando catálogos actuales
+      let okDiseno = 0
+      if (disMultCats.prendas.length > 0) {
+        const { data: disenoRows, error: de } = await supabase
+          .from("diseno_programacion")
+          .select("id, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja, cumplimiento_diseno")
+          .eq("idempresa", IDEMPRESA)
+          .not("idprenda", "is", null)
+        if (!de) {
+          await Promise.all(
+            ((disenoRows ?? []) as { id: number; idprenda: number; tipo: string | null; categoria_demografica: string | null; muchas_operaciones: boolean | null; telas_pesadas: boolean | null; muchas_habilitaciones: boolean | null; prenda_compleja: boolean | null; cumplimiento_diseno: boolean }[])
+              .map(async (row) => {
+                const prenda = disMultCats.prendas.find((p) => p.id === row.idprenda)
+                if (!prenda) return
+                const tipoMult = disMultCats.tipos.find((t) => t.nombre === row.tipo)?.multiplicador ?? 1
+                const catMult  = disMultCats.categorias.find((c) => c.nombre === row.categoria_demografica)?.multiplicador ?? 1
+                const adicionHoras = disMultCats.adiciones.reduce((s, a) => s + ((row as Record<string, unknown>)[a.clave] === true ? Number(a.horas) : 0), 0)
+                const computed = Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
+                const { error } = await supabase
+                  .from("diseno_programacion")
+                  .update({ horas_plan_diseno: computed, horas_diseno_cumplidas: row.cumplimiento_diseno ? computed : null })
+                  .eq("id", row.id)
+                  .eq("idempresa", IDEMPRESA)
+                if (!error) okDiseno++
+              }),
+          )
+        }
+      }
+
+      toast.success(`Recalculado: ${okCorte} registros corte · ${okDiseno} registros diseño`)
+      setDetailCache({})
+      fetchBonos()
+    } finally {
+      setRecalculating(false)
+    }
+  }, [configMissing, disMultCats, fetchBonos])
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -639,6 +702,16 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
           <Button variant="outline" size="sm" onClick={fetchBonos} disabled={loading} className="gap-1.5 bg-transparent">
             {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
             Actualizar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={recalcularHorasCorte}
+            disabled={recalculating || configMissing}
+            className="gap-1.5 bg-transparent text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+          >
+            {recalculating ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            Recalcular horas
           </Button>
         </div>
       </div>
