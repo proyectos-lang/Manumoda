@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { HelpCircle, Loader2, RefreshCw, Search, Settings2, SlidersHorizontal, X } from "lucide-react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ChevronDown, ChevronRight, HelpCircle, Loader2, RefreshCw, Search, Settings2, SlidersHorizontal, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -485,13 +485,13 @@ function ComentariosCell({ value, disabled, onSave }: {
 
 // ─── Tab 2: Bonos de Corte ────────────────────────────────────────────────────
 
-type CorteDetailTarget = { registro: number; nombre: string; semana: number; anio: number | null }
-
 function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
   const [bonos, setBonos] = useState<VwBonosCorte[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedWeekKey, setSelectedWeekKey] = useState<string>("")
-  const [detailTarget, setDetailTarget] = useState<CorteDetailTarget | null>(null)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [detailCache, setDetailCache] = useState<Record<string, CorteFolioRow[]>>({})
+  const [loadingDetail, setLoadingDetail] = useState<string | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
 
   const fetchBonos = useCallback(async () => {
@@ -544,6 +544,25 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
     () => bonos.filter((r) => `${r.anio ?? "?"}-${r.semana}` === selectedWeekKey),
     [bonos, selectedWeekKey],
   )
+
+  const toggleExpand = useCallback(async (r: VwBonosCorte) => {
+    if (r.semana == null) return
+    const key = `${r.registro}-${r.semana}`
+    if (expandedKey === key) { setExpandedKey(null); return }
+    setExpandedKey(key)
+    if (detailCache[key]) return
+    setLoadingDetail(key)
+    const supabase = getSupabase()
+    if (!supabase) { setLoadingDetail(null); return }
+    const { data } = await supabase
+      .from("vw_plan_corte_detalle")
+      .select("folio, familia, categoria_corte, horas_plan_corte, horas_plan_final, cumplimiento_corte, horas_cumplimiento_corte")
+      .eq("semana", r.semana)
+      .or(`idcortador.eq.${r.registro},idapoyo.eq.${r.registro}`)
+      .order("folio")
+    setDetailCache((prev) => ({ ...prev, [key]: (data as CorteFolioRow[]) ?? [] }))
+    setLoadingDetail(null)
+  }, [expandedKey, detailCache])
 
   return (
     <div className="space-y-4">
@@ -609,89 +628,158 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
             ) : (
               filtered.map((r) => {
                 const isBaja = r.estatus_colaborador === "Baja"
+                const key = `${r.registro}-${r.semana}`
+                const isExpanded = expandedKey === key
+                const detail = detailCache[key] ?? []
+                const isLoadingThis = loadingDetail === key
+                const totalCum = detail.reduce((a, d) => a + (d.horas_cumplimiento_corte ?? 0), 0)
+                const foliosSi = detail.filter((d) => d.cumplimiento_corte === "Si").length
                 return (
-                  <TableRow key={`${r.registro}-${r.anio}-${r.semana}`} className={cn("text-sm", isBaja && "opacity-60")}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{r.nombre ?? "—"}</span>
-                        {isBaja && (
-                          <Badge variant="outline" className="bg-slate-100 text-slate-500 border-slate-200 text-[10px]">
-                            Baja
-                          </Badge>
+                  <Fragment key={key}>
+                    <TableRow className={cn("text-sm", isBaja && "opacity-60", isExpanded && "bg-muted/30")}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{r.nombre ?? "—"}</span>
+                          {isBaja && (
+                            <Badge variant="outline" className="bg-slate-100 text-slate-500 border-slate-200 text-[10px]">
+                              Baja
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-200 text-xs">
+                          {r.area ?? "Corte"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_semana)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(r)}
+                          className="inline-flex items-center gap-1 tabular-nums hover:text-foreground cursor-pointer text-primary"
+                          title={isExpanded ? "Cerrar detalle" : "Ver detalle por folio"}
+                        >
+                          {isExpanded
+                            ? <ChevronDown className="size-3.5 shrink-0" />
+                            : <ChevronRight className="size-3.5 shrink-0" />}
+                          {fmtHrs(r.horas_cumplidas)}
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_fuera_area)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.ausentismos ?? "—"}</TableCell>
+                      <TableCell className="text-right">
+                        {r.porcentaje_eficiencia != null ? (
+                          <span className={cn(
+                            "tabular-nums font-semibold",
+                            r.porcentaje_eficiencia >= 80 ? "text-emerald-600" :
+                            r.porcentaje_eficiencia >= 70 ? "text-amber-600" : "text-rose-600",
+                          )}>
+                            {fmtPct(r.porcentaje_eficiencia)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/50">—</span>
                         )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-200 text-xs">
-                        {r.area ?? "Corte"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_semana)}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">
-                      <button
-                        type="button"
-                        onClick={() => r.semana != null && setDetailTarget({ registro: r.registro, nombre: r.nombre ?? "", semana: r.semana, anio: r.anio })}
-                        className="tabular-nums underline-offset-2 hover:underline hover:text-foreground cursor-pointer"
-                        title="Ver detalle por folio"
-                      >
-                        {fmtHrs(r.horas_cumplidas)}
-                      </button>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_fuera_area)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.ausentismos ?? "—"}</TableCell>
-                    <TableCell className="text-right">
-                      {r.porcentaje_eficiencia != null ? (
-                        <span className={cn(
-                          "tabular-nums font-semibold",
-                          r.porcentaje_eficiencia >= 80 ? "text-emerald-600" :
-                          r.porcentaje_eficiencia >= 70 ? "text-amber-600" : "text-rose-600",
-                        )}>
-                          {fmtPct(r.porcentaje_eficiencia)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {r.criterio_aceptacion === "Si" ? (
-                        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">Sí</Badge>
-                      ) : r.criterio_aceptacion === "No" ? (
-                        <Badge className="bg-rose-100 text-rose-700 border-rose-200 hover:bg-rose-100">No</Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground/50">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {r.bono_semanal === "Si" ? (
-                        <Badge className="bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-100">✓ Bono</Badge>
-                      ) : r.bono_semanal === "No" ? (
-                        <Badge variant="outline" className="bg-slate-100 text-slate-500 border-slate-200">Sin bono</Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground/50">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums font-semibold">
-                      {r.monto != null ? (
-                        <span className={r.monto > 0 ? "text-emerald-700" : "text-muted-foreground"}>
-                          {fmtCurrency(r.monto)}
-                        </span>
-                      ) : "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtPct(r.porcentaje_productividad_directa)}</TableCell>
-                  </TableRow>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {r.criterio_aceptacion === "Si" ? (
+                          <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">Sí</Badge>
+                        ) : r.criterio_aceptacion === "No" ? (
+                          <Badge className="bg-rose-100 text-rose-700 border-rose-200 hover:bg-rose-100">No</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {r.bono_semanal === "Si" ? (
+                          <Badge className="bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-100">✓ Bono</Badge>
+                        ) : r.bono_semanal === "No" ? (
+                          <Badge variant="outline" className="bg-slate-100 text-slate-500 border-slate-200">Sin bono</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">
+                        {r.monto != null ? (
+                          <span className={r.monto > 0 ? "text-emerald-700" : "text-muted-foreground"}>
+                            {fmtCurrency(r.monto)}
+                          </span>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtPct(r.porcentaje_productividad_directa)}</TableCell>
+                    </TableRow>
+
+                    {isExpanded && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={11} className="p-0">
+                          <div className="border-t border-border bg-muted/20 px-5 py-3 space-y-2">
+                            {isLoadingThis ? (
+                              <div className="flex justify-center py-4">
+                                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                              </div>
+                            ) : detail.length === 0 ? (
+                              <p className="py-2 text-center text-xs text-muted-foreground">Sin registros para esta semana.</p>
+                            ) : (
+                              <>
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow className="bg-transparent hover:bg-transparent">
+                                      <TableHead className="h-8 text-xs">Folio</TableHead>
+                                      <TableHead className="h-8 text-xs">Familia</TableHead>
+                                      <TableHead className="h-8 text-xs">Categoría</TableHead>
+                                      <TableHead className="h-8 text-xs text-right">Hrs Plan</TableHead>
+                                      <TableHead className="h-8 text-xs text-right">Hrs Final</TableHead>
+                                      <TableHead className="h-8 text-xs text-center">Cumpl.</TableHead>
+                                      <TableHead className="h-8 text-xs text-right">Hrs Cum.</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {detail.map((d, di) => (
+                                      <TableRow key={di} className={cn("text-xs", d.cumplimiento_corte !== "Si" && "opacity-50")}>
+                                        <TableCell className="py-1 font-mono">{d.folio}</TableCell>
+                                        <TableCell className="py-1">{d.familia ?? "—"}</TableCell>
+                                        <TableCell className="py-1">{d.categoria_corte ?? "—"}</TableCell>
+                                        <TableCell className="py-1 text-right tabular-nums">{fmtHrs(d.horas_plan_corte)}</TableCell>
+                                        <TableCell className="py-1 text-right tabular-nums">{fmtHrs(d.horas_plan_final)}</TableCell>
+                                        <TableCell className="py-1 text-center">
+                                          {d.cumplimiento_corte === "Si"
+                                            ? <span className="font-semibold text-emerald-600">✓</span>
+                                            : d.cumplimiento_corte === "No"
+                                            ? <span className="text-rose-500">✗</span>
+                                            : <span className="text-muted-foreground/40">—</span>}
+                                        </TableCell>
+                                        <TableCell className="py-1 text-right tabular-nums font-medium">
+                                          {d.horas_cumplimiento_corte != null && d.horas_cumplimiento_corte > 0
+                                            ? <span className="text-emerald-600">{fmtHrs(d.horas_cumplimiento_corte)}</span>
+                                            : <span className="text-muted-foreground/40">—</span>}
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                                <div className="flex items-center justify-between border-t pt-1.5 text-xs text-muted-foreground">
+                                  <span>{foliosSi} de {detail.length} folios con cumplimiento</span>
+                                  <span className="font-semibold text-foreground">Total: {fmtHrs(totalCum)} h</span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
                 )
               })
             )}
           </TableBody>
         </Table>
       </div>
-      <CorteFolioDetailDialog target={detailTarget} onClose={() => setDetailTarget(null)} />
       <CorteBonosInfoDialog open={infoOpen} onOpenChange={setInfoOpen} />
     </div>
   )
 }
 
-// ─── Corte: Detalle de folios por persona ────────────────────────────────────
+// ─── Corte: Tipos para caché de detalle ──────────────────────────────────────
 
 type CorteFolioRow = {
   folio: string
@@ -701,107 +789,6 @@ type CorteFolioRow = {
   horas_plan_final: number | null
   cumplimiento_corte: string | null
   horas_cumplimiento_corte: number | null
-}
-
-function CorteFolioDetailDialog({
-  target,
-  onClose,
-}: {
-  target: CorteDetailTarget | null
-  onClose: () => void
-}) {
-  const [loading, setLoading] = useState(false)
-  const [rows, setRows] = useState<CorteFolioRow[]>([])
-
-  useEffect(() => {
-    if (!target) { setRows([]); return }
-    const run = async () => {
-      const supabase = getSupabase()
-      if (!supabase) return
-      setLoading(true)
-      const { data } = await supabase
-        .from("vw_plan_corte_detalle")
-        .select("folio, familia, categoria_corte, horas_plan_corte, horas_plan_final, cumplimiento_corte, horas_cumplimiento_corte")
-        .eq("semana", target.semana)
-        .or(`idcortador.eq.${target.registro},idapoyo.eq.${target.registro}`)
-        .order("folio")
-      setRows((data as CorteFolioRow[]) ?? [])
-      setLoading(false)
-    }
-    run()
-  }, [target])
-
-  const totalCumplidas = rows.reduce((acc, r) => acc + (r.horas_cumplimiento_corte ?? 0), 0)
-  const foliosSi = rows.filter((r) => r.cumplimiento_corte === "Si").length
-
-  return (
-    <Dialog open={!!target} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-4xl w-full">
-        <DialogHeader>
-          <DialogTitle>Detalle de Horas — {target?.nombre}</DialogTitle>
-          <DialogDescription>
-            Semana {target?.semana}{target?.anio ? ` / ${target.anio}` : ""} · Corte
-          </DialogDescription>
-        </DialogHeader>
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : rows.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">Sin registros para esta semana.</p>
-        ) : (
-          <div className="space-y-3">
-            <div className="overflow-x-auto rounded border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead>Folio</TableHead>
-                    <TableHead>Familia</TableHead>
-                    <TableHead>Categoría</TableHead>
-                    <TableHead className="text-right">Hrs Plan</TableHead>
-                    <TableHead className="text-right">Hrs Final</TableHead>
-                    <TableHead className="text-center">Cumpl.</TableHead>
-                    <TableHead className="text-right">Hrs Cum.</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((r, i) => (
-                    <TableRow key={i} className={cn("text-sm", r.cumplimiento_corte !== "Si" && "opacity-50")}>
-                      <TableCell className="font-mono text-xs">{r.folio}</TableCell>
-                      <TableCell className="text-xs">{r.familia ?? "—"}</TableCell>
-                      <TableCell className="text-xs">{r.categoria_corte ?? "—"}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_plan_corte)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_plan_final)}</TableCell>
-                      <TableCell className="text-center">
-                        {r.cumplimiento_corte === "Si" ? (
-                          <span className="text-xs font-semibold text-emerald-600">✓ Sí</span>
-                        ) : r.cumplimiento_corte === "No" ? (
-                          <span className="text-xs text-rose-500">✗ No</span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground/50">Pend.</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums font-medium">
-                        {r.horas_cumplimiento_corte != null && r.horas_cumplimiento_corte > 0 ? (
-                          <span className="text-emerald-600">{fmtHrs(r.horas_cumplimiento_corte)}</span>
-                        ) : (
-                          <span className="text-muted-foreground/40">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="flex items-center justify-between border-t pt-2 text-sm">
-              <span className="text-muted-foreground">{foliosSi} de {rows.length} folios con cumplimiento</span>
-              <span className="font-semibold">Total acumulado: {fmtHrs(totalCumplidas)} h</span>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
 }
 
 // ─── Corte: Info de cálculo de bono ─────────────────────────────────────────

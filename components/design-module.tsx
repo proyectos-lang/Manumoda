@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useCallback } from "react"
+import { Fragment, useEffect, useState, useMemo, useCallback } from "react"
 import { getISOWeek, format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
 import {
@@ -12,6 +12,8 @@ import {
   ClipboardCheck,
   AlertCircle,
   HelpCircle,
+  ChevronDown,
+  ChevronRight,
   Scissors,
   Pencil,
   CalendarIcon,
@@ -853,14 +855,14 @@ export function DesignModule({ configMissing }: Props) {
 
 // ── Tab 2: Calculadora de Bonos ───────────────────────────────────────────────
 
-type DesignDetailTarget = { nombre: string; tipoPersonal: string; semana: number; anio: number | null }
-
 function BonosTab({ configMissing }: { configMissing: boolean }) {
   const [bonos, setBonos] = useState<VwBonosDiseno[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedWeekKey, setSelectedWeekKey] = useState<string>("")
-  const [detailTarget, setDetailTarget] = useState<DesignDetailTarget | null>(null)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [detailCache, setDetailCache] = useState<Record<string, DesignFolioRow[]>>({})
+  const [loadingDetail, setLoadingDetail] = useState<string | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
 
   // Fetch desde la vista SQL (sin matemáticas en frontend)
@@ -918,6 +920,35 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
   // El bono colectivo de la semana es el mismo para todas las filas — tomamos el primero
   const bonoColectivoActivo = filteredBonos.length > 0 && (filteredBonos[0].bono_colectivo ?? 0) > 0
   const montoColectivo = filteredBonos[0]?.bono_colectivo ?? 0
+
+  const toggleExpand = useCallback(async (row: VwBonosDiseno) => {
+    if (row.semana == null || !row.nombre || !row.tipo_personal) return
+    const key = `${row.nombre}-${row.tipo_personal}-${row.semana}`
+    if (expandedKey === key) { setExpandedKey(null); return }
+    setExpandedKey(key)
+    if (detailCache[key]) return
+    setLoadingDetail(key)
+    const supabase = getSupabase()
+    if (!supabase) { setLoadingDetail(null); return }
+
+    // Paso 1: obtener el id de la persona por nombre
+    const table = row.tipo_personal === "Diseño" ? "disenadoras" : "costureras"
+    const { data: persons } = await supabase.from(table).select("id").eq("nombre", row.nombre).limit(1)
+    const personId = (persons as { id: number }[] | null)?.[0]?.id
+    if (!personId) { setDetailCache((prev) => ({ ...prev, [key]: [] })); setLoadingDetail(null); return }
+
+    // Paso 2: traer los folios de la semana para esa persona
+    const field = row.tipo_personal === "Diseño" ? "iddisenadora" : "idcosturera"
+    const { data } = await supabase
+      .from("diseno_programacion")
+      .select("folio, modelo, familia, cliente, horas_plan_diseno, cumplimiento_diseno, cumplimiento_costura, horas_diseno_cumplidas, horas_costura_cumplidas")
+      .eq("idempresa", IDEMPRESA)
+      .eq("semana", row.semana)
+      .eq(field, personId)
+      .order("folio")
+    setDetailCache((prev) => ({ ...prev, [key]: (data as DesignFolioRow[]) ?? [] }))
+    setLoadingDetail(null)
+  }, [expandedKey, detailCache])
 
   return (
     <div className="space-y-4">
@@ -1028,74 +1059,145 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredBonos.map((row, i) => (
-                  <TableRow key={i} className="hover:bg-muted/30">
-                    <TableCell className="font-medium text-foreground">
-                      {row.nombre ?? <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      {row.tipo_personal === "Diseño" ? (
-                        <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 hover:bg-indigo-100">
-                          Diseño
-                        </Badge>
-                      ) : row.tipo_personal === "Costura" ? (
-                        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
-                          Costura
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
+                filteredBonos.map((row) => {
+                  const key = `${row.nombre}-${row.tipo_personal}-${row.semana}`
+                  const isExpanded = expandedKey === key
+                  const esDisenadora = row.tipo_personal === "Diseño"
+                  const detail = detailCache[key] ?? []
+                  const isLoadingThis = loadingDetail === key
+                  const totalPlan = detail.reduce((a, d) => a + (d.horas_plan_diseno ?? 0), 0)
+                  const totalCum = detail.reduce((a, d) => a + ((esDisenadora ? d.horas_diseno_cumplidas : d.horas_costura_cumplidas) ?? 0), 0)
+                  const foliosCumplidos = detail.filter((d) => esDisenadora ? d.cumplimiento_diseno : d.cumplimiento_costura).length
+                  return (
+                    <Fragment key={key}>
+                      <TableRow className={cn("hover:bg-muted/30", isExpanded && "bg-muted/30")}>
+                        <TableCell className="font-medium text-foreground">
+                          {row.nombre ?? <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          {row.tipo_personal === "Diseño" ? (
+                            <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 hover:bg-indigo-100">Diseño</Badge>
+                          ) : row.tipo_personal === "Costura" ? (
+                            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">Costura</Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(row)}
+                            className="inline-flex items-center gap-1 tabular-nums hover:text-foreground cursor-pointer text-primary"
+                            title={isExpanded ? "Cerrar detalle" : "Ver detalle por folio"}
+                          >
+                            {isExpanded
+                              ? <ChevronDown className="size-3.5 shrink-0" />
+                              : <ChevronRight className="size-3.5 shrink-0" />}
+                            {fmtH(row.horas_cumplidas)} <span className="text-muted-foreground text-xs">h</span>
+                          </button>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {fmtH(row.horas_fuera_area)} <span className="text-muted-foreground text-xs">h</span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {row.ausentismos ?? <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <EficienciaBadge pct={row.eficiencia_pct} />
+                        </TableCell>
+                        <TableCell>
+                          <CriterioBadge criterio={row.criterio_aceptacion} />
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {row.bono_semanal ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {fmtCurrency(row.monto)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {fmtCurrency(row.bono_colectivo)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className="tabular-nums text-sm font-bold text-foreground">
+                            {fmtCurrency(row.bono_total)}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+
+                      {isExpanded && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={11} className="p-0">
+                            <div className="border-t border-border bg-muted/20 px-5 py-3 space-y-2">
+                              {isLoadingThis ? (
+                                <div className="flex justify-center py-4">
+                                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                                </div>
+                              ) : detail.length === 0 ? (
+                                <p className="py-2 text-center text-xs text-muted-foreground">Sin registros para esta semana.</p>
+                              ) : (
+                                <>
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow className="bg-transparent hover:bg-transparent">
+                                        <TableHead className="h-8 text-xs">Folio</TableHead>
+                                        <TableHead className="h-8 text-xs">Modelo</TableHead>
+                                        <TableHead className="h-8 text-xs">Familia</TableHead>
+                                        <TableHead className="h-8 text-xs">Cliente</TableHead>
+                                        <TableHead className="h-8 text-xs text-right">Hrs Plan</TableHead>
+                                        <TableHead className="h-8 text-xs text-center">Cumpl.</TableHead>
+                                        <TableHead className="h-8 text-xs text-right">Hrs Cum.</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {detail.map((d, di) => {
+                                        const cumplido = esDisenadora ? d.cumplimiento_diseno : d.cumplimiento_costura
+                                        const hrsCum = esDisenadora ? d.horas_diseno_cumplidas : d.horas_costura_cumplidas
+                                        return (
+                                          <TableRow key={di} className={cn("text-xs", !cumplido && "opacity-50")}>
+                                            <TableCell className="py-1 font-mono">{d.folio ?? "—"}</TableCell>
+                                            <TableCell className="py-1">{d.modelo ?? "—"}</TableCell>
+                                            <TableCell className="py-1">{d.familia ?? "—"}</TableCell>
+                                            <TableCell className="py-1">{d.cliente ?? "—"}</TableCell>
+                                            <TableCell className="py-1 text-right tabular-nums">{fmtH(d.horas_plan_diseno)}</TableCell>
+                                            <TableCell className="py-1 text-center">
+                                              {cumplido
+                                                ? <span className="font-semibold text-emerald-600">✓</span>
+                                                : <span className="text-muted-foreground/40">—</span>}
+                                            </TableCell>
+                                            <TableCell className="py-1 text-right tabular-nums font-medium">
+                                              {hrsCum != null && hrsCum > 0
+                                                ? <span className="text-emerald-600">{fmtH(hrsCum)}</span>
+                                                : <span className="text-muted-foreground/40">—</span>}
+                                            </TableCell>
+                                          </TableRow>
+                                        )
+                                      })}
+                                    </TableBody>
+                                  </Table>
+                                  <div className="flex items-center justify-between border-t pt-1.5 text-xs text-muted-foreground">
+                                    <span>{foliosCumplidos} de {detail.length} folios con cumplimiento · {fmtH(totalPlan)} h planeadas</span>
+                                    <span className="font-semibold text-foreground">Total: {fmtH(totalCum)} h</span>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
                       )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
-                      <button
-                        type="button"
-                        onClick={() => row.semana != null && setDetailTarget({ nombre: row.nombre ?? "", tipoPersonal: row.tipo_personal ?? "", semana: row.semana, anio: row.anio })}
-                        className="tabular-nums underline-offset-2 hover:underline hover:text-foreground cursor-pointer"
-                        title="Ver detalle por folio"
-                      >
-                        {fmtH(row.horas_cumplidas)} <span className="text-muted-foreground text-xs">h</span>
-                      </button>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
-                      {fmtH(row.horas_fuera_area)} <span className="text-muted-foreground text-xs">h</span>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
-                      {row.ausentismos ?? <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <EficienciaBadge pct={row.eficiencia_pct} />
-                    </TableCell>
-                    <TableCell>
-                      <CriterioBadge criterio={row.criterio_aceptacion} />
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {row.bono_semanal ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
-                      {fmtCurrency(row.monto)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
-                      {fmtCurrency(row.bono_colectivo)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className="tabular-nums text-sm font-bold text-foreground">
-                        {fmtCurrency(row.bono_total)}
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))
+                    </Fragment>
+                  )
+                })
               )}
             </TableBody>
           </Table>
         </div>
       </div>
-      <DesignFolioDetailDialog target={detailTarget} onClose={() => setDetailTarget(null)} />
       <DesignBonosInfoDialog open={infoOpen} onOpenChange={setInfoOpen} />
     </div>
   )
 }
 
-// ── Diseño: Detalle de folios por persona ────────────────────────────────────
+// ── Diseño: Tipos para caché de detalle ──────────────────────────────────────
 
 type DesignFolioRow = {
   folio: string | null
@@ -1109,123 +1211,7 @@ type DesignFolioRow = {
   horas_costura_cumplidas: number | null
 }
 
-function DesignFolioDetailDialog({
-  target,
-  onClose,
-}: {
-  target: DesignDetailTarget | null
-  onClose: () => void
-}) {
-  const [loading, setLoading] = useState(false)
-  const [rows, setRows] = useState<DesignFolioRow[]>([])
 
-  useEffect(() => {
-    if (!target) { setRows([]); return }
-    const run = async () => {
-      const supabase = getSupabase()
-      if (!supabase) return
-      setLoading(true)
-
-      // Resolve person ID from name
-      const table = target.tipoPersonal === "Diseño" ? "disenadoras" : "costureras"
-      const { data: persons } = await supabase
-        .from(table)
-        .select("id")
-        .eq("nombre", target.nombre)
-        .limit(1)
-      const personId = (persons as { id: number }[] | null)?.[0]?.id
-      if (!personId) { setLoading(false); setRows([]); return }
-
-      const field = target.tipoPersonal === "Diseño" ? "iddisenadora" : "idcosturera"
-      const { data } = await supabase
-        .from("diseno_programacion")
-        .select("folio, modelo, familia, cliente, horas_plan_diseno, cumplimiento_diseno, cumplimiento_costura, horas_diseno_cumplidas, horas_costura_cumplidas")
-        .eq("idempresa", IDEMPRESA)
-        .eq("semana", target.semana)
-        .eq(field, personId)
-        .order("folio")
-      setRows((data as DesignFolioRow[]) ?? [])
-      setLoading(false)
-    }
-    run()
-  }, [target])
-
-  const esDisenadora = target?.tipoPersonal === "Diseño"
-  const cumplioKey = esDisenadora ? "cumplimiento_diseno" : "cumplimiento_costura"
-  const hrsKey = esDisenadora ? "horas_diseno_cumplidas" : "horas_costura_cumplidas"
-  const totalPlan = rows.reduce((acc, r) => acc + (r.horas_plan_diseno ?? 0), 0)
-  const totalCumplidas = rows.reduce((acc, r) => acc + ((r[hrsKey as keyof DesignFolioRow] as number | null) ?? 0), 0)
-  const foliosCumplidos = rows.filter((r) => r[cumplioKey as keyof DesignFolioRow]).length
-
-  return (
-    <Dialog open={!!target} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-4xl w-full">
-        <DialogHeader>
-          <DialogTitle>Detalle de Horas — {target?.nombre}</DialogTitle>
-          <DialogDescription>
-            Semana {target?.semana}{target?.anio ? ` / ${target.anio}` : ""} · {target?.tipoPersonal}
-          </DialogDescription>
-        </DialogHeader>
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : rows.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">Sin registros para esta semana.</p>
-        ) : (
-          <div className="space-y-3">
-            <div className="overflow-x-auto rounded border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead>Folio</TableHead>
-                    <TableHead>Modelo</TableHead>
-                    <TableHead>Familia</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead className="text-right">Hrs Plan</TableHead>
-                    <TableHead className="text-center">Cumpl.</TableHead>
-                    <TableHead className="text-right">Hrs Cum.</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((r, i) => {
-                    const cumplido = Boolean(r[cumplioKey as keyof DesignFolioRow])
-                    const hrsCum = (r[hrsKey as keyof DesignFolioRow] as number | null)
-                    return (
-                      <TableRow key={i} className={cn("text-sm", !cumplido && "opacity-50")}>
-                        <TableCell className="font-mono text-xs">{r.folio ?? "—"}</TableCell>
-                        <TableCell className="text-xs">{r.modelo ?? "—"}</TableCell>
-                        <TableCell className="text-xs">{r.familia ?? "—"}</TableCell>
-                        <TableCell className="text-xs">{r.cliente ?? "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtH(r.horas_plan_diseno)}</TableCell>
-                        <TableCell className="text-center">
-                          {cumplido
-                            ? <span className="text-xs font-semibold text-emerald-600">✓</span>
-                            : <span className="text-xs text-muted-foreground/40">—</span>
-                          }
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums font-medium">
-                          {hrsCum != null && hrsCum > 0
-                            ? <span className="text-emerald-600">{fmtH(hrsCum)}</span>
-                            : <span className="text-muted-foreground/40">—</span>
-                          }
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="flex items-center justify-between border-t pt-2 text-sm">
-              <span className="text-muted-foreground">{foliosCumplidos} de {rows.length} folios con cumplimiento · {fmtH(totalPlan)} h planeadas</span>
-              <span className="font-semibold">Total acumulado: {fmtH(totalCumplidas)} h</span>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 // ── Diseño: Info de cálculo de bono ─────────────────────────────────────────
 
