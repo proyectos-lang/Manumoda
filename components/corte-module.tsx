@@ -661,7 +661,7 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
                 const computed = Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
                 const { error } = await supabase
                   .from("diseno_programacion")
-                  .update({ horas_plan_diseno: computed, horas_diseno_cumplidas: row.cumplimiento_diseno ? computed : null })
+                  .update({ horas_plan_diseno: computed })
                   .eq("id", row.id)
                   .eq("idempresa", IDEMPRESA)
                 if (!error) okDiseno++

@@ -1,6 +1,10 @@
 -- ============================================================
--- Recalcular horas_plan_diseno y horas_diseno_cumplidas
--- para todos los registros existentes en diseno_programacion.
+-- Recalcular horas_plan_diseno para todos los registros
+-- existentes en diseno_programacion.
+--
+-- horas_diseno_cumplidas es una generated column que se computa
+-- automáticamente desde horas_plan_diseno — NO se actualiza
+-- directamente; basta con corregir horas_plan_diseno.
 --
 -- Fórmula:
 --   horas_plan = cat_prendas.horas_base
@@ -8,11 +12,7 @@
 --              × cat_categoria_demografica.multiplicador
 --              + Σ adiciones activas
 --
--- horas_diseno_cumplidas = horas_plan si cumplimiento_diseno = true,
---                          NULL en caso contrario.
---
 -- Solo actualiza registros donde idprenda tiene match en cat_prendas.
--- Los registros sin prenda vinculada conservan su valor actual.
 -- ============================================================
 
 WITH computed AS (
@@ -37,8 +37,7 @@ WITH computed AS (
             WHERE ca.idempresa = dp.idempresa
           ), 0)
       ) * 100
-    ) / 100 AS horas_calculadas,
-    dp.cumplimiento_diseno
+    ) / 100 AS horas_calculadas
   FROM manumoda.diseno_programacion dp
   JOIN  manumoda.cat_prendas cp
     ON  cp.id = dp.idprenda AND cp.idempresa = dp.idempresa
@@ -49,10 +48,6 @@ WITH computed AS (
 )
 UPDATE manumoda.diseno_programacion dp
 SET
-  horas_plan_diseno      = c.horas_calculadas,
-  horas_diseno_cumplidas = CASE
-                             WHEN c.cumplimiento_diseno = true THEN c.horas_calculadas
-                             ELSE NULL
-                           END
+  horas_plan_diseno = c.horas_calculadas
 FROM computed c
 WHERE dp.id = c.id;

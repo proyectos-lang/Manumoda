@@ -987,10 +987,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
         const computed = Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
         const { error: ue } = await supabase
           .from("diseno_programacion")
-          .update({
-            horas_plan_diseno: computed,
-            horas_diseno_cumplidas: row.cumplimiento_diseno ? computed : null,
-          })
+          .update({ horas_plan_diseno: computed })
           .eq("id", row.id)
           .eq("idempresa", IDEMPRESA)
         if (!ue) ok++
@@ -2327,7 +2324,6 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
           idcosturera: form.idcosturera && form.idcosturera !== "__none__" ? Number(form.idcosturera) : null,
           comentarios: form.comentarios.trim() || null,
           horas_plan_diseno: horasPlanCalculadas,
-          horas_diseno_cumplidas: form.cumplimientoDiseno ? horasPlanCalculadas : null,
         })
         .eq("id", record.id)
         .eq("idempresa", IDEMPRESA)
