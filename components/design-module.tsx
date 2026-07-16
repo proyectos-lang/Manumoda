@@ -2211,6 +2211,9 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
     fechaAprobacionDiseno: null as Date | null,
   })
 
+  // Catálogos de multiplicadores para recalcular horas_plan_diseno al evaluar
+  const disMultCats = useDisenoMultiplierCatalogs(false)
+
   // Carga catálogo de costureras al abrir el sheet
   useEffect(() => {
     if (!open) return
@@ -2248,6 +2251,18 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
     if (!supabase) return
     setSubmitting(true)
     try {
+      // Recalcular horas_plan_diseno desde los catálogos actuales
+      const prenda   = disMultCats.prendas.find((p) => p.id === record.idprenda)
+      const tipoMult = disMultCats.tipos.find((t) => t.nombre === record.tipo)?.multiplicador ?? 1
+      const catMult  = disMultCats.categorias.find((c) => c.nombre === record.categoria_demografica)?.multiplicador ?? 1
+      const adicionHoras = disMultCats.adiciones.reduce((s, a) => {
+        const k = a.clave as keyof DisenoProgramacion
+        return s + ((record as Record<string, unknown>)[k] === true ? Number(a.horas) : 0)
+      }, 0)
+      const horasPlanCalculadas = prenda
+        ? Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
+        : record.horas_plan_diseno  // fallback: mantener el valor guardado si no hay catálogo
+
       // 1. Actualizar diseno_programacion
       const { data, error } = await supabase
         .from("diseno_programacion")
@@ -2257,6 +2272,8 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
           rechazo_orden: form.rechazoOrden,
           idcosturera: form.idcosturera && form.idcosturera !== "__none__" ? Number(form.idcosturera) : null,
           comentarios: form.comentarios.trim() || null,
+          horas_plan_diseno: horasPlanCalculadas,
+          horas_diseno_cumplidas: form.cumplimientoDiseno ? horasPlanCalculadas : null,
         })
         .eq("id", record.id)
         .eq("idempresa", IDEMPRESA)
