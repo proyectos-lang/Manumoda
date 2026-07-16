@@ -1,18 +1,13 @@
 -- ============================================================
--- Recalcular horas_plan_diseno para todos los registros
--- existentes en diseno_programacion.
+-- Recalcular horas para todos los registros de diseno_programacion.
 --
--- horas_diseno_cumplidas es una generated column que se computa
--- automáticamente desde horas_plan_diseno — NO se actualiza
--- directamente; basta con corregir horas_plan_diseno.
+-- PREREQUISITO: Ejecutar script 006 primero.
+--   Este script hace UPDATE en cada fila, lo que dispara el trigger
+--   nuevo (006). El trigger recomputa horas_plan_diseno Y también
+--   setea horas_diseno_cumplidas automáticamente.
 --
--- Fórmula:
---   horas_plan = cat_prendas.horas_base
---              × cat_tipo_diseno.multiplicador
---              × cat_categoria_demografica.multiplicador
---              + Σ adiciones activas
---
--- Solo actualiza registros donde idprenda tiene match en cat_prendas.
+-- Solo procesa registros con idprenda; los demás no tienen prenda
+-- vinculada y el trigger los maneja por su cuenta al dispararse.
 -- ============================================================
 
 WITH computed AS (
