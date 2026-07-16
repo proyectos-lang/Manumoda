@@ -37,6 +37,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  useDisenoMultiplierCatalogs,
+  PlanDisenoDesglosePopover,
+} from "@/components/diseno-plan-desglose"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -493,6 +497,7 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
   const [detailCache, setDetailCache] = useState<Record<string, CorteFolioRow[]>>({})
   const [loadingDetail, setLoadingDetail] = useState<string | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
+  const disMultCats = useDisenoMultiplierCatalogs(configMissing)
 
   const fetchBonos = useCallback(async () => {
     if (configMissing) return
@@ -554,13 +559,59 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
     setLoadingDetail(key)
     const supabase = getSupabase()
     if (!supabase) { setLoadingDetail(null); return }
-    const { data } = await supabase
+    const { data: corteData } = await supabase
       .from("vw_plan_corte_detalle")
       .select("folio, familia, categoria_corte, horas_plan_corte, horas_plan_final, cumplimiento_corte, horas_cumplimiento_corte")
       .eq("semana", r.semana)
       .or(`idcortador.eq.${r.registro},idapoyo.eq.${r.registro}`)
       .order("folio")
-    setDetailCache((prev) => ({ ...prev, [key]: (data as CorteFolioRow[]) ?? [] }))
+
+    const corteRows = (corteData ?? []) as Omit<CorteFolioRow, "horas_plan_diseno" | "idprenda" | "tipo" | "categoria_demografica" | "muchas_operaciones" | "telas_pesadas" | "muchas_habilitaciones" | "prenda_compleja">[]
+
+    // Enriquecer con datos de diseño por folio
+    const folios = corteRows.map((row) => row.folio).filter(Boolean)
+    const disenoMap = new Map<string, Partial<CorteFolioRow>>()
+
+    if (folios.length > 0) {
+      const { data: disenoData } = await supabase
+        .from("diseno_programacion")
+        .select("folio, horas_plan_diseno, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja")
+        .eq("idempresa", IDEMPRESA)
+        .in("folio", folios)
+        .order("id", { ascending: false })
+
+      for (const d of (disenoData ?? []) as { folio: string; horas_plan_diseno: number | null; idprenda: number | null; tipo: string | null; categoria_demografica: string | null; muchas_operaciones: boolean | null; telas_pesadas: boolean | null; muchas_habilitaciones: boolean | null; prenda_compleja: boolean | null }[]) {
+        if (!disenoMap.has(d.folio)) {
+          disenoMap.set(d.folio, {
+            horas_plan_diseno: d.horas_plan_diseno,
+            idprenda: d.idprenda,
+            tipo: d.tipo,
+            categoria_demografica: d.categoria_demografica,
+            muchas_operaciones: d.muchas_operaciones,
+            telas_pesadas: d.telas_pesadas,
+            muchas_habilitaciones: d.muchas_habilitaciones,
+            prenda_compleja: d.prenda_compleja,
+          })
+        }
+      }
+    }
+
+    const enriched: CorteFolioRow[] = corteRows.map((row) => {
+      const d = disenoMap.get(row.folio)
+      return {
+        ...row,
+        horas_plan_diseno: d?.horas_plan_diseno ?? null,
+        idprenda: d?.idprenda ?? null,
+        tipo: d?.tipo ?? null,
+        categoria_demografica: d?.categoria_demografica ?? null,
+        muchas_operaciones: d?.muchas_operaciones ?? null,
+        telas_pesadas: d?.telas_pesadas ?? null,
+        muchas_habilitaciones: d?.muchas_habilitaciones ?? null,
+        prenda_compleja: d?.prenda_compleja ?? null,
+      }
+    })
+
+    setDetailCache((prev) => ({ ...prev, [key]: enriched }))
     setLoadingDetail(null)
   }, [expandedKey, detailCache])
 
@@ -731,6 +782,7 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
                                       <TableHead className="h-8 text-xs text-right">Hrs Final</TableHead>
                                       <TableHead className="h-8 text-xs text-center">Cumpl.</TableHead>
                                       <TableHead className="h-8 text-xs text-right">Hrs Cum.</TableHead>
+                                      <TableHead className="h-8 text-xs text-right text-indigo-600">Plan Diseño</TableHead>
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
@@ -751,6 +803,11 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
                                         <TableCell className="py-1 text-right tabular-nums font-medium">
                                           {d.horas_cumplimiento_corte != null && d.horas_cumplimiento_corte > 0
                                             ? <span className="text-emerald-600">{fmtHrs(d.horas_cumplimiento_corte)}</span>
+                                            : <span className="text-muted-foreground/40">—</span>}
+                                        </TableCell>
+                                        <TableCell className="py-1 text-right tabular-nums">
+                                          {d.horas_plan_diseno != null
+                                            ? <PlanDisenoDesglosePopover row={d} cats={disMultCats} />
                                             : <span className="text-muted-foreground/40">—</span>}
                                         </TableCell>
                                       </TableRow>
@@ -789,6 +846,15 @@ type CorteFolioRow = {
   horas_plan_final: number | null
   cumplimiento_corte: string | null
   horas_cumplimiento_corte: number | null
+  // campos de diseño (enriquecidos desde diseno_programacion)
+  horas_plan_diseno: number | null
+  idprenda: number | null
+  tipo: string | null
+  categoria_demografica: string | null
+  muchas_operaciones: boolean | null
+  telas_pesadas: boolean | null
+  muchas_habilitaciones: boolean | null
+  prenda_compleja: boolean | null
 }
 
 // ─── Corte: Info de cálculo de bono ─────────────────────────────────────────

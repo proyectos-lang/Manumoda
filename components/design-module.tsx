@@ -91,6 +91,11 @@ import { cn } from "@/lib/utils"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import * as XLSX from "xlsx"
 import { DisenoMultipliersDialog } from "@/components/diseno-multipliers-dialog"
+import {
+  useDisenoMultiplierCatalogs,
+  PlanDisenoDesglosePopover,
+  type DisenoMultiplierCats,
+} from "@/components/diseno-plan-desglose"
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -189,6 +194,9 @@ export function DesignModule({ configMissing }: Props) {
   const [filterCategoria, setFilterCategoria] = useState("__all__")
   const [filterEstado, setFilterEstado] = useState("__all__")
   const [multipliersOpen, setMultipliersOpen] = useState(false)
+
+  // Catálogos de multiplicadores de diseño (para el popover de desglose en Programación)
+  const disMultCats = useDisenoMultiplierCatalogs(configMissing)
 
   // Restaurar filtros guardados al montar
   useEffect(() => {
@@ -730,8 +738,9 @@ export function DesignModule({ configMissing }: Props) {
                             onSave={(id, nombre) => handleDisenadoraChange(row.id, id, nombre)}
                           />
                         </TableCell>
-                        <TableCell className="text-right tabular-nums text-sm font-medium text-indigo-700">
-                          {fmtH(row.horas_plan_diseno)} <span className="text-muted-foreground text-xs font-normal">h</span>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          <PlanDisenoDesglosePopover row={row} cats={disMultCats} />
+                          <span className="text-muted-foreground text-xs font-normal"> h</span>
                         </TableCell>
                         <TableCell className="text-sm">{row.costureras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm font-medium text-violet-700">
@@ -864,6 +873,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
   const [detailCache, setDetailCache] = useState<Record<string, DesignFolioRow[]>>({})
   const [loadingDetail, setLoadingDetail] = useState<string | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
+  const disMultCats = useDisenoMultiplierCatalogs(configMissing)
 
   // Fetch desde la vista SQL (sin matemáticas en frontend)
   const fetchBonos = useCallback(async () => {
@@ -941,7 +951,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
     const field = row.tipo_personal === "Diseño" ? "iddisenadora" : "idcosturera"
     const { data } = await supabase
       .from("diseno_programacion")
-      .select("folio, modelo, familia, cliente, horas_plan_diseno, cumplimiento_diseno, cumplimiento_costura, horas_diseno_cumplidas, horas_costura_cumplidas")
+      .select("folio, modelo, familia, cliente, horas_plan_diseno, cumplimiento_diseno, cumplimiento_costura, horas_diseno_cumplidas, horas_costura_cumplidas, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja")
       .eq("idempresa", IDEMPRESA)
       .eq("semana", row.semana)
       .eq(field, personId)
@@ -1158,7 +1168,9 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
                                             <TableCell className="py-1">{d.modelo ?? "—"}</TableCell>
                                             <TableCell className="py-1">{d.familia ?? "—"}</TableCell>
                                             <TableCell className="py-1">{d.cliente ?? "—"}</TableCell>
-                                            <TableCell className="py-1 text-right tabular-nums">{fmtH(d.horas_plan_diseno)}</TableCell>
+                                            <TableCell className="py-1 text-right tabular-nums">
+                                              <PlanDisenoDesglosePopover row={d} cats={disMultCats} />
+                                            </TableCell>
                                             <TableCell className="py-1 text-center">
                                               {cumplido
                                                 ? <span className="font-semibold text-emerald-600">✓</span>
@@ -1209,6 +1221,14 @@ type DesignFolioRow = {
   cumplimiento_costura: boolean | null
   horas_diseno_cumplidas: number | null
   horas_costura_cumplidas: number | null
+  // campos para desglose de multiplicadores
+  idprenda: number | null
+  tipo: string | null
+  categoria_demografica: string | null
+  muchas_operaciones: boolean | null
+  telas_pesadas: boolean | null
+  muchas_habilitaciones: boolean | null
+  prenda_compleja: boolean | null
 }
 
 
