@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Loader2, RefreshCw, Search, Settings2, SlidersHorizontal, X } from "lucide-react"
+import { HelpCircle, Loader2, RefreshCw, Search, Settings2, SlidersHorizontal, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -30,6 +30,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -84,11 +91,7 @@ export function CorteModule({ configMissing }: { configMissing: boolean }) {
 // ─── Tab 1: Plan de Corte ─────────────────────────────────────────────────────
 
 type PatchRow = {
-  idcortador: number | null
-  idapoyo: number | null
   mesa: string | null
-  variable_subjetiva: number | null
-  cumplimiento_corte: string | null
   calificacion: number | null
   comentarios: string | null
 }
@@ -290,14 +293,11 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
               <TableHead className="text-right font-semibold">Tendidos</TableHead>
               <TableHead className="text-right font-semibold">Piezas</TableHead>
               <TableHead className="font-semibold">Complementos</TableHead>
-              <TableHead className="min-w-[140px] font-semibold">Cortador</TableHead>
-              <TableHead className="min-w-[140px] font-semibold">Apoyo</TableHead>
+              <TableHead className="font-semibold">Cortador</TableHead>
+              <TableHead className="font-semibold">Apoyo</TableHead>
               <TableHead className="min-w-[110px] font-semibold">Mesa</TableHead>
               <TableHead className="text-right font-semibold">Trazos</TableHead>
-              <TableHead className="text-right font-semibold">Hrs Plan</TableHead>
-              <TableHead className="min-w-[90px] text-right font-semibold">Variable</TableHead>
-              <TableHead className="text-right font-semibold">Hrs Final</TableHead>
-              <TableHead className="min-w-[130px] font-semibold">Cumplimiento</TableHead>
+              <TableHead className="min-w-[110px] font-semibold">Cumplimiento</TableHead>
               <TableHead className="text-right font-semibold">Hrs Cum.</TableHead>
               <TableHead className="text-center font-semibold">Calidad</TableHead>
               <TableHead className="min-w-[160px] font-semibold">Comentarios</TableHead>
@@ -307,14 +307,14 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
             {loading && rows.length === 0 ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 18 }).map((__, j) => (
+                  {Array.from({ length: 15 }).map((__, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={18} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={15} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0 ? "No hay registros en el plan de corte." : "Sin resultados para esta búsqueda."}
                 </TableCell>
               </TableRow>
@@ -350,47 +350,11 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
                       </div>
                     </TableCell>
 
-                    {/* Cortador — inline Select */}
-                    <TableCell>
-                      <Select
-                        value={String(m.idcortador ?? "__none__")}
-                        onValueChange={(v) =>
-                          handleFieldSave(r.registro_id, "idcortador", v === "__none__" ? null : Number(v))
-                        }
-                        disabled={isSaving}
-                      >
-                        <SelectTrigger className="h-8 w-full text-xs">
-                          <SelectValue placeholder="Asignar…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Sin asignar</SelectItem>
-                          {cortadores.map((c) => (
-                            <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
+                    {/* Cortador — read-only */}
+                    <TableCell className="text-sm">{r.cortador_nombre ?? "—"}</TableCell>
 
-                    {/* Apoyo — inline Select */}
-                    <TableCell>
-                      <Select
-                        value={String(m.idapoyo ?? "__none__")}
-                        onValueChange={(v) =>
-                          handleFieldSave(r.registro_id, "idapoyo", v === "__none__" ? null : Number(v))
-                        }
-                        disabled={isSaving}
-                      >
-                        <SelectTrigger className="h-8 w-full text-xs">
-                          <SelectValue placeholder="Sin apoyo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Sin apoyo</SelectItem>
-                          {cortadores.map((c) => (
-                            <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
+                    {/* Apoyo — read-only */}
+                    <TableCell className="text-sm text-muted-foreground">{r.apoyo_nombre ?? "—"}</TableCell>
 
                     {/* Mesa — inline input (save on blur) */}
                     <TableCell>
@@ -402,35 +366,12 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
                     </TableCell>
 
                     <TableCell className="text-right tabular-nums">{r.trazos ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">{fmtHrs(r.horas_plan_corte)}</TableCell>
 
-                    {/* Variable Subjetiva — inline input (save on blur) */}
+                    {/* Cumplimiento — read-only badge */}
                     <TableCell>
-                      <VariableCell
-                        value={m.variable_subjetiva ?? 0}
-                        disabled={isSaving}
-                        onSave={(v) => handleFieldSave(r.registro_id, "variable_subjetiva", v)}
-                      />
-                    </TableCell>
-
-                    <TableCell className="text-right tabular-nums font-semibold">{fmtHrs(r.horas_plan_final)}</TableCell>
-
-                    {/* Cumplimiento — inline Select */}
-                    <TableCell>
-                      <Select
-                        value={m.cumplimiento_corte ?? "Pendiente"}
-                        onValueChange={(v) => handleFieldSave(r.registro_id, "cumplimiento_corte", v)}
-                        disabled={isSaving}
-                      >
-                        <SelectTrigger className={cn("h-8 w-full border text-xs font-medium", CUMPLIMIENTO_STYLES[m.cumplimiento_corte ?? "Pendiente"])}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {["Pendiente", "Si", "No"].map((v) => (
-                            <SelectItem key={v} value={v}>{v}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <span className={cn("inline-flex rounded px-2 py-0.5 text-xs font-medium border", CUMPLIMIENTO_STYLES[r.cumplimiento_corte ?? "Pendiente"])}>
+                        {r.cumplimiento_corte ?? "Pendiente"}
+                      </span>
                     </TableCell>
 
                     <TableCell className="text-right tabular-nums">
@@ -495,37 +436,6 @@ function MesaCell({ value, disabled, onSave }: { value: string; disabled: boolea
   )
 }
 
-function VariableCell({ value, disabled, onSave }: { value: number; disabled: boolean; onSave: (v: number) => void }) {
-  const [local, setLocal] = useState(String(value))
-  const initialRef = useRef(String(value))
-
-  useEffect(() => {
-    setLocal(String(value))
-    initialRef.current = String(value)
-  }, [value])
-
-  const commit = () => {
-    const n = parseFloat(local)
-    const clamped = isNaN(n) ? 0 : Math.min(2, Math.max(-2, n))
-    const str = String(clamped)
-    if (str !== initialRef.current) onSave(clamped)
-  }
-
-  return (
-    <Input
-      type="number"
-      min="-2"
-      max="2"
-      step="0.5"
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
-      disabled={disabled}
-      className="h-8 w-20 text-right text-xs"
-    />
-  )
-}
 
 function CalificacionCell({ value, disabled, onSave }: {
   value: number | null; disabled: boolean; onSave: (v: number | null) => void
@@ -575,10 +485,14 @@ function ComentariosCell({ value, disabled, onSave }: {
 
 // ─── Tab 2: Bonos de Corte ────────────────────────────────────────────────────
 
+type CorteDetailTarget = { registro: number; nombre: string; semana: number; anio: number | null }
+
 function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
   const [bonos, setBonos] = useState<VwBonosCorte[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedWeekKey, setSelectedWeekKey] = useState<string>("")
+  const [detailTarget, setDetailTarget] = useState<CorteDetailTarget | null>(null)
+  const [infoOpen, setInfoOpen] = useState(false)
 
   const fetchBonos = useCallback(async () => {
     if (configMissing) return
@@ -648,6 +562,10 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{filtered.length} colaborador{filtered.length !== 1 ? "es" : ""}</span>
+          <Button variant="ghost" size="sm" onClick={() => setInfoOpen(true)} className="gap-1.5">
+            <HelpCircle className="size-3.5" />
+            Cómo se calcula
+          </Button>
           <Button variant="outline" size="sm" onClick={fetchBonos} disabled={loading} className="gap-1.5 bg-transparent">
             {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
             Actualizar
@@ -709,7 +627,16 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_semana)}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">{fmtHrs(r.horas_cumplidas)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      <button
+                        type="button"
+                        onClick={() => r.semana != null && setDetailTarget({ registro: r.registro, nombre: r.nombre ?? "", semana: r.semana, anio: r.anio })}
+                        className="tabular-nums underline-offset-2 hover:underline hover:text-foreground cursor-pointer"
+                        title="Ver detalle por folio"
+                      >
+                        {fmtHrs(r.horas_cumplidas)}
+                      </button>
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_fuera_area)}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.ausentismos ?? "—"}</TableCell>
                     <TableCell className="text-right">
@@ -758,6 +685,166 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
           </TableBody>
         </Table>
       </div>
+      <CorteFolioDetailDialog target={detailTarget} onClose={() => setDetailTarget(null)} />
+      <CorteBonosInfoDialog open={infoOpen} onOpenChange={setInfoOpen} />
     </div>
+  )
+}
+
+// ─── Corte: Detalle de folios por persona ────────────────────────────────────
+
+type CorteFolioRow = {
+  folio: string
+  familia: string | null
+  categoria_corte: string | null
+  horas_plan_corte: number | null
+  horas_plan_final: number | null
+  cumplimiento_corte: string | null
+  horas_cumplimiento_corte: number | null
+}
+
+function CorteFolioDetailDialog({
+  target,
+  onClose,
+}: {
+  target: CorteDetailTarget | null
+  onClose: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [rows, setRows] = useState<CorteFolioRow[]>([])
+
+  useEffect(() => {
+    if (!target) { setRows([]); return }
+    const run = async () => {
+      const supabase = getSupabase()
+      if (!supabase) return
+      setLoading(true)
+      const { data } = await supabase
+        .from("vw_plan_corte_detalle")
+        .select("folio, familia, categoria_corte, horas_plan_corte, horas_plan_final, cumplimiento_corte, horas_cumplimiento_corte")
+        .eq("semana", target.semana)
+        .or(`idcortador.eq.${target.registro},idapoyo.eq.${target.registro}`)
+        .order("folio")
+      setRows((data as CorteFolioRow[]) ?? [])
+      setLoading(false)
+    }
+    run()
+  }, [target])
+
+  const totalCumplidas = rows.reduce((acc, r) => acc + (r.horas_cumplimiento_corte ?? 0), 0)
+  const foliosSi = rows.filter((r) => r.cumplimiento_corte === "Si").length
+
+  return (
+    <Dialog open={!!target} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Detalle de Horas — {target?.nombre}</DialogTitle>
+          <DialogDescription>
+            Semana {target?.semana}{target?.anio ? ` / ${target.anio}` : ""} · Corte
+          </DialogDescription>
+        </DialogHeader>
+        {loading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Sin registros para esta semana.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="overflow-x-auto rounded border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50 hover:bg-muted/50">
+                    <TableHead>Folio</TableHead>
+                    <TableHead>Familia</TableHead>
+                    <TableHead>Categoría</TableHead>
+                    <TableHead className="text-right">Hrs Plan</TableHead>
+                    <TableHead className="text-right">Hrs Final</TableHead>
+                    <TableHead className="text-center">Cumpl.</TableHead>
+                    <TableHead className="text-right">Hrs Cum.</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((r, i) => (
+                    <TableRow key={i} className={cn("text-sm", r.cumplimiento_corte !== "Si" && "opacity-50")}>
+                      <TableCell className="font-mono text-xs">{r.folio}</TableCell>
+                      <TableCell className="text-xs">{r.familia ?? "—"}</TableCell>
+                      <TableCell className="text-xs">{r.categoria_corte ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_plan_corte)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtHrs(r.horas_plan_final)}</TableCell>
+                      <TableCell className="text-center">
+                        {r.cumplimiento_corte === "Si" ? (
+                          <span className="text-xs font-semibold text-emerald-600">✓ Sí</span>
+                        ) : r.cumplimiento_corte === "No" ? (
+                          <span className="text-xs text-rose-500">✗ No</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">Pend.</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">
+                        {r.horas_cumplimiento_corte != null && r.horas_cumplimiento_corte > 0 ? (
+                          <span className="text-emerald-600">{fmtHrs(r.horas_cumplimiento_corte)}</span>
+                        ) : (
+                          <span className="text-muted-foreground/40">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="flex items-center justify-between border-t pt-2 text-sm">
+              <span className="text-muted-foreground">{foliosSi} de {rows.length} folios con cumplimiento</span>
+              <span className="font-semibold">Total acumulado: {fmtHrs(totalCumplidas)} h</span>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Corte: Info de cálculo de bono ─────────────────────────────────────────
+
+function CorteBonosInfoDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>¿Cómo se calcula el bono de Corte?</DialogTitle>
+          <DialogDescription>Resumen del proceso de liquidación semanal</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+            <div>
+              <p className="font-semibold text-foreground">1. Horas Cumplidas</p>
+              <p className="text-muted-foreground mt-0.5">Suma de <em>Hrs Cumplimiento</em> de todos los folios de la semana donde el cortador registró <span className="font-medium text-emerald-600">Cumplimiento = Sí</span>. Haz clic en el valor de la columna para ver el desglose.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">2. Horas Semana</p>
+              <p className="text-muted-foreground mt-0.5">Total de horas laborables pactadas para la semana según el calendario del colaborador.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">3. % Eficiencia</p>
+              <p className="font-mono text-xs bg-background rounded px-2 py-1 mt-0.5 inline-block">
+                (Hrs Cumplidas + Hrs Fuera de Área) / Hrs Semana × 100
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">4. Criterio de Aceptación</p>
+              <p className="text-muted-foreground mt-0.5">Se marca <span className="font-medium">Sí</span> cuando la eficiencia supera el umbral mínimo configurado en los parámetros del sistema.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">5. Bono Semanal</p>
+              <p className="text-muted-foreground mt-0.5">El colaborador recibe el monto de bono si el criterio se cumple y no tiene ausencias que lo descalifiquen.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">6. % Productividad Directa</p>
+              <p className="text-muted-foreground mt-0.5">Eficiencia calculada únicamente con los folios de corte propios (sin sumar horas fuera de área).</p>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
