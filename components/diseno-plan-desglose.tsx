@@ -90,7 +90,10 @@ export function PlanDisenoDesglosePopover({
   })
   const adicionHoras = adicionesActivas.reduce((s, a) => s + Number(a.horas), 0)
 
-  const total = row.horas_plan_diseno
+  // Preferir el total calculado desde los componentes del desglose;
+  // el valor guardado en BD puede estar desactualizado respecto a los catálogos actuales.
+  const computedTotal = subtotal != null ? Math.round((subtotal + adicionHoras) * 100) / 100 : null
+  const total = computedTotal ?? row.horas_plan_diseno
   const hasData = cats.prendas.length > 0
 
   return (
