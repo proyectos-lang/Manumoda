@@ -736,7 +736,7 @@ function CorteFolioDetailDialog({
 
   return (
     <Dialog open={!!target} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-4xl w-full">
         <DialogHeader>
           <DialogTitle>Detalle de Horas — {target?.nombre}</DialogTitle>
           <DialogDescription>
