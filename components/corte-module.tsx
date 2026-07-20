@@ -1,15 +1,34 @@
 "use client"
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, HelpCircle, Loader2, RefreshCw, Search, Settings2, SlidersHorizontal, X } from "lucide-react"
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  HelpCircle,
+  Loader2,
+  RefreshCw,
+  Scissors,
+  Search,
+  Settings2,
+  SlidersHorizontal,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { VwBonosCorte, VwPlanCorteDetalle } from "@/lib/types"
+import { computeRisk, needsAttention } from "@/lib/risk"
 import { cn } from "@/lib/utils"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
+import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
+import { EficienciaTrend } from "@/components/eficiencia-trend"
+import { KpiCard } from "@/components/kpi-card"
 import { EditCorteVariablesSheet } from "@/components/edit-corte-variables-sheet"
 import { CorteMultipliersDialog } from "@/components/corte-multipliers-dialog"
 import { Input } from "@/components/ui/input"
@@ -113,6 +132,10 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
   // Local overrides for inline edits (keyed by registro_id)
   const [localRows, setLocalRows] = useState<Record<number, Partial<PatchRow>>>({})
 
+  // Selección múltiple para mover registros entre semanas
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [movingWeek, setMovingWeek] = useState(false)
+
   const fetchData = useCallback(async () => {
     if (configMissing) return
     const supabase = getSupabase()
@@ -123,6 +146,7 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
       supabase
         .from("vw_plan_corte_detalle")
         .select("*")
+        .eq("idempresa", IDEMPRESA)
         .order("semana", { ascending: false })
         .order("folio"),
       supabase
@@ -140,7 +164,9 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
       setLocalRows({})
     }
 
-    if (!cortRes.error) {
+    if (cortRes.error) {
+      toast.error("No se pudo cargar el catálogo de cortadores", { description: cortRes.error.message })
+    } else {
       setCortadores((cortRes.data as Cortador[]) ?? [])
     }
   }, [configMissing])
@@ -179,6 +205,91 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
     }
     return list
   }, [rows, filterSemana, search])
+
+  const kpis = useMemo(() => {
+    let cumplidos = 0
+    // Folios distintos: corte_programacion tiene un registro por semana,
+    // así que contar filas inflaría el número de pedidos por vencer.
+    const foliosPorVencer = new Set<string>()
+    for (const r of filtered) {
+      if (r.cumplimiento_corte === "Si") cumplidos++
+      if (r.folio && needsAttention(computeRisk(r.fecha_cancelacion, 0).risk)) {
+        foliosPorVencer.add(r.folio)
+      }
+    }
+    return {
+      total: filtered.length,
+      cumplidos,
+      pendientes: filtered.length - cumplidos,
+      porVencer: foliosPorVencer.size,
+    }
+  }, [filtered])
+
+  // ── Selección múltiple / mover de semana ───────────────────────────────────
+
+  /** Un corte cumplido no se puede mover: sus horas ya contaron en los bonos. */
+  const isLocked = useCallback((r: VwPlanCorteDetalle) => r.cumplimiento_corte === "Si", [])
+
+  // Solo las filas NO cumplidas son seleccionables
+  const visibleIds = useMemo(
+    () => filtered.filter((r) => !isLocked(r)).map((r) => r.registro_id),
+    [filtered, isLocked],
+  )
+  const lockedCount = useMemo(() => filtered.filter(isLocked).length, [filtered, isLocked])
+  const selectedVisible = useMemo(
+    () => visibleIds.filter((id) => selectedIds.has(id)),
+    [visibleIds, selectedIds],
+  )
+
+  const toggleRow = useCallback((id: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+
+  const toggleAllVisible = useCallback((checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      for (const id of visibleIds) {
+        if (checked) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }, [visibleIds])
+
+  const moverSemana = useCallback(async (nuevaSemana: number) => {
+    if (configMissing || selectedVisible.length === 0) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setMovingWeek(true)
+    try {
+      const { error } = await supabase
+        .from("corte_programacion")
+        .update({ semana: nuevaSemana })
+        .in("id", selectedVisible)
+        .eq("idempresa", IDEMPRESA)
+
+      if (error) {
+        toast.error("No se pudieron mover los registros", { description: error.message })
+        return
+      }
+      toast.success(
+        `${selectedVisible.length} ${selectedVisible.length === 1 ? "registro movido" : "registros movidos"} a la semana ${nuevaSemana}`,
+      )
+      setSelectedIds(new Set())
+      fetchData()
+    } catch (err) {
+      toast.error("Error inesperado al mover de semana", {
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setMovingWeek(false)
+    }
+  }, [configMissing, selectedVisible, fetchData])
 
   // Merge view data with local overrides for display
   function mergedRow(r: VwPlanCorteDetalle): VwPlanCorteDetalle & Partial<PatchRow> {
@@ -223,6 +334,52 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
     <CorteMultipliersDialog open={multipliersOpen} onOpenChange={setMultipliersOpen} />
     <EditCorteVariablesSheet open={editVarsOpen} onClose={() => setEditVarsOpen(false)} />
     <div className="space-y-4">
+      {/* Alerta de pedidos próximos a vencer */}
+      <DeadlineAlertBanner
+        items={filtered.map((r) => ({
+          folio: r.folio,
+          fecha_cancelacion: r.fecha_cancelacion,
+          detalle: r.familia,
+        }))}
+      />
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard
+          label="Folios en plan"
+          value={kpis.total}
+          icon={<Scissors className="size-3.5" />}
+          iconBg="bg-violet-50 ring-violet-200"
+          iconColor="text-violet-600"
+          valueColor="text-foreground"
+        />
+        <KpiCard
+          label="Cumplidos"
+          value={kpis.cumplidos}
+          icon={<CheckCircle2 className="size-3.5" />}
+          iconBg="bg-emerald-50 ring-emerald-200"
+          iconColor="text-emerald-600"
+          valueColor="text-emerald-700"
+        />
+        <KpiCard
+          label="Pendientes"
+          value={kpis.pendientes}
+          icon={<Clock className="size-3.5" />}
+          iconBg="bg-slate-50 ring-slate-200"
+          iconColor="text-slate-500"
+          valueColor="text-foreground"
+        />
+        <KpiCard
+          label="Próximos a vencer"
+          value={kpis.porVencer}
+          icon={<AlertTriangle className="size-3.5" />}
+          iconBg="bg-amber-50 ring-amber-200"
+          iconColor="text-amber-600"
+          valueColor={kpis.porVencer > 0 ? "text-amber-600" : "text-foreground"}
+          hint="Entrega en 7 días o menos"
+        />
+      </div>
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[200px]">
@@ -285,11 +442,29 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
         </div>
       </div>
 
+      {/* Barra de acción masiva (solo con filas seleccionadas) */}
+      <BulkMoveWeekBar
+        selectedCount={selectedVisible.length}
+        lockedCount={lockedCount}
+        onClear={() => setSelectedIds(new Set())}
+        onMove={moverSemana}
+        moving={movingWeek}
+        entidad={selectedVisible.length === 1 ? "registro de corte" : "registros de corte"}
+      />
+
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-border">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead className="w-10">
+                <SelectAllCheckbox
+                  checked={visibleIds.length > 0 && selectedVisible.length === visibleIds.length}
+                  indeterminate={selectedVisible.length > 0 && selectedVisible.length < visibleIds.length}
+                  onChange={toggleAllVisible}
+                  title="Seleccionar todas las filas visibles"
+                />
+              </TableHead>
               <TableHead className="whitespace-nowrap font-semibold">Folio</TableHead>
               <TableHead className="font-semibold">Familia</TableHead>
               <TableHead className="font-semibold">Categoría</TableHead>
@@ -311,14 +486,14 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
             {loading && rows.length === 0 ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 15 }).map((__, j) => (
+                  {Array.from({ length: 16 }).map((__, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={15} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={16} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0 ? "No hay registros en el plan de corte." : "Sin resultados para esta búsqueda."}
                 </TableCell>
               </TableRow>
@@ -327,7 +502,22 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
                 const m = mergedRow(r)
                 const isSaving = savingId === r.registro_id
                 return (
-                  <TableRow key={r.registro_id} className={cn("text-sm", isSaving && "opacity-60")}>
+                  <TableRow
+                    key={r.registro_id}
+                    className={cn(
+                      "text-sm",
+                      isSaving && "opacity-60",
+                      selectedIds.has(r.registro_id) && "bg-indigo-50/60",
+                    )}
+                  >
+                    <TableCell>
+                      <RowCheckbox
+                        checked={selectedIds.has(r.registro_id)}
+                        onChange={(v) => toggleRow(r.registro_id, v)}
+                        disabled={isLocked(r)}
+                        disabledTitle="Corte cumplido — sus horas ya contaron en los bonos de esta semana"
+                      />
+                    </TableCell>
                     <TableCell className="font-mono font-semibold">{r.folio}</TableCell>
                     <TableCell className="text-muted-foreground">{r.familia ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{r.categoria_corte ?? r.categoria ?? "—"}</TableCell>
@@ -560,12 +750,19 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
     setLoadingDetail(key)
     const supabase = getSupabase()
     if (!supabase) { setLoadingDetail(null); return }
-    const { data: corteData } = await supabase
+    const { data: corteData, error: corteError } = await supabase
       .from("vw_plan_corte_detalle")
       .select("folio, familia, categoria_corte, horas_plan_corte, horas_plan_final, cumplimiento_corte, horas_cumplimiento_corte")
+      .eq("idempresa", IDEMPRESA)
       .eq("semana", r.semana)
       .or(`idcortador.eq.${r.registro},idapoyo.eq.${r.registro}`)
       .order("folio")
+
+    if (corteError) {
+      toast.error("No se pudo cargar el detalle de folios", { description: corteError.message })
+      setLoadingDetail(null)
+      return
+    }
 
     const corteRows = (corteData ?? []) as Omit<CorteFolioRow, "horas_plan_diseno" | "idprenda" | "tipo" | "categoria_demografica" | "muchas_operaciones" | "telas_pesadas" | "muchas_habilitaciones" | "prenda_compleja">[]
 
@@ -574,13 +771,17 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
     const disenoMap = new Map<string, Partial<CorteFolioRow>>()
 
     if (folios.length > 0) {
-      const { data: disenoData } = await supabase
+      const { data: disenoData, error: disenoError } = await supabase
         .from("diseno_programacion")
         .select("folio, horas_plan_diseno, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja")
         .eq("idempresa", IDEMPRESA)
         .in("folio", folios)
         .order("id", { ascending: false })
 
+      if (disenoError) {
+        // No bloquea el acordeón: solo faltará la columna Plan Diseño
+        toast.warning("No se pudo cargar el detalle de diseño", { description: disenoError.message })
+      }
       for (const d of (disenoData ?? []) as { folio: string; horas_plan_diseno: number | null; idprenda: number | null; tipo: string | null; categoria_demografica: string | null; muchas_operaciones: boolean | null; telas_pesadas: boolean | null; muchas_habilitaciones: boolean | null; prenda_compleja: boolean | null }[]) {
         if (!disenoMap.has(d.folio)) {
           disenoMap.set(d.folio, {
@@ -670,6 +871,11 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
           </Button>
         </div>
       </div>
+
+      {/* Tendencia entre semanas */}
+      <EficienciaTrend
+        rows={bonos.map((b) => ({ anio: b.anio, semana: b.semana, eficiencia: b.porcentaje_eficiencia }))}
+      />
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-border">

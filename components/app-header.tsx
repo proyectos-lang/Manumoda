@@ -1,7 +1,7 @@
 "use client"
 
-import { Bell, Search } from "lucide-react"
-import { Input } from "@/components/ui/input"
+import { Bell } from "lucide-react"
+import { GlobalFolioSearch } from "@/components/global-folio-search"
 
 export function AppHeader({ title }: { title: string }) {
   return (
@@ -10,13 +10,7 @@ export function AppHeader({ title }: { title: string }) {
         <h2 className="text-base font-semibold tracking-tight text-foreground">{title}</h2>
 
         <div className="ml-auto flex items-center gap-3">
-          <div className="relative hidden md:block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Buscar órdenes, folios..."
-              className="h-9 w-72 border-border/60 bg-card/80 pl-9 text-sm placeholder:text-muted-foreground/70 focus-visible:ring-primary/40"
-            />
-          </div>
+          <GlobalFolioSearch />
 
           <button
             type="button"

@@ -15,6 +15,7 @@ import { DesignModule } from "@/components/design-module"
 import { CorteModule } from "@/components/corte-module"
 import { ColaboradoresModule } from "@/components/colaboradores-module"
 import { LoginScreen } from "@/components/login-screen"
+import { FolioDetailProvider } from "@/components/folio-detail-drawer"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Toaster } from "@/components/ui/sonner"
 import { useAuth } from "@/lib/auth-context"
@@ -53,6 +54,7 @@ export default function Page() {
   }
 
   return (
+    <FolioDetailProvider>
     <main className="content-cmyk-gradient min-h-screen">
       <AppSidebar active={active} onChange={setActive} user={user} onLogout={logout} />
 
@@ -298,5 +300,6 @@ export default function Page() {
 
       <Toaster richColors position="top-right" />
     </main>
+    </FolioDetailProvider>
   )
 }

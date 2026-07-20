@@ -1,19 +1,6 @@
 import * as XLSX from "xlsx"
 import type { ParsedRow } from "./types"
 
-const FIELD_MAP: Record<string, keyof ParsedRow> = {
-  FOLIO: "folio",
-  NUMPED: "num_pedido",
-  MODELO: "modelo",
-  FAMILIA: "familia",
-  CLIENTE: "cliente",
-  FECHA: "fecha_pedido",
-  FECHA_CANCEL: "fecha_cancelacion",
-  TIPO_PEDIDO: "tipo_pedido",
-  PIEZAS: "piezas",
-  CORTE: "corte_origen",
-}
-
 function normalizeKey(k: string): string {
   return k
     .toString()
@@ -69,27 +56,70 @@ function toText(value: unknown): string | null {
   return s === "" ? null : s
 }
 
-export async function parseExcelFile(file: File): Promise<ParsedRow[]> {
+/** Aviso de calidad de datos generado durante el parseo. */
+export type ParseIssue = {
+  /** Fila del archivo (1-based, contando el encabezado como fila 1). */
+  fila: number
+  folio: string | null
+  problema: string
+}
+
+export type ParseResult = {
+  rows: ParsedRow[]
+  issues: ParseIssue[]
+  /** Folios que aparecían más de una vez en el archivo (se conservó la última fila). */
+  duplicados: string[]
+}
+
+/** ¿El valor crudo tenía contenido que el parser descartó? */
+function seDescarto(raw: unknown, parsed: unknown): boolean {
+  return raw !== null && raw !== undefined && String(raw).trim() !== "" && parsed === null
+}
+
+export async function parseExcelFile(file: File): Promise<ParseResult> {
   const buffer = await file.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: "array", cellDates: false })
   const sheetName = workbook.SheetNames[0]
-  if (!sheetName) return []
+  if (!sheetName) return { rows: [], issues: [], duplicados: [] }
   const sheet = workbook.Sheets[sheetName]
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: null,
     raw: true,
   })
 
-  const result: ParsedRow[] = []
+  const issues: ParseIssue[] = []
+  const byFolio = new Map<string, ParsedRow>()
+  const duplicadosSet = new Set<string>()
 
-  for (const raw of rows) {
+  rawRows.forEach((raw, idx) => {
+    const fila = idx + 2 // +1 por 0-based, +1 por la fila de encabezado
+
     const normalized: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(raw)) {
       normalized[normalizeKey(k)] = v
     }
 
     const folio = toText(normalized["FOLIO"])
-    if (!folio) continue // skip rows without folio
+    if (!folio) {
+      // Solo avisar si la fila tenía algún otro dato (no filas totalmente vacías)
+      const tieneAlgo = Object.values(normalized).some(
+        (v) => v !== null && String(v).trim() !== "",
+      )
+      if (tieneAlgo) issues.push({ fila, folio: null, problema: "Fila sin FOLIO — descartada" })
+      return
+    }
+
+    const fecha_pedido = excelDateToISO(normalized["FECHA"])
+    const fecha_cancelacion = excelDateToISO(normalized["FECHA_CANCEL"])
+    const fecha_aprobacion_diseno = excelDateToISO(normalized["FECHA_STATUS2"])
+    const piezas = toInt(normalized["PIEZAS"])
+
+    if (seDescarto(normalized["FECHA"], fecha_pedido))
+      issues.push({ fila, folio, problema: `FECHA ilegible: "${normalized["FECHA"]}"` })
+    if (seDescarto(normalized["FECHA_CANCEL"], fecha_cancelacion))
+      issues.push({ fila, folio, problema: `FECHA_CANCEL ilegible: "${normalized["FECHA_CANCEL"]}"` })
+    if (seDescarto(normalized["PIEZAS"], piezas))
+      issues.push({ fila, folio, problema: `PIEZAS no numérico: "${normalized["PIEZAS"]}"` })
 
     const row: ParsedRow = {
       idempresa: 1,
@@ -99,21 +129,24 @@ export async function parseExcelFile(file: File): Promise<ParsedRow[]> {
       familia: toText(normalized["FAMILIA"]),
       categoria: toText(normalized["CATEGORIA"]),
       cliente: toText(normalized["CLIENTE"]),
-      fecha_pedido: excelDateToISO(normalized["FECHA"]),
-      fecha_cancelacion: excelDateToISO(normalized["FECHA_CANCEL"]),
+      fecha_pedido,
+      fecha_cancelacion,
       tipo_pedido: toText(normalized["TIPO_PEDIDO"]),
-      piezas: toInt(normalized["PIEZAS"]),
+      piezas,
       corte_origen: toText(normalized["CORTE"]),
       fase_actual: "Por Programar",
-      fecha_aprobacion_diseno: excelDateToISO(normalized["FECHA_STATUS2"]),
+      fecha_aprobacion_diseno,
       maquilero_nombre: toText(normalized["MAQUILERO"]),
     }
 
-    result.push(row)
+    // Dedupe intra-archivo: se conserva la ÚLTIMA aparición de cada folio
+    if (byFolio.has(folio)) duplicadosSet.add(folio)
+    byFolio.set(folio, row)
+  })
+
+  return {
+    rows: Array.from(byFolio.values()),
+    issues,
+    duplicados: Array.from(duplicadosSet),
   }
-
-  // Avoid unused FIELD_MAP warning
-  void FIELD_MAP
-
-  return result
 }

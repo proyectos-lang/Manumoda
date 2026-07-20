@@ -3,12 +3,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
 import { es } from "date-fns/locale"
-import { CalendarIcon, Camera, ClipboardPen, Loader2, RefreshCw, Search, X } from "lucide-react"
+import {
+  AlertTriangle,
+  CalendarIcon,
+  Camera,
+  ClipboardPen,
+  Clock,
+  Loader2,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
+import { computeProgress, computeRisk, daysUntil, relativeDays, type Risk } from "@/lib/risk"
 import { cn } from "@/lib/utils"
+
+import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
+import { FolioLink } from "@/components/folio-detail-drawer"
+import { KpiCard } from "@/components/kpi-card"
+import { RiesgoInfoDialog } from "@/components/riesgo-info-dialog"
+import { RiskBadge } from "@/components/risk-badge"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -202,6 +219,30 @@ export function ProductionTrackingDashboard({
     )
   }, [orders, search])
 
+  /** Riesgo de entrega por orden, calculado una sola vez. */
+  const riskByOrder = useMemo(() => {
+    const map = new Map<string, { risk: Risk; days: number | null }>()
+    for (const o of filtered) {
+      const { progress } = computeProgress(o)
+      // fase_actual activa la regla de ritmo por fase (paridad con el
+      // "A Destiempo" de las vistas SQL)
+      map.set(o.folio, computeRisk(o.fecha_cancelacion, progress, o.fase_actual))
+    }
+    return map
+  }, [filtered])
+
+  const riskSummary = useMemo(() => {
+    let vencidos = 0
+    let enRiesgo = 0
+    let sinFecha = 0
+    for (const { risk } of riskByOrder.values()) {
+      if (risk === "vencido") vencidos++
+      else if (risk === "riesgo") enRiesgo++
+      else if (risk === "sin-fecha") sinFecha++
+    }
+    return { vencidos, enRiesgo, sinFecha }
+  }, [riskByOrder])
+
   const grouped = useMemo(() => {
     const map: Record<Phase, OrdenProduccion[]> = {
       Programada: [],
@@ -241,6 +282,53 @@ export function ProductionTrackingDashboard({
 
   return (
     <div className="space-y-4">
+      {/* Alerta de pedidos vencidos o próximos a vencer */}
+      <DeadlineAlertBanner
+        items={filtered.map((o) => ({
+          folio: o.folio,
+          fecha_cancelacion: o.fecha_cancelacion,
+          risk: riskByOrder.get(o.folio)?.risk,
+          detalle: o.modelo,
+        }))}
+      />
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard
+          label="Órdenes activas"
+          value={filtered.length}
+          icon={<ClipboardPen className="size-3.5" />}
+          iconBg="bg-violet-50 ring-violet-200"
+          iconColor="text-violet-600"
+          valueColor="text-foreground"
+        />
+        <KpiCard
+          label="Vencidos"
+          value={riskSummary.vencidos}
+          icon={<AlertTriangle className="size-3.5" />}
+          iconBg="bg-rose-50 ring-rose-200"
+          iconColor="text-rose-600"
+          valueColor={riskSummary.vencidos > 0 ? "text-rose-600" : "text-foreground"}
+        />
+        <KpiCard
+          label="Próximos a vencer"
+          value={riskSummary.enRiesgo}
+          icon={<Clock className="size-3.5" />}
+          iconBg="bg-amber-50 ring-amber-200"
+          iconColor="text-amber-600"
+          valueColor={riskSummary.enRiesgo > 0 ? "text-amber-600" : "text-foreground"}
+          hint="Entrega en 7 días o menos"
+        />
+        <KpiCard
+          label="Sin fecha de entrega"
+          value={riskSummary.sinFecha}
+          icon={<CalendarIcon className="size-3.5" />}
+          iconBg="bg-slate-50 ring-slate-200"
+          iconColor="text-slate-500"
+          valueColor="text-foreground"
+        />
+      </div>
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative flex-1 min-w-[220px] max-w-sm">
@@ -271,6 +359,7 @@ export function ProductionTrackingDashboard({
               <span className="ml-1 text-muted-foreground/60">de {orders.length}</span>
             )}
           </span>
+          <RiesgoInfoDialog />
           <Button
             variant="outline"
             size="sm"
@@ -295,7 +384,12 @@ export function ProductionTrackingDashboard({
         </TabsList>
 
         <TabsContent value="tabla" className="mt-4">
-          <TableView orders={filtered} loading={loading} onUpdate={handleOpen} />
+          <TableView
+            orders={filtered}
+            loading={loading}
+            onUpdate={handleOpen}
+            riskByOrder={riskByOrder}
+          />
         </TabsContent>
 
         <TabsContent value="kanban" className="mt-4">
@@ -322,27 +416,30 @@ function TableView({
   orders,
   loading,
   onUpdate,
+  riskByOrder,
 }: {
   orders: OrdenProduccion[]
   loading: boolean
   onUpdate: (o: OrdenProduccion) => void
+  riskByOrder: Map<string, { risk: Risk; days: number | null }>
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/50 hover:bg-muted/50">
-            <TableHead className="font-semibold">#ID</TableHead>
+            <TableHead className="hidden font-semibold xl:table-cell">#ID</TableHead>
             <TableHead className="font-semibold">Folio</TableHead>
             <TableHead className="font-semibold">F. Entrega</TableHead>
-            <TableHead className="font-semibold">Contra Muestra</TableHead>
+            <TableHead className="font-semibold">Riesgo</TableHead>
+            <TableHead className="hidden font-semibold xl:table-cell">Contra Muestra</TableHead>
             <TableHead className="font-semibold">Maquilero</TableHead>
-            <TableHead className="font-semibold">Cliente</TableHead>
+            <TableHead className="hidden font-semibold lg:table-cell">Cliente</TableHead>
             <TableHead className="font-semibold">Modelo</TableHead>
             <TableHead className="text-right font-semibold">Piezas</TableHead>
             <TableHead className="font-semibold">Fase Actual</TableHead>
             <TableHead className="font-semibold">Última Revisión</TableHead>
-            <TableHead className="font-semibold">Insumos</TableHead>
+            <TableHead className="hidden font-semibold lg:table-cell">Insumos</TableHead>
             <TableHead className="text-center font-semibold">Calidad</TableHead>
             <TableHead className="text-right font-semibold">Acciones</TableHead>
           </TableRow>
@@ -351,7 +448,7 @@ function TableView({
           {loading && orders.length === 0 ? (
             Array.from({ length: 5 }).map((_, i) => (
               <TableRow key={i}>
-                {Array.from({ length: 13 }).map((__, j) => (
+                {Array.from({ length: 14 }).map((__, j) => (
                   <TableCell key={j}>
                     <Skeleton className="h-4 w-full" />
                   </TableCell>
@@ -361,7 +458,7 @@ function TableView({
           ) : orders.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={13}
+                colSpan={14}
                 className="h-28 text-center text-sm text-muted-foreground"
               >
                 No hay órdenes en seguimiento.
@@ -370,22 +467,28 @@ function TableView({
           ) : (
             orders.map((o) => (
               <TableRow key={String(o.id)} className="group text-sm">
-                <TableCell className="font-mono text-xs text-muted-foreground tabular-nums">
+                <TableCell className="hidden font-mono text-xs text-muted-foreground tabular-nums xl:table-cell">
                   {o.id ?? "—"}
                 </TableCell>
-                <TableCell className="font-mono font-semibold text-foreground">
-                  {o.folio}
+                <TableCell>
+                  <FolioLink folio={o.folio} />
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                   {fmtShort(o.fecha_cancelacion)}
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                <TableCell className="whitespace-nowrap">
+                  {(() => {
+                    const r = riskByOrder.get(o.folio)
+                    return r ? <RiskBadge risk={r.risk} days={r.days} /> : null
+                  })()}
+                </TableCell>
+                <TableCell className="hidden whitespace-nowrap text-xs text-muted-foreground xl:table-cell">
                   {fmtShort(o.fecha_contra_muestra)}
                 </TableCell>
                 <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
                   {o.maquilero ?? "—"}
                 </TableCell>
-                <TableCell className="max-w-[180px] truncate text-muted-foreground">
+                <TableCell className="hidden max-w-[180px] truncate text-muted-foreground lg:table-cell">
                   {o.cliente ?? "—"}
                 </TableCell>
                 <TableCell className="max-w-[180px] truncate text-muted-foreground">
@@ -402,8 +505,20 @@ function TableView({
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                   {fmtDateTime(o.fecha_ultima_revision)}
+                  {o.fecha_ultima_revision && (
+                    <span
+                      className={cn(
+                        "ml-1.5 font-medium",
+                        (daysUntil(o.fecha_ultima_revision) ?? 0) <= -7
+                          ? "text-amber-600"
+                          : "text-muted-foreground/60",
+                      )}
+                    >
+                      · {relativeDays(o.fecha_ultima_revision)}
+                    </span>
+                  )}
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden lg:table-cell">
                   {o.habilitaciones_insumos ? (
                     <Badge
                       variant="outline"
@@ -473,9 +588,11 @@ function KanbanView({
         return (
           <div
             key={phase}
-            className="flex min-h-[360px] flex-col rounded-xl border border-border bg-white/70"
+            // Altura acotada: la columna no crece con el número de órdenes,
+            // el scroll ocurre dentro de cada lista.
+            className="flex h-[min(70vh,640px)] min-h-[360px] flex-col rounded-xl border border-border bg-white/70"
           >
-            <div className="flex items-center justify-between rounded-t-xl border-b border-border bg-white/80 px-3 py-2 backdrop-blur-sm">
+            <div className="flex shrink-0 items-center justify-between rounded-t-xl border-b border-border bg-white/80 px-3 py-2 backdrop-blur-sm">
               <span className="text-xs font-semibold text-foreground">{phase}</span>
               <Badge
                 variant="outline"
@@ -484,7 +601,7 @@ function KanbanView({
                 {items.length}
               </Badge>
             </div>
-            <div className="flex flex-1 flex-col gap-2 p-2">
+            <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
               {loading && items.length === 0 ? (
                 <>
                   <Skeleton className="h-[72px] w-full rounded-lg" />
@@ -577,7 +694,12 @@ function UpdateProgressSheet({
       .select("etapa")
       .eq("idempresa", IDEMPRESA)
       .eq("folio", order.folio)
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          // No bloquea el sheet: solo faltarán los contadores de fotos
+          toast.warning("No se pudo cargar el conteo de fotos", { description: error.message })
+          return
+        }
         if (!data) return
         const counts: Record<string, number> = {}
         ;(data as { etapa: string }[]).forEach((r) => {
@@ -611,6 +733,18 @@ function UpdateProgressSheet({
 
   const detectedPhase = useMemo(() => detectPhase(form), [form])
 
+  // ¿La fase detectada retrocede respecto a la fase actual de la orden?
+  // (pasa cuando se limpia una fecha intermedia)
+  const PHASE_ORDER = ["Programada", "S1", "S2", "S3", "S4", "S5", "S6", "S7"]
+  const phaseRegressed = useMemo(() => {
+    const current = order?.fase_actual
+    if (!current) return false
+    const currentIdx = PHASE_ORDER.indexOf(current)
+    const detectedIdx = PHASE_ORDER.indexOf(detectedPhase)
+    return currentIdx >= 0 && detectedIdx >= 0 && detectedIdx < currentIdx
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.fase_actual, detectedPhase])
+
   const STAGE_KEYS = [
     "fecha_s1",
     "fecha_s2",
@@ -621,8 +755,35 @@ function UpdateProgressSheet({
     "fecha_s7",
   ] as const
 
+  /** ¿El formulario difiere del snapshot cargado de la orden? */
+  const isDirty = useMemo(() => {
+    if (!order) return false
+    const norm = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : null)
+    for (const k of STAGE_KEYS) {
+      if (toISODate(form[k]) !== norm(order[k])) return true
+    }
+    return (
+      (form.calidad.trim() === "" ? null : Number(form.calidad)) !== (order.calidad ?? null) ||
+      (form.tipo_revision || null) !== (order.tipo_revision ?? null) ||
+      (form.habilitaciones_insumos || null) !== (order.habilitaciones_insumos ?? null) ||
+      (form.comentarios_generales || null) !== (order.comentarios_generales ?? null) ||
+      toISODate(form.fecha_limite_confirmacion) !== norm(order.fecha_limite_confirmacion) ||
+      toISODate(form.fecha_contra_muestra) !== norm(order.fecha_contra_muestra)
+    )
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, order])
+
   const handleSubmit = async () => {
     if (!order?.id) return
+
+    // Sin cambios reales: cerrar sin escribir para no pisar
+    // fecha_ultima_revision con una revisión que no ocurrió
+    if (!isDirty) {
+      toast.info("Sin cambios que guardar.")
+      onOpenChange(false)
+      return
+    }
+
     const supabase = getSupabase()
     if (!supabase) {
       toast.error("Supabase no configurado")
@@ -730,6 +891,17 @@ function UpdateProgressSheet({
                   Calculada automáticamente
                 </span>
               </div>
+
+              {/* Aviso de regresión de fase */}
+              {phaseRegressed && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/80 px-4 py-2.5">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                  <p className="text-xs text-amber-800">
+                    <strong>La fase retrocederá de {order?.fase_actual} a {detectedPhase}</strong>{" "}
+                    porque se limpió una fecha de etapa. Verifica que sea intencional antes de guardar.
+                  </p>
+                </div>
+              )}
 
               {/* Section A: Fechas de Etapas */}
               <div className="space-y-3">

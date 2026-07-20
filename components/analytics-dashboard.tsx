@@ -2,14 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react"
 import {
-  AlertTriangle,
   CalendarIcon,
   Camera,
   Check,
   CheckCircle2,
   ChevronsUpDown,
   Circle,
-  Clock,
+  Download,
   History,
   LayoutGrid,
   List,
@@ -17,11 +16,24 @@ import {
   Users,
   X,
 } from "lucide-react"
+import * as XLSX from "xlsx"
 import { format } from "date-fns"
 import { es } from "date-fns/locale"
 import { toast } from "sonner"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
-import type { OrdenProduccion } from "@/lib/types"
+import type { SeguimientoRow } from "@/lib/types"
+import {
+  computeProgress,
+  computeRisk,
+  daysUntil,
+  riskFromServer,
+  type Risk,
+} from "@/lib/risk"
+import { RiskBadge } from "@/components/risk-badge"
+import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
+import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
+import { FolioLink } from "@/components/folio-detail-drawer"
+import { RiesgoInfoDialog } from "@/components/riesgo-info-dialog"
 import { cn } from "@/lib/utils"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -65,83 +77,69 @@ function formatDeliveryDate(value: string | null | undefined): string {
   return format(d, "dd MMM yyyy", { locale: es })
 }
 
-type Risk = "vencido" | "riesgo" | "a-tiempo" | "sin-fecha"
-
-type EnrichedOrder = OrdenProduccion & {
+/** Fila de la vista integrada, enriquecida con los derivados de riesgo/avance. */
+type EnrichedOrder = SeguimientoRow & {
   __progress: number
   __completedPhases: number
   __risk: Risk
   __daysToDeadline: number | null
 }
 
-const PHASE_FIELDS: (keyof OrdenProduccion)[] = [
-  "fecha_s1",
-  "fecha_s2",
-  "fecha_s3",
-  "fecha_s4",
-  "fecha_s5",
-  "fecha_s6",
-  "fecha_s7",
-]
+/** Estado de una etapa del pipeline (Diseño / Corte). */
+type StageState = "hecho" | "programado" | "pendiente" | "na"
 
-function computeProgress(o: OrdenProduccion): { progress: number; count: number } {
-  if ((o.fase_actual || "").toLowerCase() === "por programar") {
-    return { progress: 0, count: 0 }
+function StageCell({ state, fecha }: { state: StageState; fecha: string | null }) {
+  if (state === "na") {
+    return <span className="text-xs italic text-muted-foreground/50">N/A</span>
   }
-  let count = 0
-  for (const f of PHASE_FIELDS) {
-    if (o[f]) count++
+  if (state === "pendiente") {
+    return <span className="text-xs text-muted-foreground/60">—</span>
   }
-  return { progress: Math.round((count / 7) * 100), count }
-}
-
-function computeRisk(fechaCancel: string | null | undefined, progress: number): {
-  risk: Risk
-  days: number | null
-} {
-  if (progress >= 100) return { risk: "a-tiempo", days: 0 }
-  if (!fechaCancel) return { risk: "sin-fecha", days: null }
-  const deadline = new Date(fechaCancel)
-  if (Number.isNaN(deadline.getTime())) return { risk: "sin-fecha", days: null }
-  const now = new Date()
-  const ms = deadline.getTime() - now.setHours(0, 0, 0, 0)
-  const days = Math.floor(ms / (1000 * 60 * 60 * 24))
-  if (days < 0) return { risk: "vencido", days }
-  if (days <= 7) return { risk: "riesgo", days }
-  return { risk: "a-tiempo", days }
-}
-
-function RiskBadge({ risk, days }: { risk: Risk; days: number | null }) {
-  const config: Record<Risk, { label: string; className: string; icon: typeof AlertTriangle }> = {
-    vencido: {
-      label: days !== null ? `Vencido · ${Math.abs(days)}d` : "Vencido",
-      className: "border-rose-300 bg-rose-50 text-rose-700",
-      icon: AlertTriangle,
-    },
-    riesgo: {
-      label: days !== null ? `En Riesgo · ${days}d` : "En Riesgo",
-      className: "border-amber-300 bg-amber-50 text-amber-800",
-      icon: Clock,
-    },
-    "a-tiempo": {
-      label: days !== null ? `A Tiempo · ${days}d` : "A Tiempo",
-      className: "border-emerald-300 bg-emerald-50 text-emerald-700",
-      icon: CheckCircle2,
-    },
-    "sin-fecha": {
-      label: "Sin Fecha",
-      className: "border-slate-300 bg-slate-100 text-slate-600",
-      icon: Circle,
-    },
-  }
-  const c = config[risk]
-  const Icon = c.icon
   return (
-    <Badge variant="outline" className={cn("gap-1.5 font-medium", c.className)}>
-      <Icon className="size-3" />
-      {c.label}
-    </Badge>
+    <span className="flex items-center gap-1.5 text-xs tabular-nums">
+      {state === "hecho" ? (
+        <CheckCircle2 className="size-3 shrink-0 text-emerald-600" />
+      ) : (
+        <Circle className="size-3 shrink-0 text-slate-400" />
+      )}
+      {formatDeliveryDate(fecha)}
+    </span>
   )
+}
+
+/** Píldora compacta de etapa, para la vista de tarjetas. */
+function StagePill({ label, state }: { label: string; state: StageState }) {
+  const cls: Record<StageState, string> = {
+    hecho: "border-emerald-300 bg-emerald-50 text-emerald-700",
+    programado: "border-sky-300 bg-sky-50 text-sky-700",
+    pendiente: "border-slate-200 bg-slate-50 text-slate-400",
+    na: "border-slate-200 bg-slate-50 text-slate-400 line-through",
+  }
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium",
+        cls[state],
+      )}
+    >
+      {state === "hecho" && <Check className="size-2.5" />}
+      {label}
+    </span>
+  )
+}
+
+function disenoState(o: SeguimientoRow): StageState {
+  if (o.no_requiere_diseno) return "na"
+  if (o.cumplimiento_diseno) return "hecho"
+  if (o.fecha_diseno) return "programado"
+  return "pendiente"
+}
+
+function corteState(o: SeguimientoRow): StageState {
+  if (o.no_requiere_corte) return "na"
+  if (o.cumplimiento_corte === "Si") return "hecho"
+  if (o.fecha_corte) return "programado"
+  return "pendiente"
 }
 
 function ProgressBar({ value }: { value: number }) {
@@ -204,7 +202,7 @@ function fmtDateTime(d: string | null | undefined): string {
 }
 
 export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }) {
-  const [orders, setOrders] = useState<OrdenProduccion[]>([])
+  const [orders, setOrders] = useState<SeguimientoRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const [search, setSearch] = useState("")
@@ -232,16 +230,16 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
       }
       try {
         const ordersRes = await supabase
-          .from("ordenes_produccion")
+          .from("vw_seguimiento_integrado")
           .select("*")
           .eq("idempresa", IDEMPRESA)
           .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
         if (cancelled) return
         if (ordersRes.error) throw ordersRes.error
-        setOrders((ordersRes.data || []) as OrdenProduccion[])
+        setOrders((ordersRes.data || []) as SeguimientoRow[])
       } catch (err) {
         if (!cancelled) {
-          console.log("[v0] Analytics load error:", err)
+          console.log("Analytics load error:", err)
           toast.error("Error al cargar datos", {
             description: err instanceof Error ? err.message : "Verifica tu conexión a Supabase.",
           })
@@ -258,13 +256,17 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
   const enriched: EnrichedOrder[] = useMemo(() => {
     return orders.map((o) => {
       const { progress, count } = computeProgress(o)
-      const { risk, days } = computeRisk(o.fecha_cancelacion, progress)
+      // La vista ya calcula riesgo_entrega con la regla por fase; si viene
+      // vacío (orden sin fase reconocida) se cae al cálculo por días.
+      const risk = o.riesgo_entrega
+        ? riskFromServer(o.riesgo_entrega)
+        : computeRisk(o.fecha_cancelacion, progress).risk
       return {
         ...o,
         __progress: progress,
         __completedPhases: count,
         __risk: risk,
-        __daysToDeadline: days,
+        __daysToDeadline: o.dias_restantes ?? daysUntil(o.fecha_cancelacion),
       }
     })
   }, [orders])
@@ -330,6 +332,43 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
     setFechaCancel(undefined)
   }
 
+  /** Exporta las órdenes filtradas (con el pipeline completo) a Excel. */
+  const exportToExcel = () => {
+    const RISK_LABEL: Record<Risk, string> = {
+      vencido: "Vencido",
+      riesgo: "En Riesgo",
+      "a-tiempo": "A Tiempo",
+      "sin-fecha": "Sin Fecha",
+    }
+    const rows = filtered.map((o) => ({
+      Folio: o.folio,
+      Modelo: o.modelo ?? "",
+      Compradora: o.cliente ?? "",
+      Familia: o.familia ?? "",
+      Piezas: o.piezas ?? "",
+      "Fecha Entrega": o.fecha_cancelacion ?? "",
+      Riesgo: RISK_LABEL[o.__risk],
+      "Días Restantes": o.__daysToDeadline ?? "",
+      "Diseño Fecha": o.fecha_diseno ?? "",
+      "Diseñadora": o.nombre_disenador ?? "",
+      "Diseño Cumplido": o.no_requiere_diseno ? "N/A" : o.cumplimiento_diseno ? "Sí" : "No",
+      "Corte Fecha": o.fecha_corte ?? "",
+      Cortador: o.nombre_cortador ?? "",
+      "Corte Cumplido": o.no_requiere_corte ? "N/A" : o.cumplimiento_corte === "Si" ? "Sí" : "No",
+      Fase: o.fase_actual,
+      "Avance %": o.__progress,
+      S1: o.fecha_s1 ?? "", S2: o.fecha_s2 ?? "", S3: o.fecha_s3 ?? "",
+      S4: o.fecha_s4 ?? "", S5: o.fecha_s5 ?? "", S6: o.fecha_s6 ?? "", S7: o.fecha_s7 ?? "",
+      Maquilero: o.maquilero_nombre ?? "",
+      Calidad: o.calidad ?? "",
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Seguimiento")
+    XLSX.writeFile(wb, `seguimiento_ordenes_${format(new Date(), "yyyy-MM-dd")}.xlsx`)
+    toast.success(`${rows.length} órdenes exportadas`)
+  }
+
   const hasFilters =
     search.length > 0 ||
     selectedClientes.length > 0 ||
@@ -338,6 +377,16 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
 
   return (
     <div className="space-y-6">
+      {/* Alerta de pedidos vencidos o próximos a vencer */}
+      <DeadlineAlertBanner
+        items={filtered.map((o) => ({
+          folio: o.folio,
+          fecha_cancelacion: o.fecha_cancelacion,
+          risk: o.__risk,
+          detalle: o.modelo,
+        }))}
+      />
+
       {/* Summary Strip */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <SummaryCard label="Total" value={summary.total} accent="violet" />
@@ -437,6 +486,20 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
               <span className="hidden sm:inline">Lista</span>
             </button>
           </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportToExcel}
+            disabled={filtered.length === 0}
+            className="h-9 gap-1.5 bg-white"
+            title="Exportar las órdenes filtradas a Excel"
+          >
+            <Download className="size-4" />
+            <span className="hidden sm:inline">Exportar</span>
+          </Button>
+
+          <RiesgoInfoDialog />
         </div>
       </div>
 
@@ -711,7 +774,7 @@ function OrderCard({ order, onHistory, onFotos }: { order: EnrichedOrder; onHist
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Folio
             </p>
-            <p className="truncate font-mono text-base font-bold text-foreground">{order.folio}</p>
+            <FolioLink folio={order.folio} className="truncate text-base" />
           </div>
           <RiskBadge risk={order.__risk} days={order.__daysToDeadline} />
         </div>
@@ -729,6 +792,20 @@ function OrderCard({ order, onHistory, onFotos }: { order: EnrichedOrder; onHist
           <span className="font-semibold text-foreground">
             {formatDeliveryDate(order.fecha_cancelacion)}
           </span>
+        </div>
+
+        {/* Flujo Diseño → Corte → Maquila */}
+        <div className="flex items-center gap-1 text-[11px]">
+          <StagePill label="Diseño" state={disenoState(order)} />
+          <span className="text-muted-foreground/40">›</span>
+          <StagePill label="Corte" state={corteState(order)} />
+          <span className="text-muted-foreground/40">›</span>
+          <StagePill
+            label="Maquila"
+            state={
+              order.fecha_s7 ? "hecho" : order.fecha_s1 ? "programado" : "pendiente"
+            }
+          />
         </div>
 
         <div className="mt-auto space-y-2">
@@ -779,39 +856,82 @@ function OrdersListView({
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wider text-muted-foreground">
+            {/* Fila de grupos: marca las tres etapas del flujo */}
+            <tr className="border-b border-border/40">
+              <th colSpan={5} className="px-4 pt-3 pb-1 text-left" />
+              <th
+                colSpan={2}
+                className="border-l border-border/60 px-4 pt-3 pb-1 text-left text-[10px] font-bold text-sky-700"
+              >
+                1 · Diseño
+              </th>
+              <th
+                colSpan={2}
+                className="border-l border-border/60 px-4 pt-3 pb-1 text-left text-[10px] font-bold text-amber-700"
+              >
+                2 · Corte
+              </th>
+              <th
+                colSpan={2}
+                className="border-l border-border/60 px-4 pt-3 pb-1 text-left text-[10px] font-bold text-violet-700"
+              >
+                3 · Maquila
+              </th>
+              <th className="px-4 pt-3 pb-1" />
+            </tr>
             <tr>
               <th className="px-4 py-3 text-left font-semibold">Folio</th>
               <th className="px-4 py-3 text-left font-semibold">Modelo</th>
               <th className="px-4 py-3 text-left font-semibold">Compradora</th>
-              <th className="px-4 py-3 text-left font-semibold">Fecha de Entrega</th>
-              <th className="px-4 py-3 text-left font-semibold">Avance</th>
+              <th className="px-4 py-3 text-left font-semibold">Entrega</th>
               <th className="px-4 py-3 text-left font-semibold">Riesgo</th>
-              <th className="px-4 py-3 text-left font-semibold">Fase</th>
+              <th className="border-l border-border/60 px-4 py-3 text-left font-semibold">Fecha</th>
+              <th className="px-4 py-3 text-left font-semibold">Diseñador</th>
+              <th className="border-l border-border/60 px-4 py-3 text-left font-semibold">Fecha</th>
+              <th className="px-4 py-3 text-left font-semibold">Cortador</th>
+              <th className="border-l border-border/60 px-4 py-3 text-left font-semibold">Fase</th>
+              <th className="px-4 py-3 text-left font-semibold">Avance S1 → S7</th>
               <th className="px-4 py-3 text-right font-semibold">Acción</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/60">
             {orders.map((o) => {
+              const dis = disenoState(o)
+              const cor = corteState(o)
               return (
                 <tr key={String(o.id)} className="transition-colors hover:bg-slate-50/60">
-                  <td className="px-4 py-3 font-mono font-semibold text-foreground">{o.folio}</td>
+                  <td className="px-4 py-3"><FolioLink folio={o.folio} /></td>
                   <td className="px-4 py-3 text-foreground">{o.modelo || "—"}</td>
                   <td className="px-4 py-3 text-muted-foreground">{o.cliente || "—"}</td>
                   <td className="px-4 py-3 text-foreground">{formatDeliveryDate(o.fecha_cancelacion)}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <ProgressBar value={o.__progress} />
-                      <span className="w-9 shrink-0 text-right text-xs font-bold tabular-nums text-foreground">
-                        {o.__progress}%
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
                     <RiskBadge risk={o.__risk} days={o.__daysToDeadline} />
                   </td>
-                  <td className="px-4 py-3">
+
+                  {/* 1 · Diseño */}
+                  <td className="border-l border-border/60 px-4 py-3">
+                    <StageCell state={dis} fecha={o.fecha_diseno} />
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    {dis === "na" ? "—" : o.nombre_disenador || "Sin asignar"}
+                  </td>
+
+                  {/* 2 · Corte */}
+                  <td className="border-l border-border/60 px-4 py-3">
+                    <StageCell state={cor} fecha={o.fecha_corte} />
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    {cor === "na" ? "—" : o.nombre_cortador || "Sin asignar"}
+                  </td>
+
+                  {/* 3 · Maquila */}
+                  <td className="border-l border-border/60 px-4 py-3">
                     <PhaseBadge phase={o.fase_actual} />
                   </td>
+                  <td className="px-4 py-3">
+                    <PhaseBubbleTimeline row={o} />
+                  </td>
+
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button

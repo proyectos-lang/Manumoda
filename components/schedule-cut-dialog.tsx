@@ -64,6 +64,7 @@ type FormState = {
   idapoyo: string
   piezas_cortadas: string
   metros_utilizar: string
+  semana: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -80,6 +81,7 @@ const EMPTY_FORM: FormState = {
   idapoyo: "",
   piezas_cortadas: "",
   metros_utilizar: "",
+  semana: "",
 }
 
 // ─── Dark-theme styling constants ─────────────────────────────────────────────
@@ -191,6 +193,7 @@ export function ScheduleCutDialog({
   const [tendidosOpts, setTendidosOpts] = useState<CatTendidosCorte[]>([])
   const [complementos, setComplementos] = useState<CatComplementoCorte[]>([])
   const [cortadores, setCortadores] = useState<Cortador[]>([])
+  const [cargaCortadores, setCargaCortadores] = useState<Map<number, number>>(new Map())
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [telaPopoverOpen, setTelaPopoverOpen] = useState(false)
   const [editRegistroId, setEditRegistroId] = useState<number | null>(null)
@@ -217,14 +220,20 @@ export function ScheduleCutDialog({
       supabase.from("cat_tendidos_corte").select("id, cantidad, multiplicador").eq("idempresa", IDEMPRESA).order("cantidad"),
       supabase.from("cat_complementos_corte").select("id, nombre, clave, multiplicador").eq("idempresa", IDEMPRESA).order("id"),
       supabase.from("cortadores").select("id, nombre").eq("activo", true).order("nombre"),
+      // Carga de horas plan de corte de la semana actual, por cortador
+      supabase
+        .from("corte_programacion")
+        .select("idcortador, idapoyo, horas_plan_corte")
+        .eq("idempresa", IDEMPRESA)
+        .eq("semana", getISOWeek(new Date())),
       supabase.from("corte_programacion")
-        .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar")
+        .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar, semana")
         .eq("idempresa", IDEMPRESA)
         .eq("folio", orden?.folio ?? "")
         .order("id", { ascending: false })
         .limit(1)
         .maybeSingle(),
-    ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes, cortRes, cpRes]) => {
+    ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes, cortRes, cargaRes, cpRes]) => {
       const familiasList = (fRes.data as CatFamiliaCorte[]) ?? []
       setFamilias(familiasList)
       setCategorias((catRes.data as CatCategoriaCorte[]) ?? [])
@@ -234,12 +243,21 @@ export function ScheduleCutDialog({
       setComplementos((compRes.data as CatComplementoCorte[]) ?? [])
       setCortadores((cortRes.data as Cortador[]) ?? [])
 
+      // Mapa de carga semanal por cortador (titular o apoyo cuentan igual)
+      const carga = new Map<number, number>()
+      for (const r of ((cargaRes.data ?? []) as { idcortador: number | null; idapoyo: number | null; horas_plan_corte: number | null }[])) {
+        const h = r.horas_plan_corte ?? 0
+        if (r.idcortador != null) carga.set(r.idcortador, (carga.get(r.idcortador) ?? 0) + h)
+        if (r.idapoyo != null) carga.set(r.idapoyo, (carga.get(r.idapoyo) ?? 0) + h)
+      }
+      setCargaCortadores(carga)
+
       type ExistingCorte = {
         id: number; idfamilia_corte: number | null; categoria_corte: string | null
         categoria_tela: string | null; trazos: number | null; tendidos: number | null
         combinacion: boolean | null; comp_entretela: boolean | null; comp_poquetin: boolean | null
         comp_forro: boolean | null; idcortador: number | null; idapoyo: number | null
-        piezas_cortadas: number | null; metros_utilizar: number | null
+        piezas_cortadas: number | null; metros_utilizar: number | null; semana: number | null
       }
       const existing = cpRes.data as ExistingCorte | null
       if (existing) {
@@ -258,12 +276,17 @@ export function ScheduleCutDialog({
           idapoyo: existing.idapoyo ? String(existing.idapoyo) : "__none__",
           piezas_cortadas: existing.piezas_cortadas ? String(existing.piezas_cortadas) : "",
           metros_utilizar: existing.metros_utilizar ? String(existing.metros_utilizar) : "",
+          semana: existing.semana ? String(existing.semana) : String(getISOWeek(new Date())),
         })
       } else {
         const matched = familiasList.find(
           f => f.nombre.toUpperCase() === (orden?.familia ?? "").toUpperCase()
         )
-        if (matched) setForm(prev => ({ ...prev, idfamilia: String(matched.id) }))
+        setForm(prev => ({
+          ...prev,
+          ...(matched ? { idfamilia: String(matched.id) } : {}),
+          semana: String(getISOWeek(new Date())),
+        }))
       }
       setLoading(false)
     })
@@ -313,66 +336,88 @@ export function ScheduleCutDialog({
     if (isNaN(trazosNum) || trazosNum < 1 || trazosNum > 5) { toast.error("Campo requerido", { description: "Ingresa los trazos (1–5)." }); return }
     const tendidosNum = parseInt(form.tendidos, 10)
     if (isNaN(tendidosNum) || tendidosNum < 1 || tendidosNum > 8) { toast.error("Campo requerido", { description: "Ingresa los tendidos (1–8)." }); return }
+    const semanaNum = parseInt(form.semana, 10)
+    if (isNaN(semanaNum) || semanaNum < 1 || semanaNum > 53) { toast.error("Semana inválida", { description: "Ingresa una semana entre 1 y 53." }); return }
+    const metrosNum = form.metros_utilizar ? parseFloat(form.metros_utilizar) : null
+    if (metrosNum !== null && (isNaN(metrosNum) || metrosNum <= 0)) { toast.error("Metros inválidos", { description: "Los metros de tela deben ser mayores a 0." }); return }
+    const piezasNum = form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null
+    if (piezasNum !== null && (isNaN(piezasNum) || piezasNum <= 0)) { toast.error("Piezas inválidas", { description: "Las piezas cortadas deben ser mayores a 0." }); return }
     if (horasCalculadas === null) { toast.error("Error de cálculo", { description: "Verifica los valores ingresados." }); return }
 
     const supabase = getSupabase()
     if (!supabase) return
 
     setSaving(true)
-    const semana = getISOWeek(new Date())
-
-    const payload = {
-      idfamilia_corte: Number(form.idfamilia),
-      categoria_corte: form.categoriaCorte,
-      categoria_tela: form.categoriaTela,
-      trazos: trazosNum,
-      tendidos: tendidosNum,
-      combinacion: form.compCombinacion,
-      comp_entretela: form.compEntretela,
-      comp_poquetin: form.compPoquetin,
-      comp_forro: form.compForro,
-      horas_plan_corte: horasCalculadas,
-      idcortador: form.idcortador && form.idcortador !== "__none__" ? Number(form.idcortador) : null,
-      idapoyo: form.idapoyo && form.idapoyo !== "__none__" ? Number(form.idapoyo) : null,
-      piezas_cortadas: form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null,
-      metros_utilizar: form.metros_utilizar ? parseFloat(form.metros_utilizar) : null,
-    }
-
-    if (editRegistroId) {
-      const { error } = await supabase
-        .from("corte_programacion")
-        .update(payload)
-        .eq("id", editRegistroId)
-      setSaving(false)
-      if (error) { toast.error("No se pudo actualizar el corte", { description: error.message }); return }
-      toast.success("Programación de Corte actualizada", {
-        description: `Folio ${orden.folio} · ${horasCalculadas} h`,
-      })
-    } else {
-      const { error: insertError } = await supabase
-        .from("corte_programacion")
-        .insert({ idempresa: IDEMPRESA, folio: orden.folio, semana, ...payload })
-      if (insertError) {
-        toast.error("No se pudo programar el corte", { description: insertError.message })
-        setSaving(false)
-        return
+    try {
+      const payload = {
+        idfamilia_corte: Number(form.idfamilia),
+        categoria_corte: form.categoriaCorte,
+        categoria_tela: form.categoriaTela,
+        trazos: trazosNum,
+        tendidos: tendidosNum,
+        combinacion: form.compCombinacion,
+        comp_entretela: form.compEntretela,
+        comp_poquetin: form.compPoquetin,
+        comp_forro: form.compForro,
+        horas_plan_corte: horasCalculadas,
+        idcortador: form.idcortador && form.idcortador !== "__none__" ? Number(form.idcortador) : null,
+        idapoyo: form.idapoyo && form.idapoyo !== "__none__" ? Number(form.idapoyo) : null,
+        piezas_cortadas: piezasNum,
+        metros_utilizar: metrosNum,
+        semana: semanaNum,
       }
-      const { error: updateError } = await supabase
-        .from("ordenes_produccion")
-        .update({ corte_programado: true })
-        .eq("id", orden.id)
-        .eq("idempresa", IDEMPRESA)
-      setSaving(false)
-      if (updateError) {
-        toast.error("Corte insertado pero no se pudo actualizar la orden", { description: updateError.message })
-        return
+
+      if (editRegistroId) {
+        const { error } = await supabase
+          .from("corte_programacion")
+          .update(payload)
+          .eq("id", editRegistroId)
+          .eq("idempresa", IDEMPRESA)
+        if (error) { toast.error("No se pudo actualizar el corte", { description: error.message }); return }
+        toast.success("Programación de Corte actualizada", {
+          description: `Folio ${orden.folio} · Semana ${semanaNum} · ${horasCalculadas} h`,
+        })
+      } else {
+        const { data: insertedRow, error: insertError } = await supabase
+          .from("corte_programacion")
+          .insert({ idempresa: IDEMPRESA, folio: orden.folio, ...payload })
+          .select("id")
+          .single()
+        if (insertError) {
+          toast.error("No se pudo programar el corte", { description: insertError.message })
+          return
+        }
+        const { error: updateError } = await supabase
+          .from("ordenes_produccion")
+          .update({ corte_programado: true })
+          .eq("id", orden.id)
+          .eq("idempresa", IDEMPRESA)
+        if (updateError) {
+          // Rollback compensatorio: no dejar un registro de corte huérfano
+          // con la orden marcada como no-programada
+          await supabase
+            .from("corte_programacion")
+            .delete()
+            .eq("id", (insertedRow as { id: number }).id)
+            .eq("idempresa", IDEMPRESA)
+          toast.error("No se pudo programar el corte (la orden no se pudo actualizar)", {
+            description: updateError.message,
+          })
+          return
+        }
+        toast.success("Programación de Corte guardada", {
+          description: `Folio ${orden.folio} · Semana ${semanaNum} · ${horasCalculadas} h`,
+        })
       }
-      toast.success("Programación de Corte guardada", {
-        description: `Folio ${orden.folio} · Semana ${semana} · ${horasCalculadas} h`,
+      onOpenChange(false)
+      onSaved()
+    } catch (err) {
+      toast.error("Error inesperado al guardar el corte", {
+        description: err instanceof Error ? err.message : undefined,
       })
+    } finally {
+      setSaving(false)
     }
-    onOpenChange(false)
-    onSaved()
   }
 
   // Group families by grupo for the Select
@@ -607,20 +652,35 @@ export function ScheduleCutDialog({
               </div>
             </FormSection>
 
-            {/* Metros a Utilizar */}
-            <FormSection title="Metros a Utilizar">
-              <div className="space-y-1.5">
-                <DLabel htmlFor="metros_utilizar">Metros de tela</DLabel>
-                <Input
-                  id="metros_utilizar"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.metros_utilizar}
-                  onChange={(e) => setForm(f => ({ ...f, metros_utilizar: e.target.value }))}
-                  className={DARK_INPUT}
-                />
+            {/* Metros y Semana */}
+            <FormSection title="Metros y Semana">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <DLabel htmlFor="metros_utilizar">Metros de tela</DLabel>
+                  <Input
+                    id="metros_utilizar"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={form.metros_utilizar}
+                    onChange={(e) => setForm(f => ({ ...f, metros_utilizar: e.target.value }))}
+                    className={DARK_INPUT}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <DLabel htmlFor="semana_corte">Semana</DLabel>
+                  <Input
+                    id="semana_corte"
+                    type="number"
+                    min="1"
+                    max="53"
+                    step="1"
+                    value={form.semana}
+                    onChange={(e) => setForm(f => ({ ...f, semana: e.target.value }))}
+                    className={DARK_INPUT}
+                  />
+                </div>
               </div>
             </FormSection>
 
@@ -686,7 +746,14 @@ export function ScheduleCutDialog({
                     <SelectContent>
                       <SelectItem value="__none__">Sin asignar</SelectItem>
                       {cortadores.map(c => (
-                        <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          <span className="flex w-full items-center justify-between gap-3">
+                            {c.nombre}
+                            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+                              {(cargaCortadores.get(c.id) ?? 0).toFixed(1)}h sem.
+                            </span>
+                          </span>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -704,7 +771,14 @@ export function ScheduleCutDialog({
                     <SelectContent>
                       <SelectItem value="__none__">Sin ayudante</SelectItem>
                       {cortadores.map(c => (
-                        <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          <span className="flex w-full items-center justify-between gap-3">
+                            {c.nombre}
+                            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+                              {(cargaCortadores.get(c.id) ?? 0).toFixed(1)}h sem.
+                            </span>
+                          </span>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

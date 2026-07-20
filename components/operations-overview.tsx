@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   RefreshCw,
   Activity,
+  Download,
   Layers,
   Package,
   AlertTriangle,
 } from "lucide-react"
+import * as XLSX from "xlsx"
 import {
   BarChart,
   Bar,
@@ -30,12 +32,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
+import { FolioLink } from "@/components/folio-detail-drawer"
 import {
   Table,
   TableBody,
@@ -66,6 +64,7 @@ type ResumenRow = {
   fecha_cancelacion: string | null
   fecha_limite_confirmacion: string | null
   fecha_contra_muestra: string | null
+  fecha_ultima_revision: string | null
   calidad: number | null
   familia: string | null
   fecha_s1: string | null
@@ -139,51 +138,6 @@ function isAtTiempo(r: string | null | undefined) {
   return r === "A Tiempo"
 }
 
-function MasterBubbleTimeline({ row }: { row: ResumenRow }) {
-  const phases: { key: keyof ResumenRow; label: string }[] = [
-    { key: "fecha_s1", label: "S1" },
-    { key: "fecha_s2", label: "S2" },
-    { key: "fecha_s3", label: "S3" },
-    { key: "fecha_s4", label: "S4" },
-    { key: "fecha_s5", label: "S5" },
-    { key: "fecha_s6", label: "S6" },
-    { key: "fecha_s7", label: "S7" },
-  ]
-
-  return (
-    <TooltipProvider delayDuration={100}>
-      <div className="flex items-center gap-1.5">
-        {phases.map((p) => {
-          const date = row[p.key] as string | null
-          const filled = Boolean(date)
-          return (
-            <Tooltip key={p.label}>
-              <TooltipTrigger asChild>
-                <span
-                  aria-label={`${p.label}: ${date ? formatDate(date) : "Pendiente"}`}
-                  className={cn(
-                    "flex size-5 items-center justify-center rounded-full text-[9px] font-semibold transition-transform hover:scale-110",
-                    filled
-                      ? "bg-emerald-500 text-white shadow-sm shadow-emerald-500/30"
-                      : "border border-slate-300 bg-slate-50 text-slate-400",
-                  )}
-                >
-                  {filled ? "" : ""}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                <p className="font-medium">
-                  {p.label}: {date ? formatDate(date) : "Pendiente"}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          )
-        })}
-      </div>
-    </TooltipProvider>
-  )
-}
-
 export function OperationsOverview({ configMissing }: { configMissing: boolean }) {
   const [rows, setRows] = useState<ResumenRow[]>([])
   const [calidadRows, setCalidadRows] = useState<{ maquilero: string | null; calidad: number }[]>([])
@@ -227,7 +181,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error al consultar vw_resumen_operacion"
       setError(msg)
-      console.log("[v0] OperationsOverview fetch error:", msg)
+      console.log("OperationsOverview fetch error:", msg)
     } finally {
       setLoading(false)
     }
@@ -275,6 +229,48 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       return { fase: g.label, dias: avg }
     })
   }, [filteredRows])
+
+  /** Exporta el master tracking (filas filtradas) a Excel. */
+  const exportMasterTracking = () => {
+    const rowsX = filteredRows.map((r) => ({
+      Folio: r.folio ?? "",
+      Modelo: r.modelo ?? "",
+      Familia: r.familia ?? "",
+      Maquilador: r.maquilero_nombre ?? "",
+      "Fecha Límite": r.fecha_limite_confirmacion ?? "",
+      "Contra Muestra": r.fecha_contra_muestra ?? "",
+      "Última Revisión": r.fecha_ultima_revision ? String(r.fecha_ultima_revision).slice(0, 10) : "",
+      "Fecha Entrega": r.fecha_cancelacion ?? "",
+      Riesgo: r.riesgo_entrega ?? "",
+      Fase: r.fase_actual ?? "",
+      S1: r.fecha_s1 ?? "", S2: r.fecha_s2 ?? "", S3: r.fecha_s3 ?? "",
+      S4: r.fecha_s4 ?? "", S5: r.fecha_s5 ?? "", S6: r.fecha_s6 ?? "", S7: r.fecha_s7 ?? "",
+      Calidad: r.calidad ?? "",
+      Piezas: r.piezas ?? "",
+    }))
+    const ws = XLSX.utils.json_to_sheet(rowsX)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Master Tracking")
+    XLSX.writeFile(wb, `master_tracking_${format(new Date(), "yyyy-MM-dd")}.xlsx`)
+  }
+
+  // Lectura accionable del cuello de botella: peor transición + órdenes ahí ahora
+  const bottleneckInsight = useMemo(() => {
+    const worst = bottleneckData.reduce(
+      (acc, d) => (d.dias > acc.dias ? d : acc),
+      { fase: "", dias: 0 },
+    )
+    if (!worst.fase || worst.dias === 0) return null
+    // La transición "S3-S4" retiene a las órdenes cuya fase actual es S3
+    const faseOrigen = worst.fase === "Prog-S1" ? null : worst.fase.split("-")[0]
+    const estancadas = faseOrigen
+      ? filteredRows.filter((r) => r.fase_actual === faseOrigen).length
+      : 0
+    const promedioGeneral =
+      bottleneckData.filter((d) => d.dias > 0).reduce((s, d) => s + d.dias, 0) /
+      Math.max(bottleneckData.filter((d) => d.dias > 0).length, 1)
+    return { ...worst, faseOrigen, estancadas, promedioGeneral }
+  }, [bottleneckData, filteredRows])
 
   // Phase load (count per fase_actual)
   const phaseLoadData = useMemo(() => {
@@ -504,6 +500,23 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           </span>
         )}
       </div>
+
+      {/* Insight del cuello de botella */}
+      {bottleneckInsight && bottleneckInsight.dias > bottleneckInsight.promedioGeneral * 1.5 && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 shadow-sm">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600 ring-1 ring-amber-200">
+            <AlertTriangle className="size-4" />
+          </div>
+          <p className="text-sm text-amber-900">
+            <strong>Cuello de botella en {bottleneckInsight.fase}:</strong> esa transición promedia{" "}
+            <strong>{bottleneckInsight.dias} días</strong> — {(bottleneckInsight.dias / bottleneckInsight.promedioGeneral).toFixed(1)}× el
+            promedio de las demás fases ({bottleneckInsight.promedioGeneral.toFixed(1)} d).
+            {bottleneckInsight.faseOrigen && bottleneckInsight.estancadas > 0 && (
+              <> Ahora mismo hay <strong>{bottleneckInsight.estancadas} orden(es)</strong> esperando en {bottleneckInsight.faseOrigen}.</>
+            )}
+          </p>
+        </div>
+      )}
 
       {/* SECTION 2: CHARTS */}
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
@@ -890,13 +903,26 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
             <div>
               <h3 className="text-sm font-semibold text-foreground">Master Tracking</h3>
               <p className="text-xs text-muted-foreground">
-                Folio · Maquilador · Riesgo · Avance S1–S7
+                Folio · Maquilador · Fechas clave · Riesgo · Avance S1–S7
               </p>
             </div>
           </div>
-          <Badge variant="outline" className="font-mono text-[11px]">
-            {rows.length} órdenes
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="font-mono text-[11px]">
+              {rows.length} órdenes
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportMasterTracking}
+              disabled={filteredRows.length === 0}
+              className="h-8 gap-1.5 bg-transparent text-xs"
+              title="Exportar a Excel las filas visibles"
+            >
+              <Download className="size-3.5" />
+              Exportar
+            </Button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -909,6 +935,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead>Maquilador</TableHead>
                 <TableHead className="w-[110px]">Fecha Límite</TableHead>
                 <TableHead className="w-[110px]">Contra Muestra</TableHead>
+                <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead className="w-[110px]">Fecha Entrega</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
@@ -926,6 +953,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-44" /></TableCell>
                     </TableRow>
@@ -935,7 +963,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-12 text-center">
+                  <TableCell colSpan={10} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -950,9 +978,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                   return (
                     <TableRow key={String(r.id)} className="hover:bg-muted/30">
                       <TableCell>
-                        <span className="font-mono text-xs font-semibold text-foreground">
-                          {r.folio ?? "—"}
-                        </span>
+                        <FolioLink folio={r.folio} className="text-xs" />
                       </TableCell>
                       <TableCell className="text-sm text-foreground">
                         {r.modelo ?? <span className="text-muted-foreground/60 italic">—</span>}
@@ -980,6 +1006,11 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
+                        {r.fecha_ultima_revision
+                          ? formatDate(r.fecha_ultima_revision)
+                          : <span className="text-muted-foreground/60 italic">—</span>}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-sm">
                         {r.fecha_cancelacion
                           ? formatDate(r.fecha_cancelacion)
                           : <span className="text-muted-foreground/60 italic">—</span>}
@@ -995,7 +1026,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                         </span>
                       </TableCell>
                       <TableCell>
-                        <MasterBubbleTimeline row={r} />
+                        <PhaseBubbleTimeline row={r} />
                       </TableCell>
                     </TableRow>
                   )

@@ -204,14 +204,13 @@ function CatalogTab({ table, singular, configMissing }: CatalogTabProps) {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            {loading ? (
-              <Skeleton className="h-4 w-24" />
-            ) : (
-              `${records.length} registro${records.length !== 1 ? "s" : ""}`
-            )}
-          </p>
+        <div className="text-sm text-muted-foreground">
+          {/* No usar <p>: el Skeleton es un <div> y anidarlo rompe la hidratación */}
+          {loading ? (
+            <Skeleton className="h-4 w-24" />
+          ) : (
+            `${records.length} registro${records.length !== 1 ? "s" : ""}`
+          )}
         </div>
         <Button
           size="sm"

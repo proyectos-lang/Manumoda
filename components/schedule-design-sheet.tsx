@@ -90,6 +90,9 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
   const [editRegistroId, setEditRegistroId] = useState<number | null>(null)
 
   const [disenadoras, setDisenadoras] = useState<Catalog[]>([])
+  // Horas plan asignadas en la semana actual, por colaboradora (capacidad: 45h)
+  const [cargaDisenadoras, setCargaDisenadoras] = useState<Map<number, number>>(new Map())
+  const [cargaCostureras, setCargaCostureras] = useState<Map<number, number>>(new Map())
   const [costureras, setCostureras] = useState<Catalog[]>([])
   const [prendas, setPrendas] = useState<PrendaCatalog[]>([])
   const [tiposDB, setTiposDB]       = useState<CatTipoDiseno[]>([])
@@ -163,7 +166,8 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
     const loadCatalogs = async () => {
       setLoadingCatalogs(true)
       try {
-        const [disRes, cosRes, prendaRes, tipoRes, catRes, adicRes] = await Promise.all([
+        const semanaActual = getISOWeek(new Date())
+        const [disRes, cosRes, prendaRes, tipoRes, catRes, adicRes, cargaRes] = await Promise.all([
           supabase
             .from("disenadoras")
             .select("id, nombre")
@@ -193,6 +197,12 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
             .select("id, clave, nombre, horas")
             .eq("idempresa", IDEMPRESA)
             .order("id"),
+          // Carga de trabajo de la semana actual (para mostrar en los selects)
+          supabase
+            .from("diseno_programacion")
+            .select("iddisenadora, idcosturera, horas_plan_diseno, horas_plan_costura")
+            .eq("idempresa", IDEMPRESA)
+            .eq("semana", semanaActual),
         ])
 
         if (cancelled) return
@@ -226,6 +236,23 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
           toast.error("Error al cargar adiciones de diseño", { description: adicRes.error.message })
         } else {
           setAdicionesDB((adicRes.data ?? []) as CatAdicionDiseno[])
+        }
+        if (!cargaRes.error) {
+          const dis = new Map<number, number>()
+          const cos = new Map<number, number>()
+          for (const r of (cargaRes.data ?? []) as {
+            iddisenadora: number | null
+            idcosturera: number | null
+            horas_plan_diseno: number | null
+            horas_plan_costura: number | null
+          }[]) {
+            if (r.iddisenadora != null)
+              dis.set(r.iddisenadora, (dis.get(r.iddisenadora) ?? 0) + (r.horas_plan_diseno ?? 0))
+            if (r.idcosturera != null)
+              cos.set(r.idcosturera, (cos.get(r.idcosturera) ?? 0) + (r.horas_plan_costura ?? 0))
+          }
+          setCargaDisenadoras(dis)
+          setCargaCostureras(cos)
         }
       } finally {
         if (!cancelled) setLoadingCatalogs(false)
@@ -318,6 +345,15 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
       toast.error("Campo requerido", { description: "Asigna una diseñadora." })
       return
     }
+    if (!form.idprenda) {
+      toast.error("Campo requerido", { description: "Selecciona la prenda — sin ella no se pueden calcular las horas plan." })
+      return
+    }
+    const semanaNum = form.semana ? Number(form.semana) : null
+    if (semanaNum !== null && (isNaN(semanaNum) || semanaNum < 1 || semanaNum > 53)) {
+      toast.error("Semana inválida", { description: "Ingresa una semana entre 1 y 53." })
+      return
+    }
 
     const supabase = getSupabase()
     if (!supabase) return
@@ -357,6 +393,7 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
           .from("diseno_programacion")
           .update(payload)
           .eq("id", editRegistroId)
+          .eq("idempresa", IDEMPRESA)
         if (error) {
           toast.error("No se pudo actualizar la programación", { description: error.message })
           return
@@ -364,9 +401,12 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
         toast.success("Programación de Diseño actualizada")
       } else {
         // Determinar el folio a usar: si ya existe un registro con el folio base,
-        // generar el siguiente sufijo disponible (ej. ABC.2, ABC.3…)
+        // generar el siguiente sufijo disponible (ej. ABC.2, ABC.3…).
+        // El índice único (script 011) convierte una colisión concurrente en
+        // error 23505 — se reintenta con el siguiente sufijo hasta 3 veces.
         const baseFolio = orden?.folio ?? null
         let insertFolio = baseFolio
+        let nextSuffix = 2
 
         if (baseFolio) {
           const { count: exactCount } = await supabase
@@ -382,16 +422,33 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
               .eq("idempresa", IDEMPRESA)
               .like("folio", `${baseFolio}.%`)
 
-            insertFolio = `${baseFolio}.${(suffixCount ?? 0) + 2}`
+            nextSuffix = (suffixCount ?? 0) + 2
+            insertFolio = `${baseFolio}.${nextSuffix}`
           }
         }
 
-        const { error } = await supabase
-          .from("diseno_programacion")
-          .insert({ ...payload, folio: insertFolio })
-        if (error) {
-          console.error("[v0] diseno insert error:", error)
-          toast.error("No se pudo guardar la programación", { description: error.message })
+        let inserted = false
+        for (let intento = 0; intento < 3 && !inserted; intento++) {
+          const { error } = await supabase
+            .from("diseno_programacion")
+            .insert({ ...payload, folio: insertFolio })
+
+          if (!error) {
+            inserted = true
+          } else if (error.code === "23505" && baseFolio) {
+            // Folio duplicado (carrera con otra inserción): probar el siguiente sufijo
+            nextSuffix++
+            insertFolio = `${baseFolio}.${nextSuffix}`
+          } else {
+            console.error("diseno insert error:", error)
+            toast.error("No se pudo guardar la programación", { description: error.message })
+            return
+          }
+        }
+        if (!inserted) {
+          toast.error("No se pudo guardar la programación", {
+            description: "Conflicto de folio persistente — intenta de nuevo.",
+          })
           return
         }
         toast.success(
@@ -403,6 +460,10 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
 
       onOpenChange(false)
       onScheduled?.()
+    } catch (err) {
+      toast.error("Error inesperado al guardar la programación", {
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally {
       setSubmitting(false)
     }
@@ -736,11 +797,15 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                       <SelectContent>
                         {disenadoras.map((d) => (
                           <SelectItem key={String(d.id)} value={String(d.id)}>
-                            {d.nombre}
+                            <span className="flex w-full items-center justify-between gap-3">
+                              {d.nombre}
+                              <CargaBadge horas={cargaDisenadoras.get(Number(d.id)) ?? 0} />
+                            </span>
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    <p className="text-[10px] text-white/40">Carga = horas plan asignadas esta semana (capacidad 45 h)</p>
                   </div>
 
                   <div className="space-y-1.5">
@@ -765,7 +830,10 @@ export function ScheduleDesignSheet({ ordenId, open, onOpenChange, onScheduled }
                         </SelectItem>
                         {costureras.map((c) => (
                           <SelectItem key={String(c.id)} value={String(c.id)}>
-                            {c.nombre}
+                            <span className="flex w-full items-center justify-between gap-3">
+                              {c.nombre}
+                              <CargaBadge horas={cargaCostureras.get(Number(c.id)) ?? 0} />
+                            </span>
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -875,4 +943,17 @@ function DLabel({
 
 function Req() {
   return <span className="ml-0.5 text-rose-400">*</span>
+}
+
+/** Carga de horas plan de la semana actual vs capacidad (45 h). */
+function CargaBadge({ horas }: { horas: number }) {
+  const capacidad = 45
+  const pct = horas / capacidad
+  const cls =
+    pct >= 1 ? "text-rose-600" : pct >= 0.8 ? "text-amber-600" : "text-emerald-600"
+  return (
+    <span className={cn("shrink-0 text-[11px] font-semibold tabular-nums", cls)}>
+      {horas.toFixed(1)}/{capacidad}h
+    </span>
+  )
 }

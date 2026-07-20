@@ -72,6 +72,33 @@ export function ScheduleOrderSheet({ ordenId, open, onOpenChange, onScheduled }:
   const [idsubmaquilador, setIdsubmaquilador] = useState<string>("")
   const [fechaEntrega, setFechaEntrega] = useState<Date | undefined>(undefined)
 
+  /** Calidad promedio histórica del maquilero de esta orden. */
+  const [calidadMaquilero, setCalidadMaquilero] = useState<{ promedio: number; ordenes: number } | null>(null)
+
+  useEffect(() => {
+    setCalidadMaquilero(null)
+    const nombre = orden?.maquilero_nombre?.trim()
+    if (!open || !nombre) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    let cancelled = false
+    supabase
+      .from("ordenes_produccion")
+      .select("calidad")
+      .eq("idempresa", IDEMPRESA)
+      .eq("maquilero", nombre)
+      .not("calidad", "is", null)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data || data.length === 0) return
+        const vals = (data as { calidad: number }[]).map((r) => r.calidad)
+        setCalidadMaquilero({
+          promedio: vals.reduce((a, b) => a + b, 0) / vals.length,
+          ordenes: vals.length,
+        })
+      })
+    return () => { cancelled = true }
+  }, [open, orden?.maquilero_nombre])
+
   // Reset when closed or order changes
   useEffect(() => {
     if (!open) {
@@ -114,21 +141,21 @@ export function ScheduleOrderSheet({ ordenId, open, onOpenChange, onScheduled }:
         if (cancelled) return
 
         if (maqRes.error) {
-          console.error("[v0] maquileros error:", maqRes.error)
+          console.error("maquileros error:", maqRes.error)
           toast.error("Error al cargar maquileros", { description: maqRes.error.message })
         } else {
           setMaquileros((maqRes.data ?? []) as Catalog[])
         }
 
         if (compRes.error) {
-          console.error("[v0] compradores error:", compRes.error)
+          console.error("compradores error:", compRes.error)
           toast.error("Error al cargar compradores", { description: compRes.error.message })
         } else {
           setCompradores((compRes.data ?? []) as Catalog[])
         }
 
         if (subRes.error) {
-          console.error("[v0] submaquileros error:", subRes.error)
+          console.error("submaquileros error:", subRes.error)
           toast.error("Error al cargar submaquileros", { description: subRes.error.message })
         } else {
           setSubmaquileros((subRes.data ?? []) as Catalog[])
@@ -150,7 +177,7 @@ export function ScheduleOrderSheet({ ordenId, open, onOpenChange, onScheduled }:
       if (cancelled) return
 
       if (error) {
-        console.error("[v0] orden error:", error)
+        console.error("orden error:", error)
         toast.error("Error al cargar la orden", { description: error.message })
         setOrden(null)
       } else if (data) {
@@ -246,7 +273,7 @@ export function ScheduleOrderSheet({ ordenId, open, onOpenChange, onScheduled }:
         .eq("idempresa", IDEMPRESA)
 
       if (error) {
-        console.error("[v0] update error:", error)
+        console.error("update error:", error)
         toast.error("No se pudo programar la orden", { description: error.message })
       } else {
         toast.success("Orden programada", {
@@ -255,6 +282,10 @@ export function ScheduleOrderSheet({ ordenId, open, onOpenChange, onScheduled }:
         onOpenChange(false)
         onScheduled?.()
       }
+    } catch (err) {
+      toast.error("Error inesperado al programar la orden", {
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally {
       setSubmitting(false)
     }
@@ -367,7 +398,24 @@ export function ScheduleOrderSheet({ ordenId, open, onOpenChange, onScheduled }:
                       Cargando...
                     </span>
                   ) : orden?.maquilero_nombre ? (
-                    <span className="font-medium">{orden.maquilero_nombre}</span>
+                    <span className="flex w-full items-center justify-between gap-2">
+                      <span className="font-medium">{orden.maquilero_nombre}</span>
+                      {calidadMaquilero && (
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ring-1 ring-inset",
+                            calidadMaquilero.promedio >= 8
+                              ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                              : calidadMaquilero.promedio >= 5
+                                ? "bg-amber-50 text-amber-700 ring-amber-200"
+                                : "bg-rose-50 text-rose-700 ring-rose-200",
+                          )}
+                          title={`Calidad promedio histórica en ${calidadMaquilero.ordenes} órdenes evaluadas`}
+                        >
+                          ★ {calidadMaquilero.promedio.toFixed(1)} · {calidadMaquilero.ordenes} órd.
+                        </span>
+                      )}
+                    </span>
                   ) : orden?.idmaquilero != null ? (
                     <span className="text-muted-foreground">
                       ID {orden.idmaquilero} (no encontrado en catálogo)

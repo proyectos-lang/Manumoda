@@ -88,7 +88,12 @@ import {
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+import { computeRisk, needsAttention } from "@/lib/risk"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
+import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
+import { EficienciaTrend } from "@/components/eficiencia-trend"
+import { KpiCard, formatHours } from "@/components/kpi-card"
 import * as XLSX from "xlsx"
 import { DisenoMultipliersDialog } from "@/components/diseno-multipliers-dialog"
 import {
@@ -123,6 +128,8 @@ type DisenoProgramacion = {
   cumplimiento_costura: boolean
   rechazo_orden: boolean
   fecha_aprobacion_diseno?: string | null
+  /** Fecha de entrega del pedido; copia denormalizada mantenida por trigger (script 008). */
+  fecha_cancelacion?: string | null
   // adiciones al proceso
   muchas_operaciones?: boolean | null
   telas_pesadas?: boolean | null
@@ -194,6 +201,10 @@ export function DesignModule({ configMissing }: Props) {
   const [filterCategoria, setFilterCategoria] = useState("__all__")
   const [filterEstado, setFilterEstado] = useState("__all__")
   const [multipliersOpen, setMultipliersOpen] = useState(false)
+
+  // Selección múltiple para mover órdenes entre semanas
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [movingWeek, setMovingWeek] = useState(false)
 
   // Catálogos de multiplicadores de diseño (para el popover de desglose en Programación)
   const disMultCats = useDisenoMultiplierCatalogs(configMissing)
@@ -315,12 +326,108 @@ export function DesignModule({ configMissing }: Props) {
     try { sessionStorage.removeItem("design:filters") } catch { /* ignorar */ }
   }
 
+  // ── Selección múltiple / mover de semana ─────────────────────────────────────
+
+  /** Un registro cumplido no se puede mover: sus horas ya contaron en los bonos. */
+  const isLocked = useCallback(
+    (r: DisenoProgramacion) => Boolean(r.cumplimiento_diseno || r.cumplimiento_costura),
+    [],
+  )
+
+  // Solo las filas NO cumplidas son seleccionables
+  const visibleIds = useMemo(
+    () => filteredRecords.filter((r) => !isLocked(r)).map((r) => r.id),
+    [filteredRecords, isLocked],
+  )
+  const lockedCount = useMemo(
+    () => filteredRecords.filter(isLocked).length,
+    [filteredRecords, isLocked],
+  )
+  const selectedVisible = useMemo(
+    () => visibleIds.filter((id) => selectedIds.has(id)),
+    [visibleIds, selectedIds],
+  )
+
+  const toggleRow = useCallback((id: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+
+  const toggleAllVisible = useCallback((checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      for (const id of visibleIds) {
+        if (checked) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }, [visibleIds])
+
+  const moverSemana = useCallback(async (nuevaSemana: number) => {
+    if (configMissing || selectedVisible.length === 0) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setMovingWeek(true)
+    try {
+      // Preservar la semana original la primera vez que se mueve un registro.
+      // isLocked filtra por si acaso: los cumplidos nunca deben moverse.
+      const porSemanaOriginal = new Map<number | null, number[]>()
+      for (const r of filteredRecords) {
+        if (!selectedIds.has(r.id) || isLocked(r)) continue
+        const orig = r.semana_original ?? r.semana
+        const arr = porSemanaOriginal.get(orig) ?? []
+        arr.push(r.id)
+        porSemanaOriginal.set(orig, arr)
+      }
+
+      let movidos = 0
+      const fallidos: number[] = []
+      for (const [semanaOriginal, ids] of porSemanaOriginal) {
+        const { error } = await supabase
+          .from("diseno_programacion")
+          .update({ semana: nuevaSemana, semana_original: semanaOriginal })
+          .in("id", ids)
+          .eq("idempresa", IDEMPRESA)
+        if (error) fallidos.push(...ids)
+        else movidos += ids.length
+      }
+
+      if (fallidos.length > 0) {
+        toast.error(`No se pudieron mover ${fallidos.length} registro(s)`, {
+          description: movidos > 0 ? `${movidos} sí se movieron a la semana ${nuevaSemana}.` : undefined,
+        })
+      } else {
+        toast.success(`${movidos} ${movidos === 1 ? "orden movida" : "órdenes movidas"} a la semana ${nuevaSemana}`)
+      }
+      setSelectedIds(new Set())
+      fetchRecords()
+    } catch (err) {
+      toast.error("Error inesperado al mover de semana", {
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setMovingWeek(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configMissing, selectedVisible, selectedIds, filteredRecords, isLocked])
+
   const kpis = useMemo(
     () => ({
       planDiseno: filteredRecords.reduce((s, r) => s + (r.horas_plan_diseno ?? 0), 0),
       cumplidasDiseno: filteredRecords.reduce((s, r) => s + (r.horas_diseno_cumplidas ?? 0), 0),
       planCostura: filteredRecords.reduce((s, r) => s + (r.horas_plan_costura ?? 0), 0),
       cumplidasCostura: filteredRecords.reduce((s, r) => s + (r.horas_costura_cumplidas ?? 0), 0),
+      // Folios distintos: un mismo pedido puede tener varias filas por reprogramación
+      porVencer: new Set(
+        filteredRecords
+          .filter((r) => r.folio && needsAttention(computeRisk(r.fecha_cancelacion, 0).risk))
+          .map((r) => r.folio),
+      ).size,
     }),
     [filteredRecords],
   )
@@ -342,7 +449,7 @@ export function DesignModule({ configMissing }: Props) {
       .order("fecha", { ascending: true })
 
     if (e) {
-      console.error("[v0] diseno fetch:", e)
+      console.error("diseno fetch:", e)
       setError(e.message)
       setLoading(false)
       return
@@ -355,12 +462,18 @@ export function DesignModule({ configMissing }: Props) {
     const aprobMap = new Map<string, string | null>()
 
     if (folios.length > 0) {
-      const { data: aprobData } = await supabase
+      const { data: aprobData, error: aprobError } = await supabase
         .from("ordenes_produccion")
         .select("folio, fecha_aprobacion_diseno")
         .in("folio", folios)
         .eq("idempresa", IDEMPRESA)
 
+      if (aprobError) {
+        // No bloquea la tabla: solo faltará la columna de aprobación
+        toast.warning("No se pudieron cargar las fechas de aprobación", {
+          description: aprobError.message,
+        })
+      }
       for (const a of (aprobData ?? []) as {
         folio: string
         fecha_aprobacion_diseno: string | null
@@ -642,12 +755,54 @@ export function DesignModule({ configMissing }: Props) {
                 </span>
               </div>
             </div>
+
+            {/* Chips de filtros activos: se ve de un vistazo POR QUÉ la tabla está filtrada */}
+            {hasActiveFilters && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {filterFolio.trim() && (
+                  <FilterChip label={`Folio: ${filterFolio.trim()}`} onClear={() => setFilterFolio("")} />
+                )}
+                {filterModelo.trim() && (
+                  <FilterChip label={`Modelo: ${filterModelo.trim()}`} onClear={() => setFilterModelo("")} />
+                )}
+                {filterDisenadora !== "__all__" && (
+                  <FilterChip
+                    label={`Diseñadora: ${disenadoras.find((d) => String(d.id) === filterDisenadora)?.nombre ?? filterDisenadora}`}
+                    onClear={() => setFilterDisenadora("__all__")}
+                  />
+                )}
+                {filterCosturera !== "__all__" && (
+                  <FilterChip
+                    label={`Costurera: ${costureras.find((c) => String(c.id) === filterCosturera)?.nombre ?? filterCosturera}`}
+                    onClear={() => setFilterCosturera("__all__")}
+                  />
+                )}
+                {filterFamilia !== "__all__" && (
+                  <FilterChip label={`Familia: ${filterFamilia}`} onClear={() => setFilterFamilia("__all__")} />
+                )}
+                {filterCategoria !== "__all__" && (
+                  <FilterChip label={`Categoría: ${filterCategoria}`} onClear={() => setFilterCategoria("__all__")} />
+                )}
+                {filterEstado !== "__all__" && (
+                  <FilterChip label={`Estado: ${filterEstado}`} onClear={() => setFilterEstado("__all__")} />
+                )}
+              </div>
+            )}
           </div>
 
+          {/* Alerta de pedidos próximos a vencer */}
+          <DeadlineAlertBanner
+            items={filteredRecords.map((r) => ({
+              folio: r.folio,
+              fecha_cancelacion: r.fecha_cancelacion,
+              detalle: r.modelo,
+            }))}
+          />
+
           {/* KPI Cards */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             {loading
-              ? Array.from({ length: 4 }).map((_, i) => (
+              ? Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-sm">
                     <Skeleton className="h-3 w-28" />
                     <Skeleton className="h-7 w-20" />
@@ -655,13 +810,24 @@ export function DesignModule({ configMissing }: Props) {
                 ))
               : (
                 <>
-                  <KpiCard label="Plan Diseño" value={kpis.planDiseno} icon={<Pencil className="size-3.5" />} iconBg="bg-indigo-100 ring-indigo-200" iconColor="text-indigo-600" valueColor="text-indigo-700" />
-                  <KpiCard label="Cumplidas Diseño" value={kpis.cumplidasDiseno} icon={<CheckCircle2 className="size-3.5" />} iconBg="bg-emerald-100 ring-emerald-200" iconColor="text-emerald-600" valueColor="text-emerald-700" />
-                  <KpiCard label="Plan Costura" value={kpis.planCostura} icon={<Scissors className="size-3.5" />} iconBg="bg-violet-100 ring-violet-200" iconColor="text-violet-600" valueColor="text-violet-700" />
-                  <KpiCard label="Cumplidas Costura" value={kpis.cumplidasCostura} icon={<CheckCircle2 className="size-3.5" />} iconBg="bg-cyan-100 ring-cyan-200" iconColor="text-cyan-600" valueColor="text-cyan-700" />
+                  <KpiCard label="Plan Diseño" value={kpis.planDiseno} format={formatHours} icon={<Pencil className="size-3.5" />} iconBg="bg-indigo-100 ring-indigo-200" iconColor="text-indigo-600" valueColor="text-indigo-700" />
+                  <KpiCard label="Cumplidas Diseño" value={kpis.cumplidasDiseno} format={formatHours} icon={<CheckCircle2 className="size-3.5" />} iconBg="bg-emerald-100 ring-emerald-200" iconColor="text-emerald-600" valueColor="text-emerald-700" />
+                  <KpiCard label="Plan Costura" value={kpis.planCostura} format={formatHours} icon={<Scissors className="size-3.5" />} iconBg="bg-violet-100 ring-violet-200" iconColor="text-violet-600" valueColor="text-violet-700" />
+                  <KpiCard label="Cumplidas Costura" value={kpis.cumplidasCostura} format={formatHours} icon={<CheckCircle2 className="size-3.5" />} iconBg="bg-cyan-100 ring-cyan-200" iconColor="text-cyan-600" valueColor="text-cyan-700" />
+                  <KpiCard label="Próximos a vencer" value={kpis.porVencer} icon={<Clock className="size-3.5" />} iconBg="bg-amber-100 ring-amber-200" iconColor="text-amber-600" valueColor={kpis.porVencer > 0 ? "text-amber-600" : "text-foreground"} hint="Entrega en 7 días o menos" />
                 </>
               )}
           </div>
+
+          {/* Barra de acción masiva (solo con filas seleccionadas) */}
+          <BulkMoveWeekBar
+            selectedCount={selectedVisible.length}
+            lockedCount={lockedCount}
+            onClear={() => setSelectedIds(new Set())}
+            onMove={moverSemana}
+            moving={movingWeek}
+            entidad={selectedVisible.length === 1 ? "orden de diseño" : "órdenes de diseño"}
+          />
 
           {/* Tabla de seguimiento */}
           <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -669,6 +835,14 @@ export function DesignModule({ configMissing }: Props) {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
+                    <TableHead className="w-10">
+                      <SelectAllCheckbox
+                        checked={visibleIds.length > 0 && selectedVisible.length === visibleIds.length}
+                        indeterminate={selectedVisible.length > 0 && selectedVisible.length < visibleIds.length}
+                        onChange={toggleAllVisible}
+                        title="Seleccionar todas las filas visibles"
+                      />
+                    </TableHead>
                     <TableHead className="font-semibold">Folio / Modelo</TableHead>
                     <TableHead className="font-semibold text-right">Semana</TableHead>
                     <TableHead className="font-semibold text-right">Sem. Orig.</TableHead>
@@ -689,21 +863,21 @@ export function DesignModule({ configMissing }: Props) {
                   {loading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 14 }).map((__, j) => (
+                        {Array.from({ length: 15 }).map((__, j) => (
                           <TableCell key={j}><Skeleton className="h-4 rounded" /></TableCell>
                         ))}
                       </TableRow>
                     ))
                   ) : error ? (
                     <TableRow>
-                      <TableCell colSpan={14} className="h-24 text-center text-destructive">
+                      <TableCell colSpan={15} className="h-24 text-center text-destructive">
                         <AlertCircle className="inline size-4 mr-1.5 align-text-bottom" />
                         {error}
                       </TableCell>
                     </TableRow>
                   ) : filteredRecords.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={14} className="h-32 text-center text-muted-foreground">
+                      <TableCell colSpan={15} className="h-32 text-center text-muted-foreground">
                         {records.length === 0
                           ? "Sin registros en diseño."
                           : "Sin registros para los filtros seleccionados."}
@@ -711,7 +885,18 @@ export function DesignModule({ configMissing }: Props) {
                     </TableRow>
                   ) : (
                     filteredRecords.map((row) => (
-                      <TableRow key={row.id} className="hover:bg-muted/30">
+                      <TableRow
+                        key={row.id}
+                        className={cn("hover:bg-muted/30", selectedIds.has(row.id) && "bg-indigo-50/60")}
+                      >
+                        <TableCell>
+                          <RowCheckbox
+                            checked={selectedIds.has(row.id)}
+                            onChange={(v) => toggleRow(row.id, v)}
+                            disabled={isLocked(row)}
+                            disabledTitle="Orden cumplida — sus horas ya contaron en los bonos de esta semana"
+                          />
+                        </TableCell>
                         <TableCell>
                           <p className="font-mono text-xs font-semibold text-foreground">{row.folio ?? "—"}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{row.modelo ?? "—"}</p>
@@ -889,7 +1074,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
       .eq("idempresa", IDEMPRESA)
       .order("anio", { ascending: false })
       .order("semana", { ascending: false })
-    if (e) { console.error("[v0] bonos fetch:", e); setError(e.message) }
+    if (e) { console.error("bonos fetch:", e); setError(e.message) }
     else setBonos((data ?? []) as VwBonosDiseno[])
     setLoading(false)
   }, [configMissing])
@@ -962,44 +1147,34 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
   }, [expandedKey, detailCache])
 
   const recalcularHorasDiseno = useCallback(async () => {
-    if (configMissing || disMultCats.prendas.length === 0) return
+    if (configMissing) return
     const supabase = getSupabase()
     if (!supabase) return
     setRecalculating(true)
     try {
-      const { data, error } = await supabase
-        .from("diseno_programacion")
-        .select("id, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja, cumplimiento_diseno")
-        .eq("idempresa", IDEMPRESA)
-        .not("idprenda", "is", null)
-      if (error) { toast.error("Error al obtener registros", { description: error.message }); return }
-      const rows = (data ?? []) as { id: number; idprenda: number; tipo: string | null; categoria_demografica: string | null; muchas_operaciones: boolean | null; telas_pesadas: boolean | null; muchas_habilitaciones: boolean | null; prenda_compleja: boolean | null; cumplimiento_diseno: boolean }[]
-
-      let ok = 0
-      await Promise.all(rows.map(async (row) => {
-        const prenda = disMultCats.prendas.find((p) => p.id === row.idprenda)
-        if (!prenda) return
-        const tipoMult = disMultCats.tipos.find((t) => t.nombre === row.tipo)?.multiplicador ?? 1
-        const catMult  = disMultCats.categorias.find((c) => c.nombre === row.categoria_demografica)?.multiplicador ?? 1
-        const adicionHoras = disMultCats.adiciones.reduce((s, a) => {
-          return s + ((row as Record<string, unknown>)[a.clave] === true ? Number(a.horas) : 0)
-        }, 0)
-        const computed = Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
-        const { error: ue } = await supabase
-          .from("diseno_programacion")
-          .update({ horas_plan_diseno: computed })
-          .eq("id", row.id)
-          .eq("idempresa", IDEMPRESA)
-        if (!ue) ok++
-      }))
-
-      toast.success(`Recalculadas: ${ok} de ${rows.length} órdenes de diseño`)
+      // RPC set-based (script 014): un solo UPDATE en el servidor. El trigger
+      // (script 012) hace el recálculo real y solo toca registros NO evaluados
+      // — los evaluados quedan congelados.
+      const { data, error } = await supabase.rpc("fn_recalcular_horas_diseno", {
+        p_idempresa: IDEMPRESA,
+      })
+      if (error) {
+        toast.error("Error al recalcular horas", { description: error.message })
+        return
+      }
+      toast.success(`Recalculadas ${Number(data) || 0} órdenes de diseño`, {
+        description: "Los registros ya evaluados conservan sus horas congeladas.",
+      })
       setDetailCache({})
       fetchBonos()
+    } catch (err) {
+      toast.error("Error inesperado al recalcular", {
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally {
       setRecalculating(false)
     }
-  }, [configMissing, disMultCats, fetchBonos])
+  }, [configMissing, fetchBonos])
 
   return (
     <div className="space-y-4">
@@ -1045,7 +1220,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
             variant="outline"
             size="sm"
             onClick={recalcularHorasDiseno}
-            disabled={recalculating || configMissing || disMultCats.prendas.length === 0}
+            disabled={recalculating || configMissing}
             className="gap-2 bg-transparent text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
           >
             <RefreshCw className={cn("size-4", recalculating && "animate-spin")} />
@@ -1077,6 +1252,11 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
       </div>
 
       {/* Tabla de bonos */}
+      {/* Tendencia entre semanas: ¿estamos mejorando? */}
+      <EficienciaTrend
+        rows={bonos.map((b) => ({ anio: b.anio, semana: b.semana, eficiencia: b.eficiencia_pct }))}
+      />
+
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="overflow-x-auto">
           <Table>
@@ -1364,62 +1544,96 @@ function ReprogramarDialog({
 
   const handleSubmit = async () => {
     if (!record || !nuevaSemana) return
+    const semanaNum = Number(nuevaSemana)
+    if (isNaN(semanaNum) || semanaNum < 1 || semanaNum > 53) {
+      toast.error("Semana inválida", { description: "Ingresa una semana entre 1 y 53." })
+      return
+    }
     const supabase = getSupabase()
     if (!supabase) return
 
     setSubmitting(true)
     try {
       if (esRechazada) {
-        // Insertar nueva fila: mismos datos, evaluación reseteada, nueva semana
-        const { data, error } = await supabase
-          .from("diseno_programacion")
-          .insert({
-            idempresa: record.idempresa,
-            folio: record.folio,
-            modelo: record.modelo,
-            familia: record.familia,
-            categoria: record.categoria,
-            cliente: record.cliente,
-            fecha: record.fecha,
-            semana: Number(nuevaSemana),
-            semana_original: record.semana_original ?? record.semana,
-            tipo: record.tipo,
-            idprenda: record.idprenda ?? null,
-            categoria_demografica: record.categoria_demografica ?? null,
-            muchas_operaciones: record.muchas_operaciones ?? false,
-            telas_pesadas: record.telas_pesadas ?? false,
-            muchas_habilitaciones: record.muchas_habilitaciones ?? false,
-            prenda_compleja: record.prenda_compleja ?? false,
-            horas_plan_diseno: record.horas_plan_diseno,
-            numero_muestras: record.numero_muestras ?? 1,
-            iddisenadora: record.iddisenadora,
-            idcosturera: record.idcosturera ?? null,
-            // evaluación limpia
-            cumplimiento_diseno: false,
-            cumplimiento_costura: false,
-            rechazo_orden: false,
-            horas_costura_cumplidas: null,
-            comentarios: null,
-          })
-          .select("*, disenadoras(nombre), costureras(nombre)")
-          .single()
+        // Insertar nueva fila: mismos datos, evaluación reseteada, nueva semana.
+        // El folio debe llevar sufijo (.2, .3…) porque el índice único
+        // (script 011) no permite dos filas con el mismo folio.
+        const baseFolio = record.folio
+        const buildPayload = (folio: string | null) => ({
+          idempresa: record.idempresa,
+          folio,
+          modelo: record.modelo,
+          familia: record.familia,
+          categoria: record.categoria,
+          cliente: record.cliente,
+          fecha: record.fecha,
+          semana: semanaNum,
+          semana_original: record.semana_original ?? record.semana,
+          tipo: record.tipo,
+          idprenda: record.idprenda ?? null,
+          categoria_demografica: record.categoria_demografica ?? null,
+          muchas_operaciones: record.muchas_operaciones ?? false,
+          telas_pesadas: record.telas_pesadas ?? false,
+          muchas_habilitaciones: record.muchas_habilitaciones ?? false,
+          prenda_compleja: record.prenda_compleja ?? false,
+          horas_plan_diseno: record.horas_plan_diseno,
+          numero_muestras: record.numero_muestras ?? 1,
+          iddisenadora: record.iddisenadora,
+          idcosturera: record.idcosturera ?? null,
+          // evaluación limpia
+          cumplimiento_diseno: false,
+          cumplimiento_costura: false,
+          rechazo_orden: false,
+          horas_costura_cumplidas: null,
+          comentarios: null,
+        })
 
-        if (error) {
-          toast.error("No se pudo crear la reprogramación", { description: error.message })
+        let nextSuffix = 2
+        if (baseFolio) {
+          const { count } = await supabase
+            .from("diseno_programacion")
+            .select("*", { count: "exact", head: true })
+            .eq("idempresa", record.idempresa)
+            .like("folio", `${baseFolio}.%`)
+          nextSuffix = (count ?? 0) + 2
+        }
+
+        let data: DisenoProgramacion | null = null
+        for (let intento = 0; intento < 3 && !data; intento++) {
+          const insertFolio = baseFolio ? `${baseFolio}.${nextSuffix}` : null
+          const { data: inserted, error } = await supabase
+            .from("diseno_programacion")
+            .insert(buildPayload(insertFolio))
+            .select("*, disenadoras(nombre), costureras(nombre)")
+            .single()
+
+          if (!error) {
+            data = inserted as DisenoProgramacion
+          } else if (error.code === "23505" && baseFolio) {
+            nextSuffix++
+          } else {
+            toast.error("No se pudo crear la reprogramación", { description: error.message })
+            return
+          }
+        }
+        if (!data) {
+          toast.error("No se pudo crear la reprogramación", {
+            description: "Conflicto de folio persistente — intenta de nuevo.",
+          })
           return
         }
 
         toast.success("Orden duplicada para reprogramación", {
-          description: `Nueva entrada para semana ${nuevaSemana} · La fila rechazada se mantiene como historial.`,
+          description: `Nueva entrada ${data.folio} · semana ${semanaNum} · la fila rechazada se mantiene como historial.`,
         })
-        onReprogramado(data as DisenoProgramacion)
+        onReprogramado(data)
         onRefresh?.()
         onOpenChange(false)
       } else {
         const { data, error } = await supabase
           .from("diseno_programacion")
           .update({
-            semana: Number(nuevaSemana),
+            semana: semanaNum,
             semana_original: record.semana,
           })
           .eq("id", record.id)
@@ -1433,11 +1647,15 @@ function ReprogramarDialog({
         }
 
         toast.success("Orden reprogramada", {
-          description: `Semana ${record.semana ?? "—"} → Semana ${nuevaSemana}`,
+          description: `Semana ${record.semana ?? "—"} → Semana ${semanaNum}`,
         })
         onReprogramado(data as DisenoProgramacion)
         onOpenChange(false)
       }
+    } catch (err) {
+      toast.error("Error inesperado al reprogramar", {
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally {
       setSubmitting(false)
     }
@@ -1579,7 +1797,7 @@ function TiemposFueraTab({
       .eq("idempresa", IDEMPRESA)
       .order("fecha", { ascending: false })
     if (!error) setRecords((data ?? []) as unknown as TiempoFueraRecord[])
-    else console.error("[v0] tiempos_fuera fetch:", error)
+    else console.error("tiempos_fuera fetch:", error)
     setLoadingRecords(false)
   }, [configMissing])
 
@@ -1920,7 +2138,7 @@ function VacacionesPermisosTab({
       .eq("idempresa", IDEMPRESA)
       .order("fecha_inicio", { ascending: false })
     if (!error) setRecords((data ?? []) as unknown as VacacionPermiso[])
-    else console.error("[v0] vacaciones fetch:", error)
+    else console.error("vacaciones fetch:", error)
     setLoadingRecords(false)
   }, [configMissing])
 
@@ -2262,9 +2480,6 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
     fechaAprobacionDiseno: null as Date | null,
   })
 
-  // Catálogos de multiplicadores para recalcular horas_plan_diseno al evaluar
-  const disMultCats = useDisenoMultiplierCatalogs(false)
-
   // Carga catálogo de costureras al abrir el sheet
   useEffect(() => {
     if (!open) return
@@ -2276,7 +2491,8 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
       .select("id, nombre")
       .eq("idempresa", IDEMPRESA)
       .order("nombre")
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) toast.error("No se pudo cargar el catálogo de costureras", { description: error.message })
         setCostureras((data ?? []) as Catalog[])
         setLoadingCostureras(false)
       })
@@ -2300,54 +2516,77 @@ function EvalSheet({ record, open, onOpenChange, onUpdated }: EvalSheetProps) {
     if (!record) return
     const supabase = getSupabase()
     if (!supabase) return
+
+    // Guard de sin-cambios: si el formulario es idéntico al registro,
+    // cerrar sin escribir (evita updates gratuitos y recomputos del trigger)
+    const nuevaFecha = form.fechaAprobacionDiseno
+      ? format(form.fechaAprobacionDiseno, "yyyy-MM-dd")
+      : null
+    const idcostureraNueva =
+      form.idcosturera && form.idcosturera !== "__none__" ? Number(form.idcosturera) : null
+    const sinCambios =
+      form.cumplimientoDiseno === (record.cumplimiento_diseno ?? false) &&
+      form.cumplimientoCostura === (record.cumplimiento_costura ?? false) &&
+      form.rechazoOrden === (record.rechazo_orden ?? false) &&
+      idcostureraNueva === (record.idcosturera ?? null) &&
+      (form.comentarios.trim() || null) === (record.comentarios ?? null) &&
+      nuevaFecha === (record.fecha_aprobacion_diseno ?? null)
+    if (sinCambios) {
+      toast.info("Sin cambios que guardar.")
+      onOpenChange(false)
+      return
+    }
+
     setSubmitting(true)
     try {
-      // Recalcular horas_plan_diseno desde los catálogos actuales
-      const prenda   = disMultCats.prendas.find((p) => p.id === record.idprenda)
-      const tipoMult = disMultCats.tipos.find((t) => t.nombre === record.tipo)?.multiplicador ?? 1
-      const catMult  = disMultCats.categorias.find((c) => c.nombre === record.categoria_demografica)?.multiplicador ?? 1
-      const adicionHoras = disMultCats.adiciones.reduce((s, a) => {
-        const k = a.clave as keyof DisenoProgramacion
-        return s + ((record as Record<string, unknown>)[k] === true ? Number(a.horas) : 0)
-      }, 0)
-      const horasPlanCalculadas = prenda
-        ? Math.round((prenda.horas_base * tipoMult * catMult + adicionHoras) * 100) / 100
-        : record.horas_plan_diseno  // fallback: mantener el valor guardado si no hay catálogo
-
-      // 1. Actualizar diseno_programacion
+      // 1. Actualizar diseno_programacion.
+      // NOTA: las horas NO se envían — el trigger (script 012) es el único
+      // dueño de horas_plan_diseno / horas_*_cumplidas y aplica la política
+      // de congelado tras evaluación.
       const { data, error } = await supabase
         .from("diseno_programacion")
         .update({
           cumplimiento_diseno: form.cumplimientoDiseno,
           cumplimiento_costura: form.cumplimientoCostura,
           rechazo_orden: form.rechazoOrden,
-          idcosturera: form.idcosturera && form.idcosturera !== "__none__" ? Number(form.idcosturera) : null,
+          idcosturera: idcostureraNueva,
           comentarios: form.comentarios.trim() || null,
-          horas_plan_diseno: horasPlanCalculadas,
         })
         .eq("id", record.id)
         .eq("idempresa", IDEMPRESA)
         .select("*, disenadoras(nombre), costureras(nombre)")
         .single()
-      if (error) { console.error("[v0] eval update:", error); toast.error("No se pudo guardar", { description: error.message }); return }
+      if (error) { toast.error("No se pudo guardar", { description: error.message }); return }
 
       // 2. Actualizar fecha_aprobacion_diseno en ordenes_produccion
-      const nuevaFecha = form.fechaAprobacionDiseno
-        ? format(form.fechaAprobacionDiseno, "yyyy-MM-dd")
-        : null
-      if (record.folio) {
+      let aprobFallo = false
+      if (record.folio && nuevaFecha !== (record.fecha_aprobacion_diseno ?? null)) {
         const { error: aprobError } = await supabase
           .from("ordenes_produccion")
           .update({ fecha_aprobacion_diseno: nuevaFecha })
           .eq("folio", record.folio)
           .eq("idempresa", IDEMPRESA)
-        if (aprobError) console.error("[v0] aprobacion update:", aprobError)
+        if (aprobError) {
+          aprobFallo = true
+          toast.warning("Evaluación guardada, pero la fecha de aprobación NO se pudo actualizar", {
+            description: aprobError.message,
+          })
+        }
       }
 
-      const updated = { ...(data as DisenoProgramacion), fecha_aprobacion_diseno: nuevaFecha }
-      toast.success("Evaluación guardada", { description: `Diseño: ${fmtH(updated.horas_diseno_cumplidas)} h · Costura: ${fmtH(updated.horas_costura_cumplidas)} h cumplidas` })
+      const updated = {
+        ...(data as DisenoProgramacion),
+        fecha_aprobacion_diseno: aprobFallo ? (record.fecha_aprobacion_diseno ?? null) : nuevaFecha,
+      }
+      if (!aprobFallo) {
+        toast.success("Evaluación guardada", { description: `Diseño: ${fmtH(updated.horas_diseno_cumplidas)} h · Costura: ${fmtH(updated.horas_costura_cumplidas)} h cumplidas` })
+      }
       onUpdated(updated)
       onOpenChange(false)
+    } catch (err) {
+      toast.error("Error inesperado al guardar la evaluación", {
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally { setSubmitting(false) }
   }
 
@@ -2510,23 +2749,6 @@ function FormRow({ label, required, children }: { label: string; required?: bool
         {label}{required && <span className="ml-0.5 text-destructive">*</span>}
       </Label>
       {children}
-    </div>
-  )
-}
-
-function KpiCard({ label, value, icon, iconBg, iconColor, valueColor }: {
-  label: string; value: number; icon: React.ReactNode
-  iconBg: string; iconColor: string; valueColor: string
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-sm space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground leading-tight">{label}</p>
-        <div className={cn("flex size-7 shrink-0 items-center justify-center rounded-lg ring-1", iconBg, iconColor)}>{icon}</div>
-      </div>
-      <p className={cn("text-2xl font-bold tabular-nums", valueColor)}>
-        {value.toFixed(1)}<span className="ml-1 text-sm font-normal text-muted-foreground">h</span>
-      </p>
     </div>
   )
 }
@@ -2711,7 +2933,7 @@ function HojaImpresionTab({ configMissing }: { configMissing: boolean }) {
       )
       .eq("idempresa", IDEMPRESA)
       .order("fecha", { ascending: false })
-    if (e) { console.error("[v0] hoja fetch:", e); setError(e.message) }
+    if (e) { console.error("hoja fetch:", e); setError(e.message) }
     else setRows((data ?? []) as unknown as HojaRow[])
     setLoading(false)
   }, [configMissing])
@@ -2912,4 +3134,19 @@ function fmtCurrency(n: number | null | undefined): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(n)
+}
+
+/** Chip removible de filtro activo. */
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClear}
+      className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+      title="Quitar este filtro"
+    >
+      {label}
+      <X className="size-3" />
+    </button>
+  )
 }

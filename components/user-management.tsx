@@ -229,9 +229,10 @@ export function UserManagement({ currentUser }: UserManagementProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {loading ? <Skeleton className="inline-block h-4 w-24" /> : `${users.length} usuario${users.length !== 1 ? "s" : ""}`}
-        </p>
+        {/* No usar <p>: el Skeleton es un <div> y anidarlo rompe la hidratación */}
+        <div className="text-sm text-muted-foreground">
+          {loading ? <Skeleton className="h-4 w-24" /> : `${users.length} usuario${users.length !== 1 ? "s" : ""}`}
+        </div>
         <Button
           size="sm"
           onClick={openCreate}

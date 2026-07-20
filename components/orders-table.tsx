@@ -22,6 +22,9 @@ import type { OrdenProduccion } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
 import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
+import { FolioLink } from "@/components/folio-detail-drawer"
+import { RiskBadge } from "@/components/risk-badge"
+import { computeRisk } from "@/lib/risk"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -111,7 +114,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
       .eq("idempresa", IDEMPRESA)
     setDeleting(false)
     if (error) {
-      console.error("[v0] delete folio error:", error)
+      console.error("delete folio error:", error)
       toast.error("No se pudo eliminar el folio", { description: error.message })
     } else {
       setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id))
@@ -214,29 +217,26 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
     if (!supabase) return
     setAnulando(true)
     try {
-      const table = tipo === "diseno" ? "diseno_programacion" : "corte_programacion"
-      const { error: deleteError } = await supabase
-        .from(table)
-        .delete()
-        .eq("folio", row.folio)
-        .eq("idempresa", IDEMPRESA)
-      if (deleteError) {
-        toast.error("No se pudo anular la programación", { description: deleteError.message })
+      // RPC transaccional (script 014): borra las filas de programación y
+      // resetea el flag de la orden en una sola transacción — sin estados
+      // intermedios inconsistentes si algo falla a la mitad.
+      const { error } = await supabase.rpc("fn_anular_programacion", {
+        p_folio: row.folio,
+        p_idempresa: IDEMPRESA,
+        p_tipo: tipo,
+      })
+      if (error) {
+        toast.error("No se pudo anular la programación", { description: error.message })
         return
       }
       const field = tipo === "diseno" ? "diseno_programado" : "corte_programado"
-      const { error: updateError } = await supabase
-        .from("ordenes_produccion")
-        .update({ [field]: false })
-        .eq("id", row.id)
-        .eq("idempresa", IDEMPRESA)
-      if (updateError) {
-        toast.error("Registros eliminados pero no se pudo actualizar la orden", { description: updateError.message })
-        return
-      }
       const label = tipo === "diseno" ? "Diseño" : "Corte"
       toast.success(`Programación de ${label} anulada`, { description: `Folio ${row.folio}` })
       setOrders((prev) => prev.map((o) => o.id === row.id ? { ...o, [field]: false } : o))
+    } catch (err) {
+      toast.error("Error inesperado al anular", {
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally {
       setAnulando(false)
       setAnularTarget(null)
@@ -259,7 +259,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
       .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
 
     if (error) {
-      console.error("[v0] Fetch error:", error)
+      console.error("Fetch error:", error)
       setError(error.message)
       setOrders([])
     } else {
@@ -336,6 +336,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                 <TableHead className="font-semibold">Cliente</TableHead>
                 <TableHead className="font-semibold text-right">Piezas</TableHead>
                 <TableHead className="font-semibold">Fecha Límite</TableHead>
+                <TableHead className="font-semibold">Riesgo</TableHead>
                 <TableHead className="font-semibold">Límite Conf.</TableHead>
                 <TableHead className="font-semibold">Tipo Pedido</TableHead>
                 <TableHead className="font-semibold text-right">Acciones</TableHead>
@@ -345,27 +346,34 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
             <TableBody>
               {loading && pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
                     <Loader2 className="mx-auto size-5 animate-spin" />
                   </TableCell>
                 </TableRow>
               ) : error ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="h-24 text-center text-destructive">
+                  <TableCell colSpan={10} className="h-24 text-center text-destructive">
                     {error}
                   </TableCell>
                 </TableRow>
               ) : pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
-                    {orders.length === 0 ? "Sin órdenes registradas." : "Sin coincidencias para los filtros aplicados."}
+                  <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                    {orders.length === 0 ? (
+                      <span>
+                        Sin órdenes registradas aún.{" "}
+                        <span className="text-foreground">Sube tu archivo Excel de pedidos en la sección de arriba para comenzar.</span>
+                      </span>
+                    ) : (
+                      "Sin coincidencias para los filtros aplicados."
+                    )}
                   </TableCell>
                 </TableRow>
               ) : (
                 pageRows.map((row) => (
                   <TableRow key={String(row.id ?? row.folio)} className="hover:bg-muted/30">
-                    <TableCell className="font-mono text-xs font-medium text-foreground">
-                      {row.folio}
+                    <TableCell>
+                      <FolioLink folio={row.folio} className="text-xs" />
                     </TableCell>
                     <TableCell className="text-sm">{row.modelo ?? "-"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
@@ -432,6 +440,12 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                           />
                         </PopoverContent>
                       </Popover>
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const { risk, days } = computeRisk(row.fecha_cancelacion, 0, row.fase_actual)
+                        return <RiskBadge risk={risk} days={days} />
+                      })()}
                     </TableCell>
                     <TableCell className="text-sm">
                       <Popover>
