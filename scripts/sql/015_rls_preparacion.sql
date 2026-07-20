@@ -1,0 +1,86 @@
+-- ============================================================
+-- ⚠️ PREPARACIÓN RLS — NO EJECUTAR TODAVÍA ⚠️
+--
+-- Este script es DOCUMENTACIÓN. Todo lo ejecutable está comentado.
+-- Habilitar RLS sin las políticas correctas rompe la aplicación
+-- completa (cada tabla sin política deniega todo acceso).
+-- Requiere una sesión dedicada con pruebas.
+-- ============================================================
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- EL RIESGO ACTUAL
+-- ════════════════════════════════════════════════════════════════════════════
+--
+-- La aplicación usa exclusivamente la clave anónima de Supabase
+-- (NEXT_PUBLIC_SUPABASE_ANON_KEY), que por definición viaja al
+-- navegador de cada usuario. Sin RLS habilitado:
+--
+--   1. Cualquiera que abra las herramientas de desarrollador puede
+--      copiar la clave y hacer SELECT/INSERT/UPDATE/DELETE directo
+--      contra TODAS las tablas del esquema manumoda.
+--   2. La tabla `usuarios` (credenciales y permisos) es legible y
+--      escribible con esa misma clave.
+--   3. El aislamiento por empresa (idempresa) depende solo de que
+--      el frontend agregue .eq("idempresa", 1) — trivial de omitir.
+--
+-- El login actual es una tabla propia consultada vía API routes
+-- (app/api/auth/*), NO Supabase Auth — por eso no existe auth.uid()
+-- que las políticas RLS puedan usar. Ese es el trabajo previo real.
+--
+-- ════════════════════════════════════════════════════════════════════════════
+-- PLAN DE MIGRACIÓN (para la sesión dedicada)
+-- ════════════════════════════════════════════════════════════════════════════
+--
+-- Paso 1 — Migrar autenticación a Supabase Auth (o mantener el login
+--   propio pero mover TODAS las operaciones de datos a API routes con
+--   la service_role key en el servidor; el navegador nunca toca
+--   PostgREST directamente). La opción B es menos invasiva para esta
+--   app: los componentes cambiarían getSupabase() por fetch a rutas
+--   internas.
+--
+-- Paso 2 — Habilitar RLS tabla por tabla, empezando por las críticas:
+--
+--   ALTER TABLE manumoda.usuarios            ENABLE ROW LEVEL SECURITY;
+--   ALTER TABLE manumoda.permisos_modulo     ENABLE ROW LEVEL SECURITY;
+--   ALTER TABLE manumoda.ordenes_produccion  ENABLE ROW LEVEL SECURITY;
+--   ALTER TABLE manumoda.diseno_programacion ENABLE ROW LEVEL SECURITY;
+--   ALTER TABLE manumoda.corte_programacion  ENABLE ROW LEVEL SECURITY;
+--   -- …y el resto: catálogos, colaboradoras, tiempos_fuera_area,
+--   --  vacaciones_permisos, ordenes_fotos, complejidad_familias…
+--
+-- Paso 3 — Políticas. Con Supabase Auth serían del estilo:
+--
+--   CREATE POLICY usuarios_solo_servidor ON manumoda.usuarios
+--     FOR ALL USING (false);          -- nadie vía anon; solo service_role
+--
+--   CREATE POLICY datos_por_empresa ON manumoda.ordenes_produccion
+--     FOR ALL USING (
+--       idempresa = (auth.jwt() -> 'app_metadata' ->> 'idempresa')::bigint
+--     );
+--
+--   Con la opción B (todo por API routes + service_role), las políticas
+--   para anon son simplemente USING (false) en todas las tablas — el
+--   navegador queda sin acceso directo y el servidor pasa por encima
+--   de RLS con service_role.
+--
+-- Paso 4 — Las vistas: PostgREST aplica RLS de las tablas base salvo
+--   que la vista sea SECURITY DEFINER. Revisar cada vw_* después de
+--   habilitar RLS (con la opción B dejan de ser accesibles desde el
+--   navegador, que es lo deseado).
+--
+-- Paso 5 — Probar módulo por módulo antes de dar por terminado.
+--
+-- ════════════════════════════════════════════════════════════════════════════
+-- PENDIENTE ADICIONAL: versionar vw_bonos_corte
+-- ════════════════════════════════════════════════════════════════════════════
+--
+-- La vista vw_bonos_corte se consume desde el frontend pero su
+-- definición NO está en scripts/sql/ — es imposible auditar cambios.
+-- Obtenerla con:
+--
+--   SELECT pg_get_viewdef('manumoda.vw_bonos_corte'::regclass, true);
+--
+-- y guardarla como scripts/sql/0XX_vw_bonos_corte.sql.
+-- Al versionarla, considerar unificar la nomenclatura con
+-- vw_bonos_diseno (idcolaborador vs registro, eficiencia_pct vs
+-- porcentaje_eficiencia) para poder compartir código de frontend.

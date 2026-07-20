@@ -54,7 +54,8 @@ SELECT
     -- Columnas nuevas (siempre al final para no romper columnas existentes)
     o.modelo,
     o.cliente,
-    o.fecha_limite_confirmacion
+    o.fecha_limite_confirmacion,
+    o.fecha_ultima_revision
 FROM manumoda.ordenes_produccion o
 LEFT JOIN LATERAL (
     SELECT iddisenadora, idcosturera

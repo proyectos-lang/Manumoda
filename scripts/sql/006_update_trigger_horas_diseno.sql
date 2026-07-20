@@ -45,6 +45,17 @@ DECLARE
 BEGIN
 
   -- ════════════════════════════════════════════════════════════════════════════
+  -- FECHA DE ENTREGA — copia denormalizada desde la orden (script 008)
+  -- ════════════════════════════════════════════════════════════════════════════
+
+  IF NEW.folio IS NOT NULL THEN
+    SELECT o.fecha_cancelacion INTO NEW.fecha_cancelacion
+    FROM manumoda.ordenes_produccion o
+    WHERE o.folio = NEW.folio AND o.idempresa = NEW.idempresa
+    LIMIT 1;
+  END IF;
+
+  -- ════════════════════════════════════════════════════════════════════════════
   -- DISEÑO — fórmula de catálogos
   -- ════════════════════════════════════════════════════════════════════════════
 
