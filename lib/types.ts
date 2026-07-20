@@ -37,6 +37,55 @@ export type OrdenProduccion = {
   fecha_contra_muestra?: string | null
 }
 
+/**
+ * Vista `vw_seguimiento_integrado`: un folio de punta a punta por las tres
+ * etapas (Diseño → Corte → Maquila). Incluye TODAS las órdenes, a diferencia
+ * de `vw_resumen_operacion` que excluye 'Por Programar' y 'S7'.
+ */
+export type SeguimientoRow = {
+  id: number | string
+  idempresa: number
+  folio: string
+  modelo: string | null
+  familia: string | null
+  cliente: string | null
+  maquilero_nombre: string | null
+  piezas: number | null
+  fase_actual: string
+  // fechas de la orden
+  fecha_pedido: string | null
+  fecha_limite_confirmacion: string | null
+  fecha_contra_muestra: string | null
+  fecha_cancelacion: string | null
+  fecha_ultima_revision: string | null
+  // etapa 1: diseño
+  fecha_diseno: string | null
+  nombre_disenador: string | null
+  cumplimiento_diseno: boolean | null
+  fecha_aprobacion_diseno: string | null
+  no_requiere_diseno: boolean | null
+  // etapa 2: corte
+  fecha_corte: string | null
+  nombre_cortador: string | null
+  cumplimiento_corte: string | null
+  no_requiere_corte: boolean | null
+  // etapa 3: maquila
+  fecha_s1: string | null
+  fecha_s2: string | null
+  fecha_s3: string | null
+  fecha_s4: string | null
+  fecha_s5: string | null
+  fecha_s6: string | null
+  fecha_s7: string | null
+  calidad: number | null
+  tipo_revision: string | null
+  habilitaciones_insumos: string | null
+  comentarios_generales: string | null
+  // riesgo calculado en la vista
+  riesgo_entrega: string | null
+  dias_restantes: number | null
+}
+
 export type VwPlanCorteDetalle = {
   registro_id: number
   fecha: string | null
@@ -73,6 +122,9 @@ export type VwPlanCorteDetalle = {
   calificacion: number | null
   comentarios: string | null
   piezas_cortadas: number | null
+  /** Fecha de entrega del pedido — la vista la lee fresca desde ordenes_produccion (script 013). */
+  fecha_cancelacion: string | null
+  idempresa: number
 }
 
 export type VwBonosCorte = {
