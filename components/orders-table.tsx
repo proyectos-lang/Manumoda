@@ -23,7 +23,6 @@ import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
 import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import { FolioLink } from "@/components/folio-detail-drawer"
-import { FacturarButton } from "@/components/facturar-button"
 import { RiskBadge } from "@/components/risk-badge"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import type { ModuleFilter } from "@/lib/module-filter"
@@ -671,21 +670,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <FaseBadge fase={row.fase_actual} />
-                        <FacturarButton
-                          folio={row.folio}
-                          ordenId={row.id}
-                          faseActual={row.fase_actual}
-                          fechaFacturacion={row.fecha_facturacion}
-                          // Al facturar sale del panel: ya no es un pedido en curso
-                          onDone={() => {
-                            setOrders((prev) => prev.filter((o) => o.id !== row.id))
-                            setEntregadosOcultos((n) => n + 1)
-                          }}
-                          size="xs"
-                        />
-                      </div>
+                      <FaseBadge fase={row.fase_actual} />
                     </TableCell>
                   </TableRow>
                 ))
