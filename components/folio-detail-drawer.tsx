@@ -43,7 +43,7 @@ import {
 import { cn } from "@/lib/utils"
 
 import { Badge } from "@/components/ui/badge"
-import { EntregadoBadge, FacturarButton } from "@/components/facturar-button"
+import { EntregadoBadge } from "@/components/facturar-button"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { RiskBadge } from "@/components/risk-badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -459,26 +459,12 @@ export function FolioDetailProvider({ children }: { children: ReactNode }) {
                   </div>
                 )}
 
-                {/* Cierre del ciclo: facturación */}
-                <div className="mt-3 border-t border-border pt-3">
-                  <FacturarButton
-                    folio={row.folio}
-                    ordenId={row.id}
-                    faseActual={row.fase_actual}
-                    fechaFacturacion={row.fecha_facturacion}
-                    onDone={(fecha) =>
-                      setData((prev) =>
-                        prev ? { ...prev, row: { ...prev.row, fecha_facturacion: fecha } } : prev,
-                      )
-                    }
-                    className="w-full justify-center"
-                  />
-                  {row.fecha_facturacion && (
-                    <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
-                      Facturada el {fmtDate(row.fecha_facturacion)} — no genera alertas
-                    </p>
-                  )}
-                </div>
+                {/* La facturación se marca desde Seguimiento Maquila; aquí solo se informa */}
+                {row.fecha_facturacion && (
+                  <p className="mt-3 border-t border-border pt-3 text-center text-[11px] text-muted-foreground">
+                    Facturada el {fmtDate(row.fecha_facturacion)} — no genera alertas
+                  </p>
+                )}
               </section>
             </div>
           )}

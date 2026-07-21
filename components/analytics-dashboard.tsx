@@ -33,7 +33,7 @@ import { RiskBadge } from "@/components/risk-badge"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { FolioLink } from "@/components/folio-detail-drawer"
-import { EntregadoBadge, FacturarButton } from "@/components/facturar-button"
+import { EntregadoBadge } from "@/components/facturar-button"
 import { LeadTimeBadge } from "@/components/lead-time-badge"
 import { etapaAtrasada, evaluarEtapa, PUNTUALIDAD_LABEL } from "@/lib/lead-times"
 import { RiesgoInfoDialog } from "@/components/riesgo-info-dialog"
@@ -359,11 +359,6 @@ export function AnalyticsDashboard({
     setIncomingFilter(null)
   }
 
-  /** Refleja la facturación sin recargar toda la vista. */
-  const handleFacturado = (id: number | string, fecha: string | null) => {
-    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, fecha_facturacion: fecha } : o)))
-  }
-
   /** Exporta las órdenes filtradas (con el pipeline completo) a Excel. */
   const exportToExcel = () => {
     const RISK_LABEL: Record<Risk, string> = {
@@ -567,7 +562,6 @@ export function AnalyticsDashboard({
               order={o}
               onHistory={() => setHistoryOrder(o)}
               onFotos={() => { setFotoOrder(o); setFotoEtapa("S1") }}
-              onFacturado={handleFacturado}
             />
           ))}
         </div>
@@ -576,7 +570,6 @@ export function AnalyticsDashboard({
           orders={filtered}
           onHistory={(o) => setHistoryOrder(o)}
           onFotos={(o) => { setFotoOrder(o); setFotoEtapa("S1") }}
-          onFacturado={handleFacturado}
         />
       )}
 
@@ -815,12 +808,10 @@ function OrderCard({
   order,
   onHistory,
   onFotos,
-  onFacturado,
 }: {
   order: EnrichedOrder
   onHistory: () => void
   onFotos: () => void
-  onFacturado: (id: number | string, fecha: string | null) => void
 }) {
   return (
     <Card className="group relative overflow-hidden border-border/60 bg-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-violet-500/10">
@@ -878,15 +869,6 @@ function OrderCard({
             <span className="font-bold tabular-nums text-foreground">{order.__progress}%</span>
           </div>
           <ProgressBar value={order.__progress} />
-          <FacturarButton
-            folio={order.folio}
-            ordenId={order.id}
-            faseActual={order.fase_actual}
-            fechaFacturacion={order.fecha_facturacion}
-            onDone={(fecha) => onFacturado(order.id, fecha)}
-            size="xs"
-            className="w-full justify-center"
-          />
           <div className="flex items-center justify-between gap-2 pt-1">
             {order.fecha_facturacion ? (
               <EntregadoBadge fechaFacturacion={order.fecha_facturacion} />
@@ -923,12 +905,10 @@ function OrdersListView({
   orders,
   onHistory,
   onFotos,
-  onFacturado,
 }: {
   orders: EnrichedOrder[]
   onHistory: (o: EnrichedOrder) => void
   onFotos: (o: EnrichedOrder) => void
-  onFacturado: (id: number | string, fecha: string | null) => void
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border/60 bg-white shadow-sm">
@@ -1023,14 +1003,6 @@ function OrdersListView({
 
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <FacturarButton
-                        folio={o.folio}
-                        ordenId={o.id}
-                        faseActual={o.fase_actual}
-                        fechaFacturacion={o.fecha_facturacion}
-                        onDone={(fecha) => onFacturado(o.id, fecha)}
-                        size="xs"
-                      />
                       <Button
                         size="sm"
                         variant="ghost"
