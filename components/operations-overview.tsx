@@ -5,6 +5,7 @@ import {
   RefreshCw,
   Activity,
   Download,
+  HelpCircle,
   Layers,
   Package,
   AlertTriangle,
@@ -34,6 +35,16 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { FolioLink } from "@/components/folio-detail-drawer"
+import { LEAD_DIAS, evaluarEtapa, type LeadTimeRow } from "@/lib/lead-times"
+import { PHASE_PACE } from "@/lib/risk"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import {
   Table,
   TableBody,
@@ -116,6 +127,9 @@ function formatDate(iso: string | null) {
 
 function getRiesgoVisuals(r: string | null | undefined) {
   const v = (r ?? "").toLowerCase()
+  if (v.includes("entregad")) {
+    return { label: r ?? "Entregado", className: "bg-violet-500/10 text-violet-600 ring-violet-500/20" }
+  }
   if (v.includes("vencid")) {
     return { label: r ?? "Vencido", className: "bg-red-500/10 text-red-500 ring-red-500/20" }
   }
@@ -138,8 +152,12 @@ function isAtTiempo(r: string | null | undefined) {
   return r === "A Tiempo"
 }
 
+/** Fila mínima para evaluar plazos de diseño y corte. */
+type LeadRow = LeadTimeRow & { folio: string; fecha_facturacion: string | null }
+
 export function OperationsOverview({ configMissing }: { configMissing: boolean }) {
   const [rows, setRows] = useState<ResumenRow[]>([])
+  const [leadRows, setLeadRows] = useState<LeadRow[]>([])
   const [calidadRows, setCalidadRows] = useState<{ maquilero: string | null; calidad: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -158,7 +176,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       const supabase = getSupabase()
       if (!supabase) throw new Error("Supabase no configurado")
 
-      const [{ data, error: err }, { data: calData }] = await Promise.all([
+      const [{ data, error: err }, { data: calData }, { data: leadData }] = await Promise.all([
         supabase
           .from("vw_resumen_operacion")
           .select("*")
@@ -170,6 +188,15 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           .eq("idempresa", IDEMPRESA)
           .not("calidad", "is", null)
           .gt("calidad", 0),
+        // Cumplimiento de plazos previos a S1. Se consulta la vista integrada
+        // porque vw_resumen_operacion excluye 'Por Programar', que es
+        // justamente donde diseño y corte suelen ir atrasados.
+        supabase
+          .from("vw_seguimiento_integrado")
+          .select(
+            "folio, fecha_s1, fecha_cancelacion, fecha_diseno, cumplimiento_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
+          )
+          .eq("idempresa", IDEMPRESA),
       ])
 
       if (err) throw err
@@ -177,6 +204,10 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       setCalidadRows(
         ((calData ?? []) as { maquilero: string | null; calidad: number }[])
           .filter((r) => r.calidad != null && r.calidad > 0),
+      )
+      // Las facturadas ya cerraron su ciclo: no se evalúan sus plazos
+      setLeadRows(
+        ((leadData ?? []) as LeadRow[]).filter((r) => !r.fecha_facturacion),
       )
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error al consultar vw_resumen_operacion"
@@ -229,6 +260,33 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       return { fase: g.label, dias: avg }
     })
   }, [filteredRows])
+
+  /** Cumplimiento de los plazos previos a S1 (Diseño 14 d · Corte 7 d). */
+  const leadStats = useMemo(() => {
+    const base = { aTiempo: 0, aDestiempo: 0, pendiente: 0 }
+    const stats = { diseno: { ...base }, corte: { ...base } }
+    for (const r of leadRows) {
+      for (const etapa of ["diseno", "corte"] as const) {
+        const { estado } = evaluarEtapa(r, etapa)
+        if (estado === "a-tiempo") stats[etapa].aTiempo++
+        else if (estado === "a-destiempo") stats[etapa].aDestiempo++
+        else if (estado === "pendiente") stats[etapa].pendiente++
+      }
+    }
+    const pct = (s: typeof base) => {
+      const evaluadas = s.aTiempo + s.aDestiempo
+      return evaluadas > 0 ? Math.round((s.aTiempo / evaluadas) * 100) : null
+    }
+    return {
+      ...stats,
+      pctDiseno: pct(stats.diseno),
+      pctCorte: pct(stats.corte),
+      chart: [
+        { etapa: "Diseño", "A tiempo": stats.diseno.aTiempo, "A destiempo": stats.diseno.aDestiempo },
+        { etapa: "Corte", "A tiempo": stats.corte.aTiempo, "A destiempo": stats.corte.aDestiempo },
+      ],
+    }
+  }, [leadRows])
 
   /** Exporta el master tracking (filas filtradas) a Excel. */
   const exportMasterTracking = () => {
@@ -500,6 +558,75 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           </span>
         )}
       </div>
+
+      {/* Cumplimiento de plazos previos a maquila */}
+      <section className="rounded-xl border border-border/60 bg-white/80 p-5 shadow-sm backdrop-blur">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">
+              Cumplimiento de plazos antes de maquila
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Diseño debe estar listo <strong>{LEAD_DIAS.diseno} días</strong> antes de S1 ·
+              Corte <strong>{LEAD_DIAS.corte} días</strong> antes
+            </p>
+          </div>
+          <LeadTimeInfo />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+          <div className="grid grid-cols-2 gap-3">
+            <LeadKpi
+              etapa="Diseño"
+              dias={LEAD_DIAS.diseno}
+              pct={leadStats.pctDiseno}
+              aTiempo={leadStats.diseno.aTiempo}
+              aDestiempo={leadStats.diseno.aDestiempo}
+              pendiente={leadStats.diseno.pendiente}
+              loading={loading}
+            />
+            <LeadKpi
+              etapa="Corte"
+              dias={LEAD_DIAS.corte}
+              pct={leadStats.pctCorte}
+              aTiempo={leadStats.corte.aTiempo}
+              aDestiempo={leadStats.corte.aDestiempo}
+              pendiente={leadStats.corte.pendiente}
+              loading={loading}
+            />
+          </div>
+
+          <div className="min-h-[180px]">
+            {loading ? (
+              <Skeleton className="h-[180px] w-full rounded-lg" />
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart
+                  data={leadStats.chart}
+                  layout="vertical"
+                  margin={{ top: 8, right: 16, left: 8, bottom: 0 }}
+                >
+                  <CartesianGrid stroke="oklch(0.92 0.02 280)" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 11, fill: "oklch(0.5 0.03 280)" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis type="category" dataKey="etapa" width={60} tick={{ fontSize: 12, fill: "oklch(0.4 0.04 280)" }} tickLine={false} axisLine={false} />
+                  <RechartsTooltip
+                    cursor={{ fill: "oklch(0.65 0.15 220 / 0.06)" }}
+                    contentStyle={{
+                      background: "var(--card)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="A tiempo" stackId="a" fill="oklch(0.62 0.18 145)" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="A destiempo" stackId="a" fill="oklch(0.62 0.2 20)" radius={[0, 6, 6, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Insight del cuello de botella */}
       {bottleneckInsight && bottleneckInsight.dias > bottleneckInsight.promedioGeneral * 1.5 && (
@@ -1230,5 +1357,98 @@ function ChartCard({
         children
       )}
     </div>
+  )
+}
+
+/** KPI de cumplimiento de plazo de una etapa previa a maquila. */
+function LeadKpi({
+  etapa,
+  dias,
+  pct,
+  aTiempo,
+  aDestiempo,
+  pendiente,
+  loading,
+}: {
+  etapa: string
+  dias: number
+  pct: number | null
+  aTiempo: number
+  aDestiempo: number
+  pendiente: number
+  loading: boolean
+}) {
+  const tone =
+    pct === null ? "text-muted-foreground"
+      : pct >= 80 ? "text-emerald-600"
+      : pct >= 50 ? "text-amber-600"
+      : "text-rose-600"
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-xs font-semibold text-foreground">{etapa}</p>
+        <span className="text-[10px] text-muted-foreground">{dias} d antes de S1</span>
+      </div>
+      {loading ? (
+        <Skeleton className="mt-3 h-8 w-20" />
+      ) : (
+        <>
+          <p className={cn("mt-2 text-3xl font-bold tabular-nums", tone)}>
+            {pct === null ? "—" : `${pct}%`}
+          </p>
+          <p className="text-[11px] text-muted-foreground">a tiempo</p>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+            <span className="text-emerald-600">{aTiempo} a tiempo</span>
+            <span className="text-rose-600">{aDestiempo} a destiempo</span>
+            {pendiente > 0 && <span className="text-muted-foreground">{pendiente} en plazo</span>}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Explica cómo se mide el cumplimiento de plazos. */
+function LeadTimeInfo() {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-xs text-muted-foreground">
+          <HelpCircle className="size-3.5" />
+          ¿Cómo se mide?
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Plazos previos a maquila</DialogTitle>
+          <DialogDescription>
+            Diseño y Corte se miden hacia atrás desde el arranque de maquila (S1), de forma
+            acumulada.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div className="rounded-lg border border-border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+            {"Diseño        Corte          S1"}<br />
+            {"───┬────────────┬─────────────┬──►"}<br />
+            {"   │◄─ 7 días ─►│◄─ 7 días ──►│"}<br />
+            {"   │◄────── 14 días ─────────►│"}
+          </div>
+          <ul className="space-y-1.5 text-xs text-muted-foreground">
+            <li>· <strong className="text-foreground">Corte</strong> debe estar listo {LEAD_DIAS.corte} días antes de S1.</li>
+            <li>· <strong className="text-foreground">Diseño</strong> {LEAD_DIAS.diseno} días antes (los 7 de corte más 7 propios).</li>
+            <li>
+              · Si la etapa ya se cumplió, se compara su fecha real contra el límite. Si sigue
+              pendiente, se compara contra hoy.
+            </li>
+            <li>
+              · Cuando la orden aún no llega a S1, se estima esa fecha restando {PHASE_PACE.S1} días
+              a la fecha de entrega. Esos indicadores se muestran con borde punteado.
+            </li>
+            <li>· Las órdenes facturadas no se evalúan.</li>
+          </ul>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

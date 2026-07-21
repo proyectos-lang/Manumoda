@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, CheckCircle2, Circle, Clock } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Circle, Clock, PackageCheck } from "lucide-react"
 
 import type { Risk } from "@/lib/risk"
 import { cn } from "@/lib/utils"
@@ -16,6 +16,11 @@ export function RiskBadge({
   className?: string
 }) {
   const config: Record<Risk, { label: string; className: string; icon: typeof AlertTriangle }> = {
+    entregado: {
+      label: "Entregado",
+      className: "border-violet-300 bg-violet-50 text-violet-700",
+      icon: PackageCheck,
+    },
     vencido: {
       label: days !== null ? `Vencido · ${Math.abs(days)}d` : "Vencido",
       className: "border-rose-300 bg-rose-50 text-rose-700",

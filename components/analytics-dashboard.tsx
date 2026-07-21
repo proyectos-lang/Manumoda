@@ -33,7 +33,12 @@ import { RiskBadge } from "@/components/risk-badge"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { FolioLink } from "@/components/folio-detail-drawer"
+import { EntregadoBadge, FacturarButton } from "@/components/facturar-button"
+import { LeadTimeBadge } from "@/components/lead-time-badge"
+import { etapaAtrasada, evaluarEtapa, PUNTUALIDAD_LABEL } from "@/lib/lead-times"
 import { RiesgoInfoDialog } from "@/components/riesgo-info-dialog"
+import { IncomingFilterChip } from "@/components/incoming-filter-chip"
+import type { ModuleFilter } from "@/lib/module-filter"
 import { cn } from "@/lib/utils"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -201,7 +206,13 @@ function fmtDateTime(d: string | null | undefined): string {
   }
 }
 
-export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }) {
+export function AnalyticsDashboard({
+  configMissing,
+  initialFilter = null,
+}: {
+  configMissing: boolean
+  initialFilter?: ModuleFilter | null
+}) {
   const [orders, setOrders] = useState<SeguimientoRow[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -210,6 +221,10 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
   const [fechaPedido, setFechaPedido] = useState<Date | undefined>()
   const [fechaCancel, setFechaCancel] = useState<Date | undefined>()
   const [view, setView] = useState<"cards" | "list">("cards")
+
+  /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
+  const [incomingFilter, setIncomingFilter] = useState<ModuleFilter | null>(initialFilter)
+  useEffect(() => { setIncomingFilter(initialFilter) }, [initialFilter])
 
   const [historyOrder, setHistoryOrder] = useState<EnrichedOrder | null>(null)
   const [fotoOrder, setFotoOrder] = useState<EnrichedOrder | null>(null)
@@ -303,13 +318,24 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
         const oc = o.fecha_cancelacion ? String(o.fecha_cancelacion).slice(0, 10) : null
         if (oc !== fc) return false
       }
+      // Filtro heredado del inicio. Excluye S7 (ya terminadas) para que el
+      // resultado coincida con el número que muestra la tarjeta del inicio:
+      // una orden entregada no es un vencimiento accionable.
+      if (incomingFilter === "vencidos") {
+        if (o.__risk !== "vencido" || o.fase_actual === "S7") return false
+      }
+      if (incomingFilter === "por-vencer") {
+        if (o.__risk !== "riesgo" || o.fase_actual === "S7") return false
+      }
+      if (incomingFilter === "diseno-atrasado" && !etapaAtrasada(o, "diseno")) return false
+      if (incomingFilter === "corte-atrasado" && !etapaAtrasada(o, "corte")) return false
       return true
     })
-  }, [enriched, search, selectedClientes, fechaPedido, fechaCancel])
+  }, [enriched, search, selectedClientes, fechaPedido, fechaCancel, incomingFilter])
 
   const summary = useMemo(() => {
     const total = filtered.length
-    const counts = { vencido: 0, riesgo: 0, "a-tiempo": 0, "sin-fecha": 0 } as Record<Risk, number>
+    const counts = { entregado: 0, vencido: 0, riesgo: 0, "a-tiempo": 0, "sin-fecha": 0 } as Record<Risk, number>
     let progressSum = 0
     for (const o of filtered) {
       counts[o.__risk]++
@@ -330,11 +356,18 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
     setSelectedClientes([])
     setFechaPedido(undefined)
     setFechaCancel(undefined)
+    setIncomingFilter(null)
+  }
+
+  /** Refleja la facturación sin recargar toda la vista. */
+  const handleFacturado = (id: number | string, fecha: string | null) => {
+    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, fecha_facturacion: fecha } : o)))
   }
 
   /** Exporta las órdenes filtradas (con el pipeline completo) a Excel. */
   const exportToExcel = () => {
     const RISK_LABEL: Record<Risk, string> = {
+      entregado: "Entregado",
       vencido: "Vencido",
       riesgo: "En Riesgo",
       "a-tiempo": "A Tiempo",
@@ -361,6 +394,9 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
       S4: o.fecha_s4 ?? "", S5: o.fecha_s5 ?? "", S6: o.fecha_s6 ?? "", S7: o.fecha_s7 ?? "",
       Maquilero: o.maquilero_nombre ?? "",
       Calidad: o.calidad ?? "",
+      Facturado: o.fecha_facturacion ?? "",
+      "Plazo Diseño": PUNTUALIDAD_LABEL[evaluarEtapa(o, "diseno").estado],
+      "Plazo Corte": PUNTUALIDAD_LABEL[evaluarEtapa(o, "corte").estado],
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
@@ -373,7 +409,8 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
     search.length > 0 ||
     selectedClientes.length > 0 ||
     fechaPedido !== undefined ||
-    fechaCancel !== undefined
+    fechaCancel !== undefined ||
+    incomingFilter !== null
 
   return (
     <div className="space-y-6">
@@ -501,6 +538,13 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
 
           <RiesgoInfoDialog />
         </div>
+
+        {/* Filtro heredado del inicio */}
+        {incomingFilter && (
+          <div className="mt-3">
+            <IncomingFilterChip filter={incomingFilter} onClear={() => setIncomingFilter(null)} />
+          </div>
+        )}
       </div>
 
       {/* Body */}
@@ -523,6 +567,7 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
               order={o}
               onHistory={() => setHistoryOrder(o)}
               onFotos={() => { setFotoOrder(o); setFotoEtapa("S1") }}
+              onFacturado={handleFacturado}
             />
           ))}
         </div>
@@ -531,6 +576,7 @@ export function AnalyticsDashboard({ configMissing }: { configMissing: boolean }
           orders={filtered}
           onHistory={(o) => setHistoryOrder(o)}
           onFotos={(o) => { setFotoOrder(o); setFotoEtapa("S1") }}
+          onFacturado={handleFacturado}
         />
       )}
 
@@ -765,7 +811,17 @@ function DateFilterPopover({
   )
 }
 
-function OrderCard({ order, onHistory, onFotos }: { order: EnrichedOrder; onHistory: () => void; onFotos: () => void }) {
+function OrderCard({
+  order,
+  onHistory,
+  onFotos,
+  onFacturado,
+}: {
+  order: EnrichedOrder
+  onHistory: () => void
+  onFotos: () => void
+  onFacturado: (id: number | string, fecha: string | null) => void
+}) {
   return (
     <Card className="group relative overflow-hidden border-border/60 bg-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-violet-500/10">
       <CardContent className="flex h-full flex-col gap-3 p-5">
@@ -808,14 +864,35 @@ function OrderCard({ order, onHistory, onFotos }: { order: EnrichedOrder; onHist
           />
         </div>
 
+        {/* Cumplimiento de plazos previos a S1 */}
+        {(etapaAtrasada(order, "diseno") || etapaAtrasada(order, "corte")) && (
+          <div className="flex flex-wrap items-center gap-1">
+            <LeadTimeBadge row={order} etapa="diseno" />
+            <LeadTimeBadge row={order} etapa="corte" />
+          </div>
+        )}
+
         <div className="mt-auto space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="text-muted-foreground">Avance</span>
             <span className="font-bold tabular-nums text-foreground">{order.__progress}%</span>
           </div>
           <ProgressBar value={order.__progress} />
+          <FacturarButton
+            folio={order.folio}
+            ordenId={order.id}
+            faseActual={order.fase_actual}
+            fechaFacturacion={order.fecha_facturacion}
+            onDone={(fecha) => onFacturado(order.id, fecha)}
+            size="xs"
+            className="w-full justify-center"
+          />
           <div className="flex items-center justify-between gap-2 pt-1">
-            <PhaseBadge phase={order.fase_actual} />
+            {order.fecha_facturacion ? (
+              <EntregadoBadge fechaFacturacion={order.fecha_facturacion} />
+            ) : (
+              <PhaseBadge phase={order.fase_actual} />
+            )}
             <div className="flex gap-1">
               <Button
                 size="sm"
@@ -846,10 +923,12 @@ function OrdersListView({
   orders,
   onHistory,
   onFotos,
+  onFacturado,
 }: {
   orders: EnrichedOrder[]
   onHistory: (o: EnrichedOrder) => void
   onFotos: (o: EnrichedOrder) => void
+  onFacturado: (id: number | string, fecha: string | null) => void
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border/60 bg-white shadow-sm">
@@ -910,7 +989,10 @@ function OrdersListView({
 
                   {/* 1 · Diseño */}
                   <td className="border-l border-border/60 px-4 py-3">
-                    <StageCell state={dis} fecha={o.fecha_diseno} />
+                    <div className="flex flex-col items-start gap-1">
+                      <StageCell state={dis} fecha={o.fecha_diseno} />
+                      <LeadTimeBadge row={o} etapa="diseno" />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {dis === "na" ? "—" : o.nombre_disenador || "Sin asignar"}
@@ -918,7 +1000,10 @@ function OrdersListView({
 
                   {/* 2 · Corte */}
                   <td className="border-l border-border/60 px-4 py-3">
-                    <StageCell state={cor} fecha={o.fecha_corte} />
+                    <div className="flex flex-col items-start gap-1">
+                      <StageCell state={cor} fecha={o.fecha_corte} />
+                      <LeadTimeBadge row={o} etapa="corte" />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {cor === "na" ? "—" : o.nombre_cortador || "Sin asignar"}
@@ -926,7 +1011,11 @@ function OrdersListView({
 
                   {/* 3 · Maquila */}
                   <td className="border-l border-border/60 px-4 py-3">
-                    <PhaseBadge phase={o.fase_actual} />
+                    {o.fecha_facturacion ? (
+                      <EntregadoBadge fechaFacturacion={o.fecha_facturacion} />
+                    ) : (
+                      <PhaseBadge phase={o.fase_actual} />
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <PhaseBubbleTimeline row={o} />
@@ -934,6 +1023,14 @@ function OrdersListView({
 
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      <FacturarButton
+                        folio={o.folio}
+                        ordenId={o.id}
+                        faseActual={o.fase_actual}
+                        fechaFacturacion={o.fecha_facturacion}
+                        onDone={(fecha) => onFacturado(o.id, fecha)}
+                        size="xs"
+                      />
                       <Button
                         size="sm"
                         variant="ghost"

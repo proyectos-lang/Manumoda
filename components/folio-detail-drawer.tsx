@@ -43,6 +43,7 @@ import {
 import { cn } from "@/lib/utils"
 
 import { Badge } from "@/components/ui/badge"
+import { EntregadoBadge, FacturarButton } from "@/components/facturar-button"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { RiskBadge } from "@/components/risk-badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -383,7 +384,11 @@ export function FolioDetailProvider({ children }: { children: ReactNode }) {
                   <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-violet-700">
                     <Factory className="size-3.5" /> 3 · Maquila
                   </p>
-                  <Badge variant="outline" className="text-xs">{row.fase_actual}</Badge>
+                  {row.fecha_facturacion ? (
+                    <EntregadoBadge fechaFacturacion={row.fecha_facturacion} />
+                  ) : (
+                    <Badge variant="outline" className="text-xs">{row.fase_actual}</Badge>
+                  )}
                 </div>
 
                 <div className="mb-3 flex items-center gap-3">
@@ -453,6 +458,27 @@ export function FolioDetailProvider({ children }: { children: ReactNode }) {
                     {row.comentarios_generales}
                   </div>
                 )}
+
+                {/* Cierre del ciclo: facturación */}
+                <div className="mt-3 border-t border-border pt-3">
+                  <FacturarButton
+                    folio={row.folio}
+                    ordenId={row.id}
+                    faseActual={row.fase_actual}
+                    fechaFacturacion={row.fecha_facturacion}
+                    onDone={(fecha) =>
+                      setData((prev) =>
+                        prev ? { ...prev, row: { ...prev.row, fecha_facturacion: fecha } } : prev,
+                      )
+                    }
+                    className="w-full justify-center"
+                  />
+                  {row.fecha_facturacion && (
+                    <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
+                      Facturada el {fmtDate(row.fecha_facturacion)} — no genera alertas
+                    </p>
+                  )}
+                </div>
               </section>
             </div>
           )}

@@ -39,6 +39,10 @@ export function RiesgoInfoDialog() {
 
         <div className="space-y-3 text-sm">
           <div className="space-y-2">
+            <Rule color="bg-violet-500" label="Entregado">
+              La orden fue marcada como <strong>facturada</strong>. Cierra el ciclo: ya no se
+              evalúa contra su fecha de entrega ni genera alertas.
+            </Rule>
             <Rule color="bg-rose-500" label="Vencido">
               La fecha de entrega ya pasó.
             </Rule>

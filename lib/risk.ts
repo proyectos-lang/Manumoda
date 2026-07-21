@@ -5,7 +5,11 @@
  * vw_seguimiento_integrado para que cliente y servidor coincidan.
  */
 
-export type Risk = "vencido" | "riesgo" | "a-tiempo" | "sin-fecha"
+/**
+ * `entregado` = la orden fue facturada. Cierra el ciclo: ya no cuenta
+ * como vencida ni genera alertas, sin importar su fecha de entrega.
+ */
+export type Risk = "entregado" | "vencido" | "riesgo" | "a-tiempo" | "sin-fecha"
 
 /** Campos de fase que marcan avance en maquila. */
 export const PHASE_FIELDS = [
@@ -87,7 +91,10 @@ export function computeRisk(
   fechaCancel: string | null | undefined,
   progress: number,
   faseActual?: string | null,
+  /** Fecha de facturación: si existe, la orden está entregada y cierra el ciclo. */
+  fechaFacturacion?: string | null,
 ): { risk: Risk; days: number | null } {
+  if (fechaFacturacion) return { risk: "entregado", days: null }
   if (progress >= 100) return { risk: "a-tiempo", days: 0 }
   const days = daysUntil(fechaCancel)
   if (days === null) return { risk: "sin-fecha", days: null }
@@ -105,6 +112,8 @@ export function computeRisk(
  */
 export function riskFromServer(riesgoEntrega: string | null | undefined): Risk {
   switch (riesgoEntrega) {
+    case "Entregado":
+      return "entregado"
     case "Vencido":
       return "vencido"
     case "En Riesgo":

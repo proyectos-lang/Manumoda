@@ -35,6 +35,8 @@ export type OrdenProduccion = {
   corte_programado?: boolean | null
   fecha_limite_confirmacion?: string | null
   fecha_contra_muestra?: string | null
+  /** Si tiene valor, la orden está entregada: no cuenta como vencida ni alerta. */
+  fecha_facturacion?: string | null
 }
 
 /**
@@ -84,6 +86,8 @@ export type SeguimientoRow = {
   // riesgo calculado en la vista
   riesgo_entrega: string | null
   dias_restantes: number | null
+  /** Si tiene valor, la orden está entregada: no cuenta como vencida ni alerta. */
+  fecha_facturacion: string | null
 }
 
 export type VwPlanCorteDetalle = {

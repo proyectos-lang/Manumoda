@@ -16,6 +16,7 @@ import { CorteModule } from "@/components/corte-module"
 import { ColaboradoresModule } from "@/components/colaboradores-module"
 import { LoginScreen } from "@/components/login-screen"
 import { FolioDetailProvider } from "@/components/folio-detail-drawer"
+import type { ModuleFilter } from "@/lib/module-filter"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Toaster } from "@/components/ui/sonner"
 import { useAuth } from "@/lib/auth-context"
@@ -37,6 +38,20 @@ export default function Page() {
   const [active, setActive] = useState<ModuleKey>("inicio")
   const [refreshKey, setRefreshKey] = useState(0)
 
+  /**
+   * Filtro que el módulo destino debe aplicar al abrirse.
+   * Lo emiten las tarjetas de "Atención hoy" del inicio.
+   */
+  const [pendingFilter, setPendingFilter] = useState<ModuleFilter | null>(null)
+
+  const navigate = (m: ModuleKey, filter?: ModuleFilter) => {
+    setPendingFilter(filter ?? null)
+    setActive(m)
+  }
+
+  // Al cambiar de módulo desde el menú lateral, el filtro heredado se descarta
+  const handleSidebarChange = (m: ModuleKey) => navigate(m)
+
   const hasUrl = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL)
   const hasKey = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
   const configMissing = !hasUrl || !hasKey
@@ -56,14 +71,14 @@ export default function Page() {
   return (
     <FolioDetailProvider>
     <main className="content-cmyk-gradient min-h-screen">
-      <AppSidebar active={active} onChange={setActive} user={user} onLogout={logout} />
+      <AppSidebar active={active} onChange={handleSidebarChange} user={user} onLogout={logout} />
 
       <div className="lg:pl-[280px]">
         <AppHeader title={TITLES[active]} />
 
         <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
           {active === "inicio" && (
-            <HomeDashboard configMissing={configMissing} onNavigate={setActive} />
+            <HomeDashboard configMissing={configMissing} onNavigate={navigate} />
           )}
 
           {active === "ingestion" && (
@@ -113,7 +128,11 @@ export default function Page() {
                   </p>
                 </div>
 
-                <OrdersTable refreshKey={refreshKey} configMissing={configMissing} />
+                <OrdersTable
+                  refreshKey={refreshKey}
+                  configMissing={configMissing}
+                  initialFilter={pendingFilter}
+                />
               </section>
             </div>
           )}
@@ -146,7 +165,7 @@ export default function Page() {
                   </div>
                 </div>
 
-                <DesignModule configMissing={configMissing} />
+                <DesignModule configMissing={configMissing} initialFilter={pendingFilter} />
               </section>
             </div>
           )}
@@ -179,7 +198,7 @@ export default function Page() {
                   </div>
                 </div>
 
-                <CorteModule configMissing={configMissing} />
+                <CorteModule configMissing={configMissing} initialFilter={pendingFilter} />
               </section>
             </div>
           )}
@@ -209,6 +228,7 @@ export default function Page() {
                 <ProductionTrackingDashboard
                   refreshKey={refreshKey}
                   configMissing={configMissing}
+                  initialFilter={pendingFilter}
                 />
               </section>
             </div>
@@ -255,7 +275,7 @@ export default function Page() {
                   </p>
                 </div>
 
-                <AnalyticsDashboard configMissing={configMissing} />
+                <AnalyticsDashboard configMissing={configMissing} initialFilter={pendingFilter} />
               </section>
             </div>
           )}

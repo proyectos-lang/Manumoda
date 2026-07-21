@@ -19,10 +19,13 @@ import { toast } from "sonner"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
 import { computeProgress, computeRisk, daysUntil, relativeDays, type Risk } from "@/lib/risk"
+import type { ModuleFilter } from "@/lib/module-filter"
 import { cn } from "@/lib/utils"
 
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
+import { EntregadoBadge, FacturarButton } from "@/components/facturar-button"
 import { FolioLink } from "@/components/folio-detail-drawer"
+import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import { KpiCard } from "@/components/kpi-card"
 import { RiesgoInfoDialog } from "@/components/riesgo-info-dialog"
 import { RiskBadge } from "@/components/risk-badge"
@@ -170,15 +173,21 @@ function detectPhase(form: FormState): Phase {
 export function ProductionTrackingDashboard({
   configMissing,
   refreshKey,
+  initialFilter = null,
 }: {
   configMissing: boolean
   refreshKey?: number
+  /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
+  initialFilter?: ModuleFilter | null
 }) {
   const [orders, setOrders] = useState<OrdenProduccion[]>([])
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<OrdenProduccion | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [search, setSearch] = useState("")
+
+  const [incomingFilter, setIncomingFilter] = useState<ModuleFilter | null>(initialFilter)
+  useEffect(() => { setIncomingFilter(initialFilter) }, [initialFilter])
 
   const fetchOrders = useCallback(async () => {
     if (configMissing) return
@@ -189,7 +198,7 @@ export function ProductionTrackingDashboard({
     const { data, error } = await supabase
       .from("ordenes_produccion")
       .select(
-        "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra",
+        "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra, fecha_facturacion",
       )
       .eq("idempresa", IDEMPRESA)
       .neq("fase_actual", "Por Programar")
@@ -210,14 +219,27 @@ export function ProductionTrackingDashboard({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return orders
-    return orders.filter(
-      (o) =>
-        o.folio.toLowerCase().includes(q) ||
-        (o.cliente ?? "").toLowerCase().includes(q) ||
-        (o.modelo ?? "").toLowerCase().includes(q),
-    )
-  }, [orders, search])
+    let list = orders
+    if (q) {
+      list = list.filter(
+        (o) =>
+          o.folio.toLowerCase().includes(q) ||
+          (o.cliente ?? "").toLowerCase().includes(q) ||
+          (o.modelo ?? "").toLowerCase().includes(q),
+      )
+    }
+    // Filtro heredado del inicio: en producción y sin revisión hace +7 días
+    // (o nunca revisada). Misma regla que el contador del inicio.
+    if (incomingFilter === "sin-revision") {
+      const EN_PRODUCCION = new Set(["S1", "S2", "S3", "S4", "S5", "S6"])
+      list = list.filter((o) => {
+        if (!EN_PRODUCCION.has(o.fase_actual)) return false
+        const dias = daysUntil(o.fecha_ultima_revision)
+        return dias === null || dias <= -7
+      })
+    }
+    return list
+  }, [orders, search, incomingFilter])
 
   /** Riesgo de entrega por orden, calculado una sola vez. */
   const riskByOrder = useMemo(() => {
@@ -225,8 +247,11 @@ export function ProductionTrackingDashboard({
     for (const o of filtered) {
       const { progress } = computeProgress(o)
       // fase_actual activa la regla de ritmo por fase (paridad con el
-      // "A Destiempo" de las vistas SQL)
-      map.set(o.folio, computeRisk(o.fecha_cancelacion, progress, o.fase_actual))
+      // "A Destiempo" de las vistas SQL); fecha_facturacion cierra el ciclo
+      map.set(
+        o.folio,
+        computeRisk(o.fecha_cancelacion, progress, o.fase_actual, o.fecha_facturacion),
+      )
     }
     return map
   }, [filtered])
@@ -267,6 +292,12 @@ export function ProductionTrackingDashboard({
     setSheetOpen(true)
   }
 
+  /** Refleja la facturación en la tabla sin recargar todo. */
+  const handleFacturado = (id: number | string | undefined, fecha: string | null) => {
+    if (id == null) return
+    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, fecha_facturacion: fecha } : o)))
+  }
+
   if (configMissing) {
     return (
       <Alert variant="destructive">
@@ -282,6 +313,11 @@ export function ProductionTrackingDashboard({
 
   return (
     <div className="space-y-4">
+      {/* Filtro heredado del inicio */}
+      {incomingFilter && (
+        <IncomingFilterChip filter={incomingFilter} onClear={() => setIncomingFilter(null)} />
+      )}
+
       {/* Alerta de pedidos vencidos o próximos a vencer */}
       <DeadlineAlertBanner
         items={filtered.map((o) => ({
@@ -389,6 +425,7 @@ export function ProductionTrackingDashboard({
             loading={loading}
             onUpdate={handleOpen}
             riskByOrder={riskByOrder}
+            onFacturado={handleFacturado}
           />
         </TabsContent>
 
@@ -417,11 +454,13 @@ function TableView({
   loading,
   onUpdate,
   riskByOrder,
+  onFacturado,
 }: {
   orders: OrdenProduccion[]
   loading: boolean
   onUpdate: (o: OrdenProduccion) => void
   riskByOrder: Map<string, { risk: Risk; days: number | null }>
+  onFacturado: (id: number | string | undefined, fecha: string | null) => void
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
@@ -496,12 +535,16 @@ function TableView({
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{o.piezas ?? 0}</TableCell>
                 <TableCell>
-                  <Badge
-                    variant="outline"
-                    className={cn("font-medium", PHASE_BADGE[o.fase_actual] ?? "")}
-                  >
-                    {o.fase_actual}
-                  </Badge>
+                  {o.fecha_facturacion ? (
+                    <EntregadoBadge fechaFacturacion={o.fecha_facturacion} />
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className={cn("font-medium", PHASE_BADGE[o.fase_actual] ?? "")}
+                    >
+                      {o.fase_actual}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                   {fmtDateTime(o.fecha_ultima_revision)}
@@ -552,14 +595,23 @@ function TableView({
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    onClick={() => onUpdate(o)}
-                    className="gap-1.5 bg-violet-600 text-white hover:bg-violet-700"
-                  >
-                    <ClipboardPen className="size-3.5" />
-                    Registrar Avance
-                  </Button>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <FacturarButton
+                      folio={o.folio}
+                      ordenId={o.id}
+                      faseActual={o.fase_actual}
+                      fechaFacturacion={o.fecha_facturacion}
+                      onDone={(fecha) => onFacturado(o.id, fecha)}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => onUpdate(o)}
+                      className="gap-1.5 bg-violet-600 text-white hover:bg-violet-700"
+                    >
+                      <ClipboardPen className="size-3.5" />
+                      Registrar Avance
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))

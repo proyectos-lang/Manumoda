@@ -15,10 +15,13 @@ import {
   Palette,
   Scissors,
   EyeOff,
+  CalendarX,
 } from "lucide-react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell } from "recharts"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { daysUntil } from "@/lib/risk"
+import { etapaAtrasada } from "@/lib/lead-times"
+import type { ModuleFilter } from "@/lib/module-filter"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ModuleKey } from "@/components/app-sidebar"
@@ -38,6 +41,9 @@ type Atencion = {
   disenoPendiente: number
   cortePendiente: number
   sinRevision: number
+  /** Fuera del plazo previo a S1 (Diseño 14 d · Corte 7 d) */
+  disenoAtrasado: number
+  corteAtrasado: number
 }
 
 const FASES = ["Programada", "S1", "S2", "S3", "S4", "S5", "S6", "S7"] as const
@@ -105,7 +111,8 @@ export function HomeDashboard({
   onNavigate,
 }: {
   configMissing: boolean
-  onNavigate: (m: ModuleKey) => void
+  /** El segundo argumento abre el módulo destino ya filtrado. */
+  onNavigate: (m: ModuleKey, filter?: ModuleFilter) => void
 }) {
   const [stats, setStats] = useState<Stats | null>(null)
   const [atencion, setAtencion] = useState<Atencion | null>(null)
@@ -158,7 +165,7 @@ export function HomeDashboard({
         const { data: segRows, error: e4 } = await supabase
           .from("vw_seguimiento_integrado")
           .select(
-            "folio, fase_actual, riesgo_entrega, fecha_ultima_revision, fecha_diseno, cumplimiento_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte",
+            "folio, fase_actual, riesgo_entrega, fecha_ultima_revision, fecha_diseno, cumplimiento_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
           )
           .eq("idempresa", IDEMPRESA)
         if (e4) throw e4
@@ -170,6 +177,8 @@ export function HomeDashboard({
           disenoPendiente: 0,
           cortePendiente: 0,
           sinRevision: 0,
+          disenoAtrasado: 0,
+          corteAtrasado: 0,
         }
         const EN_PRODUCCION = new Set(["S1", "S2", "S3", "S4", "S5", "S6"])
         for (const r of (segRows ?? []) as {
@@ -182,13 +191,19 @@ export function HomeDashboard({
           fecha_corte: string | null
           cumplimiento_corte: string | null
           no_requiere_corte: boolean | null
+          fecha_facturacion: string | null
         }[]) {
           if (r.fase_actual === "S7") continue // terminadas no cuentan
+          if (r.fecha_facturacion) continue // facturadas = entregadas, cierran el ciclo
           if (r.riesgo_entrega === "Vencido") at.vencidos++
           else if (r.riesgo_entrega === "En Riesgo" || r.riesgo_entrega === "A Destiempo") at.porVencer++
 
           if (!r.no_requiere_diseno && r.fecha_diseno && !r.cumplimiento_diseno) at.disenoPendiente++
           if (!r.no_requiere_corte && r.fecha_corte && r.cumplimiento_corte !== "Si") at.cortePendiente++
+
+          // Plazos previos a S1
+          if (etapaAtrasada(r, "diseno")) at.disenoAtrasado++
+          if (etapaAtrasada(r, "corte")) at.corteAtrasado++
 
           if (EN_PRODUCCION.has(r.fase_actual)) {
             const dias = daysUntil(r.fecha_ultima_revision)
@@ -255,26 +270,26 @@ export function HomeDashboard({
           Atención hoy
         </h3>
         {loading ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
               <Skeleton key={i} className="h-24 rounded-2xl" />
             ))}
           </div>
         ) : atencion ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-4">
             <AttentionCard
               label="Vencidos"
               value={atencion.vencidos}
               icon={AlertTriangle}
               tone="rose"
-              onClick={() => onNavigate("riesgos")}
+              onClick={() => onNavigate("riesgos", "vencidos")}
             />
             <AttentionCard
               label="Por vencer"
               value={atencion.porVencer}
               icon={Clock}
               tone="amber"
-              onClick={() => onNavigate("riesgos")}
+              onClick={() => onNavigate("riesgos", "por-vencer")}
               hint="En riesgo o a destiempo"
             />
             <AttentionCard
@@ -282,29 +297,45 @@ export function HomeDashboard({
               value={atencion.sinProgramar}
               icon={ListChecks}
               tone="cyan"
-              onClick={() => onNavigate("ingestion")}
+              onClick={() => onNavigate("ingestion", "sin-programar")}
             />
             <AttentionCard
               label="Diseño por evaluar"
               value={atencion.disenoPendiente}
               icon={Palette}
               tone="indigo"
-              onClick={() => onNavigate("diseno")}
+              onClick={() => onNavigate("diseno", "diseno-pendiente")}
             />
             <AttentionCard
               label="Corte sin cumplir"
               value={atencion.cortePendiente}
               icon={Scissors}
               tone="amber"
-              onClick={() => onNavigate("corte")}
+              onClick={() => onNavigate("corte", "corte-pendiente")}
             />
             <AttentionCard
               label="Sin revisión +7d"
               value={atencion.sinRevision}
               icon={EyeOff}
               tone="slate"
-              onClick={() => onNavigate("seguimiento")}
+              onClick={() => onNavigate("seguimiento", "sin-revision")}
               hint="En maquila sin visita reciente"
+            />
+            <AttentionCard
+              label="Diseño a destiempo"
+              value={atencion.disenoAtrasado}
+              icon={CalendarX}
+              tone="rose"
+              onClick={() => onNavigate("riesgos", "diseno-atrasado")}
+              hint="Fuera del plazo de 14 días antes de S1"
+            />
+            <AttentionCard
+              label="Corte a destiempo"
+              value={atencion.corteAtrasado}
+              icon={CalendarX}
+              tone="rose"
+              onClick={() => onNavigate("riesgos", "corte-atrasado")}
+              hint="Fuera del plazo de 7 días antes de S1"
             />
           </div>
         ) : null}

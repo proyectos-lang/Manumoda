@@ -89,6 +89,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { computeRisk, needsAttention } from "@/lib/risk"
+import type { ModuleFilter } from "@/lib/module-filter"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
@@ -182,11 +183,24 @@ type HojaRow = {
 }
 
 type Catalog = { id: number; nombre: string }
-type Props = { configMissing: boolean }
+type Props = {
+  configMissing: boolean
+  /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
+  initialFilter?: ModuleFilter | null
+}
+
+/** Etiquetas legibles de los valores del filtro de estado. */
+const ESTADO_LABEL: Record<string, string> = {
+  pendiente: "Pendiente",
+  diseno_ok: "Diseño OK",
+  costura_ok: "Costura OK",
+  completo: "Completo",
+  rechazado: "Rechazado",
+}
 
 // ── Componente principal ───────────────────────────────────────────────────────
 
-export function DesignModule({ configMissing }: Props) {
+export function DesignModule({ configMissing, initialFilter = null }: Props) {
   // Estado principal
   const [records, setRecords] = useState<DisenoProgramacion[]>([])
   const [loading, setLoading] = useState(false)
@@ -224,6 +238,12 @@ export function DesignModule({ configMissing }: Props) {
       if (f.filterEstado     !== undefined) setFilterEstado(f.filterEstado)
     } catch { /* sessionStorage no disponible o JSON inválido */ }
   }, [])
+
+  // Filtro heredado del inicio: reutiliza el filtro de estado que ya existe.
+  // Va DESPUÉS del efecto de restaurar para ganarle en el montaje.
+  useEffect(() => {
+    if (initialFilter === "diseno-pendiente") setFilterEstado("pendiente")
+  }, [initialFilter])
 
   // Persistir filtros cuando cambian
   useEffect(() => {
@@ -784,7 +804,10 @@ export function DesignModule({ configMissing }: Props) {
                   <FilterChip label={`Categoría: ${filterCategoria}`} onClear={() => setFilterCategoria("__all__")} />
                 )}
                 {filterEstado !== "__all__" && (
-                  <FilterChip label={`Estado: ${filterEstado}`} onClear={() => setFilterEstado("__all__")} />
+                  <FilterChip
+                    label={`Estado: ${ESTADO_LABEL[filterEstado] ?? filterEstado}`}
+                    onClear={() => setFilterEstado("__all__")}
+                  />
                 )}
               </div>
             )}

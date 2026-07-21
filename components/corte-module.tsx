@@ -21,6 +21,7 @@ import { toast } from "sonner"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { VwBonosCorte, VwPlanCorteDetalle } from "@/lib/types"
 import { computeRisk, needsAttention } from "@/lib/risk"
+import type { ModuleFilter } from "@/lib/module-filter"
 import { cn } from "@/lib/utils"
 
 import { Badge } from "@/components/ui/badge"
@@ -28,6 +29,7 @@ import { Button } from "@/components/ui/button"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { EficienciaTrend } from "@/components/eficiencia-trend"
+import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import { KpiCard } from "@/components/kpi-card"
 import { EditCorteVariablesSheet } from "@/components/edit-corte-variables-sheet"
 import { CorteMultipliersDialog } from "@/components/corte-multipliers-dialog"
@@ -92,7 +94,14 @@ type Cortador = { id: number; nombre: string }
 
 // ─── Main Module ─────────────────────────────────────────────────────────────
 
-export function CorteModule({ configMissing }: { configMissing: boolean }) {
+export function CorteModule({
+  configMissing,
+  initialFilter = null,
+}: {
+  configMissing: boolean
+  /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
+  initialFilter?: ModuleFilter | null
+}) {
   return (
     <Tabs defaultValue="plan" className="w-full">
       <TabsList>
@@ -101,7 +110,7 @@ export function CorteModule({ configMissing }: { configMissing: boolean }) {
       </TabsList>
 
       <TabsContent value="plan" className="mt-5">
-        <PlanCorteTab configMissing={configMissing} />
+        <PlanCorteTab configMissing={configMissing} initialFilter={initialFilter} />
       </TabsContent>
 
       <TabsContent value="bonos" className="mt-5">
@@ -119,13 +128,23 @@ type PatchRow = {
   comentarios: string | null
 }
 
-function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
+function PlanCorteTab({
+  configMissing,
+  initialFilter = null,
+}: {
+  configMissing: boolean
+  initialFilter?: ModuleFilter | null
+}) {
   const [rows, setRows] = useState<VwPlanCorteDetalle[]>([])
   const [cortadores, setCortadores] = useState<Cortador[]>([])
   const [loading, setLoading] = useState(false)
   const [savingId, setSavingId] = useState<number | null>(null)
   const [filterSemana, setFilterSemana] = useState<string>("__all__")
   const [search, setSearch] = useState("")
+
+  /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
+  const [incomingFilter, setIncomingFilter] = useState<ModuleFilter | null>(initialFilter)
+  useEffect(() => { setIncomingFilter(initialFilter) }, [initialFilter])
   const [editVarsOpen, setEditVarsOpen] = useState(false)
   const [multipliersOpen, setMultipliersOpen] = useState(false)
 
@@ -203,8 +222,12 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
           (r.categoria_tela ?? "").toLowerCase().includes(q),
       )
     }
+    // Filtro heredado del inicio
+    if (incomingFilter === "corte-pendiente") {
+      list = list.filter((r) => r.cumplimiento_corte !== "Si")
+    }
     return list
-  }, [rows, filterSemana, search])
+  }, [rows, filterSemana, search, incomingFilter])
 
   const kpis = useMemo(() => {
     let cumplidos = 0
@@ -441,6 +464,11 @@ function PlanCorteTab({ configMissing }: { configMissing: boolean }) {
           </Button>
         </div>
       </div>
+
+      {/* Filtro heredado del inicio */}
+      {incomingFilter && (
+        <IncomingFilterChip filter={incomingFilter} onClear={() => setIncomingFilter(null)} />
+      )}
 
       {/* Barra de acción masiva (solo con filas seleccionadas) */}
       <BulkMoveWeekBar

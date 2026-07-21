@@ -23,7 +23,10 @@ import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
 import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import { FolioLink } from "@/components/folio-detail-drawer"
+import { EntregadoBadge, FacturarButton } from "@/components/facturar-button"
 import { RiskBadge } from "@/components/risk-badge"
+import { IncomingFilterChip } from "@/components/incoming-filter-chip"
+import type { ModuleFilter } from "@/lib/module-filter"
 import { computeRisk } from "@/lib/risk"
 import {
   AlertDialog,
@@ -46,6 +49,8 @@ import {
 type Props = {
   refreshKey: number
   configMissing: boolean
+  /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
+  initialFilter?: ModuleFilter | null
 }
 
 const PAGE_SIZE = 10
@@ -79,10 +84,12 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("es-MX", { year: "numeric", month: "2-digit", day: "2-digit" })
 }
 
-export function OrdersTable({ refreshKey, configMissing }: Props) {
+export function OrdersTable({ refreshKey, configMissing, initialFilter = null }: Props) {
   const [orders, setOrders] = useState<OrdenProduccion[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [incomingFilter, setIncomingFilter] = useState<ModuleFilter | null>(initialFilter)
+  useEffect(() => { setIncomingFilter(initialFilter); setPage(1) }, [initialFilter])
   const [filterCliente, setFilterCliente] = useState("")
   const [filterFolio, setFilterFolio] = useState("")
   const [filterModelo, setFilterModelo] = useState("")
@@ -253,7 +260,7 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
     const { data, error } = await supabase
       .from("ordenes_produccion")
       .select(
-        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado",
+        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_facturacion",
       )
       .eq("idempresa", IDEMPRESA)
       .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
@@ -281,9 +288,11 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
       if (c && !(o.cliente ?? "").toLowerCase().includes(c)) return false
       if (f && !(o.folio ?? "").toLowerCase().includes(f)) return false
       if (m && !(o.modelo ?? "").toLowerCase().includes(m)) return false
+      // Filtro heredado del inicio
+      if (incomingFilter === "sin-programar" && o.fase_actual !== "Por Programar") return false
       return true
     })
-  }, [orders, filterCliente, filterFolio, filterModelo])
+  }, [orders, filterCliente, filterFolio, filterModelo, incomingFilter])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
@@ -324,6 +333,11 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
           Actualizar
         </Button>
       </div>
+
+      {/* Filtro heredado del inicio */}
+      {incomingFilter && (
+        <IncomingFilterChip filter={incomingFilter} onClear={() => setIncomingFilter(null)} />
+      )}
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="overflow-x-auto">
@@ -443,7 +457,12 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                     </TableCell>
                     <TableCell>
                       {(() => {
-                        const { risk, days } = computeRisk(row.fecha_cancelacion, 0, row.fase_actual)
+                        const { risk, days } = computeRisk(
+                          row.fecha_cancelacion,
+                          0,
+                          row.fase_actual,
+                          row.fecha_facturacion,
+                        )
                         return <RiskBadge risk={risk} days={days} />
                       })()}
                     </TableCell>
@@ -640,7 +659,27 @@ export function OrdersTable({ refreshKey, configMissing }: Props) {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <FaseBadge fase={row.fase_actual} />
+                      <div className="flex items-center gap-1.5">
+                        {row.fecha_facturacion ? (
+                          <EntregadoBadge fechaFacturacion={row.fecha_facturacion} />
+                        ) : (
+                          <FaseBadge fase={row.fase_actual} />
+                        )}
+                        <FacturarButton
+                          folio={row.folio}
+                          ordenId={row.id}
+                          faseActual={row.fase_actual}
+                          fechaFacturacion={row.fecha_facturacion}
+                          onDone={(fecha) =>
+                            setOrders((prev) =>
+                              prev.map((o) =>
+                                o.id === row.id ? { ...o, fecha_facturacion: fecha } : o,
+                              ),
+                            )
+                          }
+                          size="xs"
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
