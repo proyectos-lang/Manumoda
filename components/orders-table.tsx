@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
 import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import { FolioLink } from "@/components/folio-detail-drawer"
-import { EntregadoBadge, FacturarButton } from "@/components/facturar-button"
+import { FacturarButton } from "@/components/facturar-button"
 import { RiskBadge } from "@/components/risk-badge"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import type { ModuleFilter } from "@/lib/module-filter"
@@ -86,6 +86,7 @@ function formatDate(iso: string | null): string {
 
 export function OrdersTable({ refreshKey, configMissing, initialFilter = null }: Props) {
   const [orders, setOrders] = useState<OrdenProduccion[]>([])
+  const [entregadosOcultos, setEntregadosOcultos] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [incomingFilter, setIncomingFilter] = useState<ModuleFilter | null>(initialFilter)
@@ -257,13 +258,23 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
 
     setLoading(true)
     setError(null)
-    const { data, error } = await supabase
-      .from("ordenes_produccion")
-      .select(
-        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_facturacion",
-      )
-      .eq("idempresa", IDEMPRESA)
-      .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
+    // Los pedidos entregados (facturados) cerraron su ciclo y no se listan aquí.
+    // Se cuentan aparte para dejar constancia de que existen.
+    const [{ data, error }, { count: entregados }] = await Promise.all([
+      supabase
+        .from("ordenes_produccion")
+        .select(
+          "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_facturacion",
+        )
+        .eq("idempresa", IDEMPRESA)
+        .is("fecha_facturacion", null)
+        .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
+      supabase
+        .from("ordenes_produccion")
+        .select("*", { count: "exact", head: true })
+        .eq("idempresa", IDEMPRESA)
+        .not("fecha_facturacion", "is", null),
+    ])
 
     if (error) {
       console.error("Fetch error:", error)
@@ -271,6 +282,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       setOrders([])
     } else {
       setOrders((data ?? []) as OrdenProduccion[])
+      setEntregadosOcultos(entregados ?? 0)
     }
     setLoading(false)
   }
@@ -660,23 +672,17 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">
-                        {row.fecha_facturacion ? (
-                          <EntregadoBadge fechaFacturacion={row.fecha_facturacion} />
-                        ) : (
-                          <FaseBadge fase={row.fase_actual} />
-                        )}
+                        <FaseBadge fase={row.fase_actual} />
                         <FacturarButton
                           folio={row.folio}
                           ordenId={row.id}
                           faseActual={row.fase_actual}
                           fechaFacturacion={row.fecha_facturacion}
-                          onDone={(fecha) =>
-                            setOrders((prev) =>
-                              prev.map((o) =>
-                                o.id === row.id ? { ...o, fecha_facturacion: fecha } : o,
-                              ),
-                            )
-                          }
+                          // Al facturar sale del panel: ya no es un pedido en curso
+                          onDone={() => {
+                            setOrders((prev) => prev.filter((o) => o.id !== row.id))
+                            setEntregadosOcultos((n) => n + 1)
+                          }}
                           size="xs"
                         />
                       </div>
@@ -698,6 +704,12 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
             {(currentPage - 1) * PAGE_SIZE + pageRows.length}
           </span>{" "}
           de <span className="font-medium text-foreground">{filtered.length}</span> órdenes
+          {entregadosOcultos > 0 && (
+            <span className="ml-2 text-muted-foreground/70">
+              · {entregadosOcultos} entregado{entregadosOcultos === 1 ? "" : "s"} no se{" "}
+              {entregadosOcultos === 1 ? "muestra" : "muestran"}
+            </span>
+          )}
         </p>
         <div className="flex items-center gap-2">
           <Button
