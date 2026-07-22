@@ -167,6 +167,7 @@ type VwBonosDiseno = {
 
 type HojaRow = {
   id: number
+  folio: string | null
   fecha: string | null
   semana: number | null
   modelo: string | null
@@ -177,6 +178,11 @@ type HojaRow = {
   numero_muestras: number | null
   disenadoras: { nombre: string } | null
   costureras: { nombre: string } | null
+  cumplimiento_diseno: boolean | null
+  cumplimiento_costura: boolean | null
+  horas_plan_diseno: number | null
+  horas_plan_costura: number | null
+  horas_totales_plan: number | null
   horas_diseno_cumplidas: number | null
   horas_costura_cumplidas: number | null
   horas_totales_cumplidas: number | null
@@ -2100,12 +2106,29 @@ function TiemposFueraTab({
 
 // ── Tab 5: Historial Vacaciones / Permisos ────────────────────────────────────
 
+/** Roles que pueden registrar ausencias. */
+export type TipoColaborador = "disenadora" | "costurera" | "cortador"
+
+const COLABORADOR_LABEL: Record<TipoColaborador, string> = {
+  disenadora: "Diseñadora",
+  costurera: "Costurera",
+  cortador: "Cortador",
+}
+
+/** Columna FK de vacaciones_permisos / tiempos_fuera_area por rol. */
+const COLABORADOR_FK: Record<TipoColaborador, string> = {
+  disenadora: "iddisenadora",
+  costurera: "idcosturera",
+  cortador: "idcortador",
+}
+
 type VacacionPermiso = {
   id: number
   fecha_inicio: string | null
   semana: number | null
   iddisenadora: number | null
   idcosturera: number | null
+  idcortador: number | null
   tipo_ausentismo: string | null
   dias: number | null
   horas_manuales: number | null
@@ -2113,20 +2136,30 @@ type VacacionPermiso = {
   comentarios: string | null
   disenadoras: { nombre: string } | null
   costureras: { nombre: string } | null
+  cortadores: { nombre: string } | null
 }
 
-const INIT_VP = { fecha_inicio: undefined as Date | undefined, tipoColaborador: "disenadora" as "disenadora" | "costurera", idColaborador: "", tipo_ausentismo: "", dias: "", horas_manuales: "", comentarios: "" }
+const INIT_VP = { fecha_inicio: undefined as Date | undefined, tipoColaborador: "disenadora" as TipoColaborador, idColaborador: "", tipo_ausentismo: "", dias: "", horas_manuales: "", comentarios: "" }
 
-function VacacionesPermisosTab({
-  disenadoras, costureras, tiposAusentismos, loadingCatalogs, configMissing,
+export function VacacionesPermisosTab({
+  disenadoras = [], costureras = [], cortadores = [],
+  tiposAusentismos, loadingCatalogs, configMissing,
+  roles = ["disenadora", "costurera"],
 }: {
-  disenadoras: Catalog[]
-  costureras: Catalog[]
+  disenadoras?: Catalog[]
+  costureras?: Catalog[]
+  cortadores?: Catalog[]
   tiposAusentismos: Catalog[]
   loadingCatalogs: boolean
   configMissing: boolean
+  /** Roles disponibles en este módulo. El historial se filtra a estos. */
+  roles?: TipoColaborador[]
 }) {
-  const [form, setForm] = useState({ ...INIT_VP })
+  /** Catálogo de personas del rol seleccionado. */
+  const catalogoDe = (t: TipoColaborador): Catalog[] =>
+    t === "costurera" ? costureras : t === "cortador" ? cortadores : disenadoras
+
+  const [form, setForm] = useState({ ...INIT_VP, tipoColaborador: roles[0] })
   const [submitting, setSubmitting] = useState(false)
   const [records, setRecords] = useState<VacacionPermiso[]>([])
   const [loadingRecords, setLoadingRecords] = useState(false)
@@ -2157,19 +2190,30 @@ function VacacionesPermisosTab({
     setLoadingRecords(true)
     const { data, error } = await supabase
       .from("vacaciones_permisos")
-      .select("id, fecha_inicio, semana, iddisenadora, idcosturera, tipo_ausentismo, dias, horas_manuales, horas_totales, comentarios, disenadoras(nombre), costureras(nombre)")
+      .select("id, fecha_inicio, semana, iddisenadora, idcosturera, idcortador, tipo_ausentismo, dias, horas_manuales, horas_totales, comentarios, disenadoras(nombre), costureras(nombre), cortadores(nombre)")
       .eq("idempresa", IDEMPRESA)
       .order("fecha_inicio", { ascending: false })
-    if (!error) setRecords((data ?? []) as unknown as VacacionPermiso[])
-    else console.error("vacaciones fetch:", error)
+    if (error) {
+      toast.error("No se pudo cargar el historial", { description: error.message })
+      setLoadingRecords(false)
+      return
+    }
+    // Solo los registros de los roles que maneja este módulo
+    const all = (data ?? []) as unknown as VacacionPermiso[]
+    setRecords(
+      all.filter((r) =>
+        roles.some((t) => (r as unknown as Record<string, unknown>)[COLABORADOR_FK[t]] != null),
+      ),
+    )
     setLoadingRecords(false)
-  }, [configMissing])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configMissing, roles.join(",")])
 
   useEffect(() => { fetchHistory() }, [fetchHistory])
 
   const handleSubmit = async () => {
     if (!form.fecha_inicio) { toast.error("Campo requerido", { description: "Selecciona la fecha de inicio." }); return }
-    if (!form.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${form.tipoColaborador === "costurera" ? "una costurera" : "una diseñadora"}.` }); return }
+    if (!form.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${COLABORADOR_LABEL[form.tipoColaborador].toLowerCase()}.` }); return }
     if (!form.tipo_ausentismo) { toast.error("Campo requerido", { description: "Selecciona el tipo de ausentismo." }); return }
     if (showDias && !form.dias) { toast.error("Campo requerido", { description: "Ingresa los días." }); return }
     if (showHorasManuales && !form.horas_manuales) { toast.error("Campo requerido", { description: "Ingresa las horas." }); return }
@@ -2182,8 +2226,10 @@ function VacacionesPermisosTab({
         .insert({
           idempresa: IDEMPRESA,
           fecha_inicio: format(form.fecha_inicio, "yyyy-MM-dd"),
+          // Solo se llena la FK del rol elegido; las otras quedan en null
           iddisenadora: form.tipoColaborador === "disenadora" ? Number(form.idColaborador) : null,
           idcosturera: form.tipoColaborador === "costurera" ? Number(form.idColaborador) : null,
+          idcortador: form.tipoColaborador === "cortador" ? Number(form.idColaborador) : null,
           tipo_ausentismo: form.tipo_ausentismo,
           dias: showDias && form.dias ? Number(form.dias) : null,
           horas_manuales: showHorasManuales && form.horas_manuales ? Number(form.horas_manuales) : null,
@@ -2194,18 +2240,27 @@ function VacacionesPermisosTab({
       if (error) { toast.error("No se pudo registrar", { description: error.message }); return }
       const row = data as Record<string, unknown>
       toast.success("Ausentismo registrado.", { description: `Horas totales: ${row.horas_totales ?? "—"} h` })
-      setForm({ ...INIT_VP })
+      setForm({ ...INIT_VP, tipoColaborador: roles[0] })
       fetchHistory()
+    } catch (err) {
+      toast.error("Error inesperado al registrar", {
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally { setSubmitting(false) }
   }
 
   const openEdit = (r: VacacionPermiso) => {
     setEditTarget(r)
-    const tipoColaborador: "disenadora" | "costurera" = r.idcosturera ? "costurera" : "disenadora"
+    const tipoColaborador: TipoColaborador =
+      r.idcosturera ? "costurera" : r.idcortador ? "cortador" : "disenadora"
+    const idColaborador =
+      tipoColaborador === "costurera" ? r.idcosturera
+        : tipoColaborador === "cortador" ? r.idcortador
+        : r.iddisenadora
     setEditForm({
       fecha_inicio: r.fecha_inicio ? new Date(`${r.fecha_inicio}T00:00:00`) : undefined,
       tipoColaborador,
-      idColaborador: tipoColaborador === "costurera" ? String(r.idcosturera ?? "") : String(r.iddisenadora ?? ""),
+      idColaborador: String(idColaborador ?? ""),
       tipo_ausentismo: r.tipo_ausentismo ?? "",
       dias: r.dias != null ? String(r.dias) : "",
       horas_manuales: r.horas_manuales != null ? String(r.horas_manuales) : "",
@@ -2216,7 +2271,7 @@ function VacacionesPermisosTab({
 
   const handleSaveEdit = async () => {
     if (!editTarget || !editForm.fecha_inicio) { toast.error("Campo requerido", { description: "Selecciona la fecha de inicio." }); return }
-    if (!editForm.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${editForm.tipoColaborador === "costurera" ? "una costurera" : "una diseñadora"}.` }); return }
+    if (!editForm.idColaborador) { toast.error("Campo requerido", { description: `Selecciona ${COLABORADOR_LABEL[editForm.tipoColaborador].toLowerCase()}.` }); return }
     if (!editForm.tipo_ausentismo) { toast.error("Campo requerido", { description: "Selecciona el tipo." }); return }
     if (editShowDias && !editForm.dias) { toast.error("Campo requerido", { description: "Ingresa los días." }); return }
     if (editShowHoras && !editForm.horas_manuales) { toast.error("Campo requerido", { description: "Ingresa las horas." }); return }
@@ -2230,6 +2285,7 @@ function VacacionesPermisosTab({
           fecha_inicio: format(editForm.fecha_inicio, "yyyy-MM-dd"),
           iddisenadora: editForm.tipoColaborador === "disenadora" ? Number(editForm.idColaborador) : null,
           idcosturera: editForm.tipoColaborador === "costurera" ? Number(editForm.idColaborador) : null,
+          idcortador: editForm.tipoColaborador === "cortador" ? Number(editForm.idColaborador) : null,
           tipo_ausentismo: editForm.tipo_ausentismo,
           dias: editShowDias && editForm.dias ? Number(editForm.dias) : null,
           horas_manuales: editShowHoras && editForm.horas_manuales ? Number(editForm.horas_manuales) : null,
@@ -2282,19 +2338,23 @@ function VacacionesPermisosTab({
               <Label className="text-xs font-medium">Fecha de Inicio <span className="text-destructive">*</span></Label>
               <DatePicker value={form.fecha_inicio} onChange={(d) => set("fecha_inicio", d)} />
             </div>
+            {/* Con un solo rol disponible el selector sobra */}
+            {roles.length > 1 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Tipo de Colaborador</Label>
+                <Select value={form.tipoColaborador} onValueChange={(v) => setForm((p) => ({ ...p, tipoColaborador: v as TipoColaborador, idColaborador: "" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {roles.map((t) => (
+                      <SelectItem key={t} value={t}>{COLABORADOR_LABEL[t]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Tipo de Colaborador</Label>
-              <Select value={form.tipoColaborador} onValueChange={(v) => setForm((p) => ({ ...p, tipoColaborador: v as "disenadora" | "costurera", idColaborador: "" }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="disenadora">Diseñadora</SelectItem>
-                  <SelectItem value="costurera">Costurera</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">{form.tipoColaborador === "costurera" ? "Costurera" : "Diseñadora"} <span className="text-destructive">*</span></Label>
-              <CatalogSelect value={form.idColaborador} onValueChange={(v) => set("idColaborador", v)} items={form.tipoColaborador === "costurera" ? costureras : disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              <Label className="text-xs font-medium">{COLABORADOR_LABEL[form.tipoColaborador]} <span className="text-destructive">*</span></Label>
+              <CatalogSelect value={form.idColaborador} onValueChange={(v) => set("idColaborador", v)} items={catalogoDe(form.tipoColaborador)} loading={loadingCatalogs} placeholder="Seleccionar…" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Tipo de Ausentismo <span className="text-destructive">*</span></Label>
@@ -2369,7 +2429,7 @@ function VacacionesPermisosTab({
                   <TableRow key={r.id} className="hover:bg-muted/30">
                     <TableCell className="tabular-nums text-sm">{r.fecha_inicio ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm">{r.semana ?? "—"}</TableCell>
-                    <TableCell className="text-sm">{r.costureras?.nombre ?? r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="text-sm">{r.costureras?.nombre ?? r.cortadores?.nombre ?? r.disenadoras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell>
                       {r.tipo_ausentismo
                         ? <span className="inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium">{r.tipo_ausentismo}</span>
@@ -2411,17 +2471,20 @@ function VacacionesPermisosTab({
               <FormRow label="Fecha de Inicio" required>
                 <DatePicker value={editForm.fecha_inicio} onChange={(d) => setE("fecha_inicio", d)} />
               </FormRow>
-              <FormRow label="Tipo de Colaborador">
-                <Select value={editForm.tipoColaborador} onValueChange={(v) => setEditForm((p) => ({ ...p, tipoColaborador: v as "disenadora" | "costurera", idColaborador: "" }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="disenadora">Diseñadora</SelectItem>
-                    <SelectItem value="costurera">Costurera</SelectItem>
-                  </SelectContent>
-                </Select>
-              </FormRow>
-              <FormRow label={editForm.tipoColaborador === "costurera" ? "Costurera" : "Diseñadora"} required>
-                <CatalogSelect value={editForm.idColaborador} onValueChange={(v) => setE("idColaborador", v)} items={editForm.tipoColaborador === "costurera" ? costureras : disenadoras} loading={loadingCatalogs} placeholder="Seleccionar…" />
+              {roles.length > 1 && (
+                <FormRow label="Tipo de Colaborador">
+                  <Select value={editForm.tipoColaborador} onValueChange={(v) => setEditForm((p) => ({ ...p, tipoColaborador: v as TipoColaborador, idColaborador: "" }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {roles.map((t) => (
+                        <SelectItem key={t} value={t}>{COLABORADOR_LABEL[t]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormRow>
+              )}
+              <FormRow label={COLABORADOR_LABEL[editForm.tipoColaborador]} required>
+                <CatalogSelect value={editForm.idColaborador} onValueChange={(v) => setE("idColaborador", v)} items={catalogoDe(editForm.tipoColaborador)} loading={loadingCatalogs} placeholder="Seleccionar…" />
               </FormRow>
               <FormRow label="Tipo de Ausentismo" required>
                 <CatalogSelect
@@ -2939,6 +3002,8 @@ function fmtH(h: number | null | undefined): string {
 
 function HojaImpresionTab({ configMissing }: { configMissing: boolean }) {
   const [rows, setRows] = useState<HojaRow[]>([])
+  /** Tipos vigentes en catálogo, para marcar los valores heredados. */
+  const [tiposCatalogo, setTiposCatalogo] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedWeek, setSelectedWeek] = useState<string>("")
@@ -2949,15 +3014,21 @@ function HojaImpresionTab({ configMissing }: { configMissing: boolean }) {
     if (!supabase) return
     setLoading(true)
     setError(null)
-    const { data, error: e } = await supabase
-      .from("diseno_programacion")
-      .select(
-        "id, fecha, semana, modelo, familia, categoria, cliente, tipo, numero_muestras, disenadoras(nombre), costureras(nombre), horas_diseno_cumplidas, horas_costura_cumplidas, horas_totales_cumplidas",
-      )
-      .eq("idempresa", IDEMPRESA)
-      .order("fecha", { ascending: false })
+    const [{ data, error: e }, tipoRes] = await Promise.all([
+      supabase
+        .from("diseno_programacion")
+        .select(
+          "id, folio, fecha, semana, modelo, familia, categoria, cliente, tipo, numero_muestras, disenadoras(nombre), costureras(nombre), cumplimiento_diseno, cumplimiento_costura, horas_plan_diseno, horas_plan_costura, horas_totales_plan, horas_diseno_cumplidas, horas_costura_cumplidas, horas_totales_cumplidas",
+        )
+        .eq("idempresa", IDEMPRESA)
+        .order("fecha", { ascending: false }),
+      supabase.from("cat_tipo_diseno").select("nombre").eq("idempresa", IDEMPRESA),
+    ])
     if (e) { console.error("hoja fetch:", e); setError(e.message) }
     else setRows((data ?? []) as unknown as HojaRow[])
+    if (!tipoRes.error) {
+      setTiposCatalogo(new Set(((tipoRes.data ?? []) as { nombre: string }[]).map((t) => t.nombre)))
+    }
     setLoading(false)
   }, [configMissing])
 
@@ -2987,16 +3058,28 @@ function HojaImpresionTab({ configMissing }: { configMissing: boolean }) {
     }
 
     const sheetData = filteredRows.map((r) => ({
-      "id": r.id,
+      "Folio": r.folio ?? "",
+      "Semana": r.semana ?? "",
       "Fecha": r.fecha ?? "",
       "Modelo": r.modelo ?? "",
       "Familia": r.familia ?? "",
       "Categoría": r.categoria ?? "",
       "Cliente": r.cliente ?? "",
-      "Tipo": r.tipo ?? "",
+      "Tipo": r.tipo
+        ? tiposCatalogo.size > 0 && !tiposCatalogo.has(r.tipo)
+          ? `${r.tipo} (fuera de catálogo)`
+          : r.tipo
+        : "",
       "Número de Muestras": r.numero_muestras ?? "",
       "Diseñadora": r.disenadoras?.nombre ?? "",
       "Costurera": r.costureras?.nombre ?? "",
+      // Horas plan: existen para todos los folios
+      "Horas Plan Diseño": r.horas_plan_diseno ?? "",
+      "Horas Plan Costura": r.horas_plan_costura ?? "",
+      "Horas Plan Total": r.horas_totales_plan ?? "",
+      // Horas cumplidas: solo tras evaluar la orden
+      "Diseño Cumplido": r.cumplimiento_diseno ? "Sí" : "No",
+      "Costura Cumplida": r.cumplimiento_costura ? "Sí" : "No",
       "Horas Diseño Cumplidas": r.horas_diseno_cumplidas ?? "",
       "Horas Costura Cumplidas": r.horas_costura_cumplidas ?? "",
       "Horas Totales Cumplidas": r.horas_totales_cumplidas ?? "",

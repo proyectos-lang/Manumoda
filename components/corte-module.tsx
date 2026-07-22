@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { EficienciaTrend } from "@/components/eficiencia-trend"
+import { VacacionesPermisosTab } from "@/components/design-module"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import { KpiCard } from "@/components/kpi-card"
 import { EditCorteVariablesSheet } from "@/components/edit-corte-variables-sheet"
@@ -102,11 +103,32 @@ export function CorteModule({
   /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
   initialFilter?: ModuleFilter | null
 }) {
+  // Catálogos que necesita la pestaña de vacaciones
+  const [cortadores, setCortadores] = useState<Cortador[]>([])
+  const [tiposAusentismos, setTiposAusentismos] = useState<Cortador[]>([])
+  const [loadingCatalogs, setLoadingCatalogs] = useState(false)
+
+  useEffect(() => {
+    if (configMissing) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setLoadingCatalogs(true)
+    Promise.all([
+      supabase.from("cortadores").select("id, nombre").eq("activo", true).order("nombre"),
+      supabase.from("tipos_ausentismos").select("id, nombre").eq("idempresa", IDEMPRESA).order("nombre"),
+    ]).then(([cortRes, tipoRes]) => {
+      if (!cortRes.error) setCortadores((cortRes.data as Cortador[]) ?? [])
+      if (!tipoRes.error) setTiposAusentismos((tipoRes.data as Cortador[]) ?? [])
+      setLoadingCatalogs(false)
+    })
+  }, [configMissing])
+
   return (
     <Tabs defaultValue="plan" className="w-full">
       <TabsList>
         <TabsTrigger value="plan">Plan de Corte Semanal</TabsTrigger>
-        <TabsTrigger value="bonos">Liquidación y Bonos</TabsTrigger>
+        <TabsTrigger value="bonos">Bonos</TabsTrigger>
+        <TabsTrigger value="vacaciones">Vacaciones / Permisos</TabsTrigger>
       </TabsList>
 
       <TabsContent value="plan" className="mt-5">
@@ -115,6 +137,16 @@ export function CorteModule({
 
       <TabsContent value="bonos" className="mt-5">
         <BonosCorteTab configMissing={configMissing} />
+      </TabsContent>
+
+      <TabsContent value="vacaciones" className="mt-5">
+        <VacacionesPermisosTab
+          cortadores={cortadores}
+          tiposAusentismos={tiposAusentismos}
+          loadingCatalogs={loadingCatalogs}
+          configMissing={configMissing}
+          roles={["cortador"]}
+        />
       </TabsContent>
     </Tabs>
   )
