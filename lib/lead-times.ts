@@ -4,20 +4,20 @@
  * Ambas metas se miden hacia atrás desde el arranque de maquila (S1),
  * de forma acumulada:
  *
- *      Diseño          Corte              S1
- *   ─────┬───────────────┬────────────────┬─────►
- *        │◄── 7 días ───►│◄─── 7 días ───►│
- *        │◄────────── 14 días ───────────►│
+ *      Diseño              Corte          S1
+ *   ─────┬───────────────────┬─────────────┬─────►
+ *        │◄──── 14 días ────►│◄─ 7 días ──►│
+ *        │◄────────── 21 días ────────────►│
  *
- * Es decir: Corte debe estar listo 7 días antes de S1, y Diseño 14
- * (los 7 de Corte más 7 propios).
+ * Es decir: Corte debe estar listo 7 días antes de S1, y Diseño 21
+ * (los 7 de Corte más 14 propios).
  */
 
 import { PHASE_PACE, parseLocalDate } from "./risk"
 
 /** Días antes de S1 en que cada etapa debe estar terminada. */
 export const LEAD_DIAS = {
-  diseno: 14,
+  diseno: 21,
   corte: 7,
 } as const
 
@@ -116,12 +116,16 @@ export function evaluarEtapa(row: LeadTimeRow, etapa: Etapa): EvaluacionEtapa {
     }
   }
 
-  // Pendiente: se compara HOY contra el límite
+  // Pendiente: se compara HOY contra el límite.
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   const desfase = diffDias(hoy, limite)
+  // Solo se afirma "a destiempo" en pendientes cuando el S1 es REAL.
+  // Si S1 está proyectado (estimado desde la fecha de entrega), no se
+  // "reprueba" contra una fecha estimada: queda "pendiente" (en plazo).
+  const aDestiempo = desfase > 0 && !ref.proyectada
   return {
-    estado: desfase > 0 ? "a-destiempo" : "pendiente",
+    estado: aDestiempo ? "a-destiempo" : "pendiente",
     limite,
     referenciaProyectada: ref.proyectada,
     diasDesfase: desfase,

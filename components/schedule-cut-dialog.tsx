@@ -338,8 +338,9 @@ export function ScheduleCutDialog({
     if (isNaN(tendidosNum) || tendidosNum < 1 || tendidosNum > 8) { toast.error("Campo requerido", { description: "Ingresa los tendidos (1–8)." }); return }
     const semanaNum = parseInt(form.semana, 10)
     if (isNaN(semanaNum) || semanaNum < 1 || semanaNum > 53) { toast.error("Semana inválida", { description: "Ingresa una semana entre 1 y 53." }); return }
+    // metros_utilizar es NOT NULL en la base: se exige un valor > 0
     const metrosNum = form.metros_utilizar ? parseFloat(form.metros_utilizar) : null
-    if (metrosNum !== null && (isNaN(metrosNum) || metrosNum <= 0)) { toast.error("Metros inválidos", { description: "Los metros de tela deben ser mayores a 0." }); return }
+    if (metrosNum === null || isNaN(metrosNum) || metrosNum <= 0) { toast.error("Campo requerido", { description: "Ingresa los metros de tela (mayor a 0)." }); return }
     const piezasNum = form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null
     if (piezasNum !== null && (isNaN(piezasNum) || piezasNum <= 0)) { toast.error("Piezas inválidas", { description: "Las piezas cortadas deben ser mayores a 0." }); return }
     if (horasCalculadas === null) { toast.error("Error de cálculo", { description: "Verifica los valores ingresados." }); return }
@@ -656,7 +657,7 @@ export function ScheduleCutDialog({
             <FormSection title="Metros y Semana">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="metros_utilizar">Metros de tela</DLabel>
+                  <DLabel htmlFor="metros_utilizar">Metros de tela <Req /></DLabel>
                   <Input
                     id="metros_utilizar"
                     type="number"

@@ -217,9 +217,14 @@ export function ProductionTrackingDashboard({
     fetchOrders()
   }, [fetchOrders, refreshKey])
 
+  // Los facturados (entregados) cierran su ciclo: salen de las vistas de
+  // trabajo (Tabla / Kanban / KPIs) y viven en su propia pestaña.
+  const activos = useMemo(() => orders.filter((o) => !o.fecha_facturacion), [orders])
+  const facturados = useMemo(() => orders.filter((o) => o.fecha_facturacion), [orders])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    let list = orders
+    let list = activos
     if (q) {
       list = list.filter(
         (o) =>
@@ -239,7 +244,7 @@ export function ProductionTrackingDashboard({
       })
     }
     return list
-  }, [orders, search, incomingFilter])
+  }, [activos, search, incomingFilter])
 
   /** Riesgo de entrega por orden, calculado una sola vez. */
   const riskByOrder = useMemo(() => {
@@ -267,6 +272,15 @@ export function ProductionTrackingDashboard({
     }
     return { vencidos, enRiesgo, sinFecha }
   }, [riskByOrder])
+
+  /** Riesgo de los facturados (siempre "entregado") para su pestaña. */
+  const riskByFacturado = useMemo(() => {
+    const map = new Map<string, { risk: Risk; days: number | null }>()
+    for (const o of facturados) {
+      map.set(o.folio, computeRisk(o.fecha_cancelacion, 0, o.fase_actual, o.fecha_facturacion))
+    }
+    return map
+  }, [facturados])
 
   const grouped = useMemo(() => {
     const map: Record<Phase, OrdenProduccion[]> = {
@@ -417,6 +431,14 @@ export function ProductionTrackingDashboard({
         <TabsList>
           <TabsTrigger value="tabla">Vista Tabla</TabsTrigger>
           <TabsTrigger value="kanban">Vista Kanban</TabsTrigger>
+          <TabsTrigger value="facturados" className="gap-1.5">
+            Facturados
+            {facturados.length > 0 && (
+              <span className="rounded-full bg-violet-100 px-1.5 text-[10px] font-semibold tabular-nums text-violet-700">
+                {facturados.length}
+              </span>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="tabla" className="mt-4">
@@ -431,6 +453,22 @@ export function ProductionTrackingDashboard({
 
         <TabsContent value="kanban" className="mt-4">
           <KanbanView grouped={grouped} loading={loading} onCardClick={handleOpen} />
+        </TabsContent>
+
+        <TabsContent value="facturados" className="mt-4">
+          {facturados.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
+              Aún no hay pedidos facturados. Al marcar una orden como facturada aparecerá aquí.
+            </div>
+          ) : (
+            <TableView
+              orders={facturados}
+              loading={loading}
+              onUpdate={handleOpen}
+              riskByOrder={riskByFacturado}
+              onFacturado={handleFacturado}
+            />
+          )}
         </TabsContent>
       </Tabs>
 

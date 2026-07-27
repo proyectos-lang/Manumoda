@@ -36,7 +36,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { LEAD_DIAS, evaluarEtapa, type LeadTimeRow } from "@/lib/lead-times"
-import { PHASE_PACE } from "@/lib/risk"
+import { PHASE_PACE, parseLocalDate } from "@/lib/risk"
 import {
   Dialog,
   DialogContent,
@@ -73,6 +73,7 @@ type ResumenRow = {
   maquilero_nombre: string | null
   riesgo_entrega: string | null
   fecha_cancelacion: string | null
+  fecha_cancelacion_original: string | null
   fecha_limite_confirmacion: string | null
   fecha_contra_muestra: string | null
   fecha_ultima_revision: string | null
@@ -123,6 +124,33 @@ function formatDate(iso: string | null) {
   } catch {
     return null
   }
+}
+
+/**
+ * Celda de fecha de entrega. Si la fecha cambió respecto a la original,
+ * muestra la actual resaltada en ámbar con la original tachada debajo.
+ */
+function FechaEntregaCell({
+  fecha,
+  original,
+}: {
+  fecha: string | null
+  original: string | null
+}) {
+  if (!fecha) return <span className="text-muted-foreground/60 italic">—</span>
+  const cambio = original != null && original !== fecha
+  if (!cambio) return <>{formatDate(fecha)}</>
+  return (
+    <span
+      className="inline-flex flex-col leading-tight"
+      title={`Reprogramada · original: ${formatDate(original) ?? original}`}
+    >
+      <span className="font-semibold text-amber-700">{formatDate(fecha)}</span>
+      <span className="text-[10px] text-muted-foreground line-through">
+        {formatDate(original)}
+      </span>
+    </span>
+  )
 }
 
 function getRiesgoVisuals(r: string | null | undefined) {
@@ -228,10 +256,15 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
   const familiaOptions = useMemo(() =>
     [...new Set(rows.map((r) => r.familia?.trim() || "Sin Familia"))].sort(), [rows])
   const riesgoOptions = useMemo(() =>
-    [...new Set(rows.map((r) => r.riesgo_entrega ?? "Sin Fecha"))].sort(), [rows])
+    [...new Set(rows.map((r) => r.riesgo_entrega ?? "Sin Fecha"))]
+      .filter((r) => r !== "Entregado")
+      .sort(), [rows])
 
-  // Filas filtradas — alimentan todos los gráficos y la tabla
+  // Filas filtradas — alimentan todos los gráficos y la tabla.
+  // Los facturados (riesgo "Entregado") ya cerraron su ciclo y no cuentan en
+  // las métricas de operación. (Casi todos ya salen por el filtro S7 de la vista.)
   const filteredRows = useMemo(() => rows.filter((r) => {
+    if (r.riesgo_entrega === "Entregado") return false
     if (filterMaquilero !== "__all__" && (r.maquilero_nombre?.trim() || "Sin asignar") !== filterMaquilero) return false
     if (filterFamilia !== "__all__" && (r.familia?.trim() || "Sin Familia") !== filterFamilia) return false
     if (filterRiesgo !== "__all__" && (r.riesgo_entrega ?? "Sin Fecha") !== filterRiesgo) return false
@@ -249,7 +282,27 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
   // Bottlenecks: average days per phase gap
   const bottleneckData = useMemo(() => {
-    return PHASE_GAPS.map((g) => {
+    // Tramos previos a maquila (Diseño → Corte → S1), calculados desde las
+    // fechas reales de la vista integrada. Van ANTES de S1 en la gráfica.
+    const gapPromedio = (desde: keyof LeadTimeRow, hasta: keyof LeadTimeRow) => {
+      const vals = leadRows
+        .map((r) => {
+          const a = parseLocalDate(r[desde] as string | null)
+          const b = parseLocalDate(r[hasta] as string | null)
+          if (!a || !b) return null
+          return Math.round((b.getTime() - a.getTime()) / 86400000)
+        })
+        .filter((v): v is number => v !== null && !Number.isNaN(v))
+      return vals.length > 0
+        ? Math.round((vals.reduce((s, x) => s + x, 0) / vals.length) * 10) / 10
+        : 0
+    }
+    const previos = [
+      { fase: "Diseño-Corte", dias: gapPromedio("fecha_diseno", "fecha_corte") },
+      { fase: "Corte-S1", dias: gapPromedio("fecha_corte", "fecha_s1") },
+    ]
+    // Fases de maquila. Se omite "Prog-S1": se solapa con los tramos previos.
+    const maquila = PHASE_GAPS.filter((g) => g.key !== "dias_prog_s1").map((g) => {
       const values = filteredRows
         .map((r) => r[g.key] as number | null)
         .filter((v): v is number => typeof v === "number" && !Number.isNaN(v))
@@ -259,9 +312,10 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           : 0
       return { fase: g.label, dias: avg }
     })
-  }, [filteredRows])
+    return [...previos, ...maquila]
+  }, [leadRows, filteredRows])
 
-  /** Cumplimiento de los plazos previos a S1 (Diseño 14 d · Corte 7 d). */
+  /** Cumplimiento de los plazos previos a S1 (Diseño 21 d · Corte 7 d). */
   const leadStats = useMemo(() => {
     const base = { aTiempo: 0, aDestiempo: 0, pendiente: 0 }
     const stats = { diseno: { ...base }, corte: { ...base } }
@@ -299,6 +353,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       "Contra Muestra": r.fecha_contra_muestra ?? "",
       "Última Revisión": r.fecha_ultima_revision ? String(r.fecha_ultima_revision).slice(0, 10) : "",
       "Fecha Entrega": r.fecha_cancelacion ?? "",
+      "Fecha Entrega Original": r.fecha_cancelacion_original ?? "",
       Riesgo: r.riesgo_entrega ?? "",
       Fase: r.fase_actual ?? "",
       S1: r.fecha_s1 ?? "", S2: r.fecha_s2 ?? "", S3: r.fecha_s3 ?? "",
@@ -650,7 +705,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
         {/* Bottlenecks */}
         <ChartCard
           title="Cuellos de Botella"
-          subtitle="Días promedio entre fases"
+          subtitle="Días promedio entre etapas — Diseño → Corte → S1 → … → S7"
           loading={loading}
           empty={bottleneckData.every((d) => d.dias === 0)}
         >
@@ -1062,9 +1117,9 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead>Maquilador</TableHead>
                 <TableHead className="w-[110px]">Fecha Límite</TableHead>
                 <TableHead className="w-[110px]">Contra Muestra</TableHead>
-                <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead className="w-[110px]">Fecha Entrega</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
+                <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
             </TableHeader>
@@ -1133,14 +1188,10 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
-                        {r.fecha_ultima_revision
-                          ? formatDate(r.fecha_ultima_revision)
-                          : <span className="text-muted-foreground/60 italic">—</span>}
-                      </TableCell>
-                      <TableCell className="tabular-nums text-sm">
-                        {r.fecha_cancelacion
-                          ? formatDate(r.fecha_cancelacion)
-                          : <span className="text-muted-foreground/60 italic">—</span>}
+                        <FechaEntregaCell
+                          fecha={r.fecha_cancelacion}
+                          original={r.fecha_cancelacion_original}
+                        />
                       </TableCell>
                       <TableCell>
                         <span
@@ -1151,6 +1202,11 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                         >
                           {ri.label}
                         </span>
+                      </TableCell>
+                      <TableCell className="tabular-nums text-sm">
+                        {r.fecha_ultima_revision
+                          ? formatDate(r.fecha_ultima_revision)
+                          : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell>
                         <PhaseBubbleTimeline row={r} />
@@ -1429,21 +1485,22 @@ function LeadTimeInfo() {
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <div className="rounded-lg border border-border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {"Diseño        Corte          S1"}<br />
-            {"───┬────────────┬─────────────┬──►"}<br />
-            {"   │◄─ 7 días ─►│◄─ 7 días ──►│"}<br />
-            {"   │◄────── 14 días ─────────►│"}
+            {"Diseño           Corte        S1"}<br />
+            {"───┬───────────────┬───────────┬──►"}<br />
+            {"   │◄── 14 días ──►│◄─ 7 días ►│"}<br />
+            {"   │◄──────── 21 días ────────►│"}
           </div>
           <ul className="space-y-1.5 text-xs text-muted-foreground">
             <li>· <strong className="text-foreground">Corte</strong> debe estar listo {LEAD_DIAS.corte} días antes de S1.</li>
-            <li>· <strong className="text-foreground">Diseño</strong> {LEAD_DIAS.diseno} días antes (los 7 de corte más 7 propios).</li>
+            <li>· <strong className="text-foreground">Diseño</strong> {LEAD_DIAS.diseno} días antes (los 7 de corte más 14 propios).</li>
             <li>
               · Si la etapa ya se cumplió, se compara su fecha real contra el límite. Si sigue
               pendiente, se compara contra hoy.
             </li>
             <li>
               · Cuando la orden aún no llega a S1, se estima esa fecha restando {PHASE_PACE.S1} días
-              a la fecha de entrega. Esos indicadores se muestran con borde punteado.
+              a la fecha de entrega. Esos indicadores se muestran con borde punteado y no se
+              marcan "a destiempo" hasta tener un S1 real.
             </li>
             <li>· Las órdenes facturadas no se evalúan.</li>
           </ul>
