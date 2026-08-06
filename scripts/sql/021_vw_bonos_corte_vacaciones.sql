@@ -1,19 +1,30 @@
 -- ============================================================
--- vw_bonos_corte — definición vigente, versionada para referencia
+-- vw_bonos_corte: conectar las vacaciones de cortadores al bono
 --
--- Esta vista NO se modifica aquí: el fix de horas cumplidas de corte
--- (script 019) vive en vw_plan_corte_detalle, de donde esta vista
--- suma horas_cumplimiento_corte. Se guarda su definición para tenerla
--- bajo control de versiones (antes no estaba en el repo).
+-- PROBLEMA:
+--   vw_bonos_corte leía los ausentismos de las tablas dedicadas
+--   `corte_ausentismos` / `corte_tiempos_fuera` (vacías), pero la
+--   pestaña de Vacaciones de Corte del frontend escribe en
+--   `vacaciones_permisos` (con idcortador). Resultado: las vacaciones
+--   de un cortador no restaban horas en su liquidación.
 --
--- Re-ejecutar este script reproduce exactamente la vista ya existente.
+-- FIX:
+--   Reapuntar los subselects de ausentismos y horas fuera de área a
+--   `vacaciones_permisos` / `tiempos_fuera_area` filtrando por
+--   idcortador — las mismas tablas que usa Diseño. El frontend no
+--   cambia.
 --
--- ⚠️ SUPERSEDED: la conexión de vacaciones de cortadores al bono ya
---    se resolvió en el script 021 (reapunta los ausentismos a
---    vacaciones_permisos / tiempos_fuera_area por idcortador).
---    Este 020 se conserva solo como registro histórico de la versión
---    que leía corte_ausentismos / corte_tiempos_fuera. NO ejecutarlo
---    después del 021 (revertiría el arreglo).
+-- Efecto en el bono (igual que en diseño):
+--   eficiencia = (horas_cumplidas + horas_fuera) / (45 − ausentismos)
+--   Las vacaciones bajan el divisor (menos horas disponibles esa
+--   semana), y si ausentismos + fuera de área > 40% de la semana el
+--   criterio de aceptación cae a 'No'.
+--
+-- ⚠️ PREREQUISITO: script 017 ejecutado (agrega idcortador a
+--    vacaciones_permisos y tiempos_fuera_area). Sin él estas columnas
+--    no existen y este script falla.
+--
+-- Reemplaza la versión del script 020 (que leía las tablas vacías).
 -- ============================================================
 
 CREATE OR REPLACE VIEW manumoda.vw_bonos_corte AS
@@ -33,17 +44,21 @@ WITH
     FROM manumoda.corte_programacion
     WHERE corte_programacion.idapoyo IS NOT NULL
     UNION
+    -- Tiempos fuera de área de cortadores (tabla compartida)
     SELECT
-      corte_tiempos_fuera.idcortador AS idcolaborador,
-      corte_tiempos_fuera.semana,
-      EXTRACT(year FROM corte_tiempos_fuera.fecha) AS anio
-    FROM manumoda.corte_tiempos_fuera
+      tf.idcortador AS idcolaborador,
+      tf.semana,
+      EXTRACT(year FROM tf.fecha) AS anio
+    FROM manumoda.tiempos_fuera_area tf
+    WHERE tf.idcortador IS NOT NULL
     UNION
+    -- Vacaciones / permisos de cortadores (tabla compartida)
     SELECT
-      corte_ausentismos.idcortador AS idcolaborador,
-      corte_ausentismos.semana,
-      EXTRACT(year FROM corte_ausentismos.fecha_inicio) AS anio
-    FROM manumoda.corte_ausentismos
+      vp.idcortador AS idcolaborador,
+      vp.semana,
+      EXTRACT(year FROM vp.fecha_inicio) AS anio
+    FROM manumoda.vacaciones_permisos vp
+    WHERE vp.idcortador IS NOT NULL
   ),
   totales_horas_cortador AS (
     SELECT
@@ -63,17 +78,19 @@ WITH
         WHERE vw_plan_corte_detalle.idapoyo = sb.idcolaborador
           AND vw_plan_corte_detalle.semana = sb.semana
       ), 0::numeric) AS horas_cumplidas,
+      -- Fuera de área: ahora desde tiempos_fuera_area por idcortador
       COALESCE((
-        SELECT sum(corte_tiempos_fuera.tiempo_af) AS sum
-        FROM manumoda.corte_tiempos_fuera
-        WHERE corte_tiempos_fuera.idcortador = sb.idcolaborador
-          AND corte_tiempos_fuera.semana = sb.semana
+        SELECT sum(tf.tiempo_af) AS sum
+        FROM manumoda.tiempos_fuera_area tf
+        WHERE tf.idcortador = sb.idcolaborador
+          AND tf.semana = sb.semana
       ), 0::numeric) AS horas_fuera_area,
+      -- Ausentismos: ahora desde vacaciones_permisos por idcortador
       COALESCE((
-        SELECT sum(corte_ausentismos.horas_totales) AS sum
-        FROM manumoda.corte_ausentismos
-        WHERE corte_ausentismos.idcortador = sb.idcolaborador
-          AND corte_ausentismos.semana = sb.semana
+        SELECT sum(vp.horas_totales) AS sum
+        FROM manumoda.vacaciones_permisos vp
+        WHERE vp.idcortador = sb.idcolaborador
+          AND vp.semana = sb.semana
       ), 0::numeric) AS ausentismos,
       45::numeric AS horas_semana
     FROM semanas_base sb
@@ -140,3 +157,13 @@ SELECT
   estatus_colaborador,
   round(horas_cumplidas / 45::numeric * 100::numeric, 2) AS porcentaje_productividad_directa
 FROM bono_semanal_flag b;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- Verificación
+-- ════════════════════════════════════════════════════════════════════════════
+-- Tras registrar una vacación a un cortador en la pestaña de Corte,
+-- su fila en el bono debe mostrar ausentismos > 0 esa semana:
+SELECT nombre, semana, horas_cumplidas, ausentismos, porcentaje_eficiencia
+FROM manumoda.vw_bonos_corte
+WHERE ausentismos > 0
+ORDER BY anio DESC, semana DESC;
