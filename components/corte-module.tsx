@@ -978,7 +978,6 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
                 const detail = detailCache[key] ?? []
                 const isLoadingThis = loadingDetail === key
                 const totalCum = detail.reduce((a, d) => a + (d.horas_cumplimiento_corte ?? 0), 0)
-                const foliosSi = detail.filter((d) => d.cumplimiento_corte === "Si").length
                 return (
                   <Fragment key={key}>
                     <TableRow className={cn("text-sm", isBaja && "opacity-60", isExpanded && "bg-muted/30")}>
@@ -1081,7 +1080,7 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
                                   </TableHeader>
                                   <TableBody>
                                     {detail.map((d, di) => (
-                                      <TableRow key={di} className={cn("text-xs", d.cumplimiento_corte !== "Si" && "opacity-50")}>
+                                      <TableRow key={di} className="text-xs">
                                         <TableCell className="py-1 font-mono">{d.folio}</TableCell>
                                         <TableCell className="py-1">{d.familia ?? "—"}</TableCell>
                                         <TableCell className="py-1">{d.categoria_corte ?? "—"}</TableCell>
@@ -1109,7 +1108,7 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
                                   </TableBody>
                                 </Table>
                                 <div className="flex items-center justify-between border-t pt-1.5 text-xs text-muted-foreground">
-                                  <span>{foliosSi} de {detail.length} folios con cumplimiento</span>
+                                  <span>{detail.length} {detail.length === 1 ? "folio cortado" : "folios cortados"}</span>
                                   <span className="font-semibold text-foreground">Total: {fmtHrs(totalCum)} h</span>
                                 </div>
                               </>
