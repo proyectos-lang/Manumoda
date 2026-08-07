@@ -1,8 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, Database, Loader2, Scissors, Settings as SettingsIcon, Palette } from "lucide-react"
-import { ExcelUploader } from "@/components/excel-uploader"
+import { AlertTriangle, Loader2, Scissors, Settings as SettingsIcon, Palette } from "lucide-react"
 import { OrdersTable } from "@/components/orders-table"
 import { ProductionTrackingDashboard } from "@/components/production-tracking-dashboard"
 import { AppSidebar, type ModuleKey } from "@/components/app-sidebar"
@@ -78,7 +77,12 @@ export default function Page() {
 
         <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
           {active === "inicio" && (
-            <HomeDashboard configMissing={configMissing} onNavigate={navigate} />
+            <HomeDashboard
+              configMissing={configMissing}
+              onNavigate={navigate}
+              refreshKey={refreshKey}
+              onUploaded={() => setRefreshKey((k) => k + 1)}
+            />
           )}
 
           {active === "ingestion" && (
@@ -96,35 +100,11 @@ export default function Page() {
               )}
 
               <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
-                <div className="mb-5 flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">
-                      Ingestión de Órdenes (Excel)
-                    </h2>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Sube el archivo de pedidos. Se parsearán los campos requeridos y se insertarán
-                      en{" "}
-                      <code className="font-mono text-xs">manumoda.ordenes_produccion</code> con
-                      estado <span className="font-medium text-foreground">Por Programar</span>.
-                    </p>
-                  </div>
-                  <div className="hidden items-center gap-1.5 rounded-full border border-border/60 bg-card/80 px-3 py-1 text-xs text-muted-foreground sm:flex">
-                    <Database className="size-3.5 text-icon-cyan" />
-                    idempresa = 1
-                  </div>
-                </div>
-
-                <ExcelUploader
-                  configMissing={configMissing}
-                  onUploaded={() => setRefreshKey((k) => k + 1)}
-                />
-              </section>
-
-              <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
                 <div className="mb-4">
                   <h2 className="text-lg font-semibold text-foreground">Órdenes por Programar</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Listado de órdenes pendientes de programación.
+                    Listado de órdenes pendientes de programación. La carga de nuevos pedidos
+                    ahora está en la Página de Inicio.
                   </p>
                 </div>
 

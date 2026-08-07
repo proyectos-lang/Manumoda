@@ -34,7 +34,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
-import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -282,25 +281,6 @@ export function ProductionTrackingDashboard({
     return map
   }, [facturados])
 
-  const grouped = useMemo(() => {
-    const map: Record<Phase, OrdenProduccion[]> = {
-      Programada: [],
-      S1: [],
-      S2: [],
-      S3: [],
-      S4: [],
-      S5: [],
-      S6: [],
-      S7: [],
-    }
-    for (const o of filtered) {
-      const phase = (o.fase_actual as Phase) ?? "Programada"
-      if (map[phase]) map[phase].push(o)
-      else map.Programada.push(o)
-    }
-    return map
-  }, [filtered])
-
   const handleOpen = (o: OrdenProduccion) => {
     setSelected(o)
     setSheetOpen(true)
@@ -430,7 +410,6 @@ export function ProductionTrackingDashboard({
       <Tabs defaultValue="tabla" className="w-full">
         <TabsList>
           <TabsTrigger value="tabla">Vista Tabla</TabsTrigger>
-          <TabsTrigger value="kanban">Vista Kanban</TabsTrigger>
           <TabsTrigger value="facturados" className="gap-1.5">
             Facturados
             {facturados.length > 0 && (
@@ -449,10 +428,6 @@ export function ProductionTrackingDashboard({
             riskByOrder={riskByOrder}
             onFacturado={handleFacturado}
           />
-        </TabsContent>
-
-        <TabsContent value="kanban" className="mt-4">
-          <KanbanView grouped={grouped} loading={loading} onCardClick={handleOpen} />
         </TabsContent>
 
         <TabsContent value="facturados" className="mt-4">
@@ -656,94 +631,6 @@ function TableView({
           )}
         </TableBody>
       </Table>
-    </div>
-  )
-}
-
-// ─── Kanban View ──────────────────────────────────────────────────────────────
-
-function KanbanView({
-  grouped,
-  loading,
-  onCardClick,
-}: {
-  grouped: Record<Phase, OrdenProduccion[]>
-  loading: boolean
-  onCardClick: (o: OrdenProduccion) => void
-}) {
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8">
-      {PHASES.map((phase) => {
-        const items = grouped[phase] ?? []
-        return (
-          <div
-            key={phase}
-            // Altura acotada: la columna no crece con el número de órdenes,
-            // el scroll ocurre dentro de cada lista.
-            className="flex h-[min(70vh,640px)] min-h-[360px] flex-col rounded-xl border border-border bg-white/70"
-          >
-            <div className="flex shrink-0 items-center justify-between rounded-t-xl border-b border-border bg-white/80 px-3 py-2 backdrop-blur-sm">
-              <span className="text-xs font-semibold text-foreground">{phase}</span>
-              <Badge
-                variant="outline"
-                className={cn("h-5 px-1.5 text-[10px] font-semibold", PHASE_BADGE[phase])}
-              >
-                {items.length}
-              </Badge>
-            </div>
-            <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
-              {loading && items.length === 0 ? (
-                <>
-                  <Skeleton className="h-[72px] w-full rounded-lg" />
-                  <Skeleton className="h-[72px] w-full rounded-lg" />
-                </>
-              ) : items.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/50">
-                  Sin órdenes
-                </div>
-              ) : (
-                items.map((o) => (
-                  <Card
-                    key={String(o.id)}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onCardClick(o)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault()
-                        onCardClick(o)
-                      }
-                    }}
-                    className="cursor-pointer border-border bg-white/80 shadow-none transition-all hover:border-violet-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30"
-                  >
-                    <CardContent className="p-3">
-                      <div className="flex items-start justify-between gap-1">
-                        <span className="font-mono text-[11px] font-semibold text-foreground">
-                          {o.folio}
-                        </span>
-                        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                          {o.piezas ?? 0} pz
-                        </span>
-                      </div>
-                      <p className="mt-1 truncate text-xs font-medium text-foreground">
-                        {o.modelo ?? "—"}
-                      </p>
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                        {o.cliente ?? "—"}
-                      </p>
-                      {o.maquilero && (
-                        <p className="mt-0.5 truncate text-[10px] font-medium text-violet-600">
-                          {o.maquilero}
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
-        )
-      })}
     </div>
   )
 }

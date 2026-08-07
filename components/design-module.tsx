@@ -94,6 +94,7 @@ import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { EficienciaTrend } from "@/components/eficiencia-trend"
+import { usePasswordGate } from "@/components/password-gate-dialog"
 import { KpiCard, formatHours } from "@/components/kpi-card"
 import * as XLSX from "xlsx"
 import { DisenoMultipliersDialog } from "@/components/diseno-multipliers-dialog"
@@ -207,6 +208,7 @@ const ESTADO_LABEL: Record<string, string> = {
 // ── Componente principal ───────────────────────────────────────────────────────
 
 export function DesignModule({ configMissing, initialFilter = null }: Props) {
+  const gate = usePasswordGate()
   // Estado principal
   const [records, setRecords] = useState<DisenoProgramacion[]>([])
   const [loading, setLoading] = useState(false)
@@ -590,7 +592,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
             Seguimiento Semanal
           </TabsTrigger>
           <TabsTrigger value="bonos" className="flex-1 sm:flex-none">
-            Calculadora de Bonos
+            Bonos por Productividad
           </TabsTrigger>
           <TabsTrigger value="impresion" className="flex-1 sm:flex-none">
             Hoja de Impresión
@@ -683,7 +685,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setMultipliersOpen(true)}
+                onClick={() => gate.request(() => setMultipliersOpen(true))}
                 className="gap-1.5 bg-transparent"
               >
                 <SlidersHorizontal className="size-3.5" />
@@ -1031,6 +1033,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
       </Tabs>
 
       {/* Modales — fuera del árbol de Tabs para evitar problemas de z-index */}
+      <gate.Dialog />
       <DisenoMultipliersDialog
         open={multipliersOpen}
         onOpenChange={setMultipliersOpen}

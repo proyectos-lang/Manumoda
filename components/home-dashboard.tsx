@@ -16,12 +16,14 @@ import {
   Scissors,
   EyeOff,
   CalendarX,
+  Database,
 } from "lucide-react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell } from "recharts"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { daysUntil } from "@/lib/risk"
 import { etapaAtrasada } from "@/lib/lead-times"
 import type { ModuleFilter } from "@/lib/module-filter"
+import { ExcelUploader } from "@/components/excel-uploader"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ModuleKey } from "@/components/app-sidebar"
@@ -109,10 +111,16 @@ const ACTIONS: {
 export function HomeDashboard({
   configMissing,
   onNavigate,
+  refreshKey = 0,
+  onUploaded,
 }: {
   configMissing: boolean
   /** El segundo argumento abre el módulo destino ya filtrado. */
   onNavigate: (m: ModuleKey, filter?: ModuleFilter) => void
+  /** Se incrementa tras subir un Excel; refresca las estadísticas. */
+  refreshKey?: number
+  /** Callback tras una carga exitosa (para refrescar otros módulos). */
+  onUploaded?: () => void
 }) {
   const [stats, setStats] = useState<Stats | null>(null)
   const [atencion, setAtencion] = useState<Atencion | null>(null)
@@ -230,7 +238,7 @@ export function HomeDashboard({
     return () => {
       cancelled = true
     }
-  }, [configMissing])
+  }, [configMissing, refreshKey])
 
   return (
     <div className="space-y-8">
@@ -263,6 +271,28 @@ export function HomeDashboard({
           <AlertDescription className="font-mono text-xs">{error}</AlertDescription>
         </Alert>
       )}
+
+      {/* ── Ingestión de órdenes (Excel) ── */}
+      <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Cargar Nuevas Órdenes (Excel)</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Sube el archivo de pedidos. Las órdenes nuevas entran con estado{" "}
+              <span className="font-medium text-foreground">Por Programar</span> y aparecen en el
+              Panel General.
+            </p>
+          </div>
+          <div className="hidden items-center gap-1.5 rounded-full border border-border/60 bg-card/80 px-3 py-1 text-xs text-muted-foreground sm:flex">
+            <Database className="size-3.5 text-icon-cyan" />
+            idempresa = 1
+          </div>
+        </div>
+        <ExcelUploader
+          configMissing={configMissing}
+          onUploaded={() => onUploaded?.()}
+        />
+      </section>
 
       {/* ── ¿Qué necesita atención hoy? ── */}
       <section>

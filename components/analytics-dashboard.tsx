@@ -10,6 +10,7 @@ import {
   Circle,
   Download,
   History,
+  KanbanSquare,
   LayoutGrid,
   List,
   Search,
@@ -147,6 +148,98 @@ function corteState(o: SeguimientoRow): StageState {
   return "pendiente"
 }
 
+// ── Kanban de Seguimiento (Diseño · Corte · S1…S7) ───────────────────────────
+
+const KANBAN_COLS = ["Diseño", "Corte", "S1", "S2", "S3", "S4", "S5", "S6", "S7"] as const
+const MAQUILA_PHASES = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
+
+const KANBAN_COL_CLASS: Record<string, string> = {
+  Diseño: "border-indigo-300 bg-indigo-50 text-indigo-700",
+  Corte: "border-amber-300 bg-amber-50 text-amber-700",
+  S1: "border-cyan-300 bg-cyan-50 text-cyan-700",
+  S2: "border-sky-300 bg-sky-50 text-sky-700",
+  S3: "border-blue-300 bg-blue-50 text-blue-700",
+  S4: "border-indigo-300 bg-indigo-50 text-indigo-700",
+  S5: "border-violet-300 bg-violet-50 text-violet-700",
+  S6: "border-fuchsia-300 bg-fuchsia-50 text-fuchsia-700",
+  S7: "border-emerald-300 bg-emerald-50 text-emerald-700",
+}
+
+/** Columna del Kanban a la que pertenece una orden. */
+function kanbanColumn(o: SeguimientoRow): string {
+  if (o.fase_actual && MAQUILA_PHASES.has(o.fase_actual)) return o.fase_actual
+  // Previa a S1: se ubica según el avance de corte
+  const cs = corteState(o)
+  return cs === "hecho" || cs === "programado" ? "Corte" : "Diseño"
+}
+
+function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
+  const grouped = useMemo(() => {
+    const map: Record<string, EnrichedOrder[]> = {}
+    for (const col of KANBAN_COLS) map[col] = []
+    for (const o of orders) {
+      const col = kanbanColumn(o)
+      ;(map[col] ??= []).push(o)
+    }
+    return map
+  }, [orders])
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+      {KANBAN_COLS.map((col) => {
+        const items = grouped[col] ?? []
+        return (
+          <div
+            key={col}
+            className="flex h-[min(70vh,640px)] min-h-[320px] flex-col rounded-xl border border-border bg-white/70"
+          >
+            <div className="flex shrink-0 items-center justify-between rounded-t-xl border-b border-border bg-white/80 px-2.5 py-2">
+              <span className="text-xs font-semibold text-foreground">{col}</span>
+              <span
+                className={cn(
+                  "rounded-full border px-1.5 text-[10px] font-semibold tabular-nums",
+                  KANBAN_COL_CLASS[col],
+                )}
+              >
+                {items.length}
+              </span>
+            </div>
+            <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
+              {items.length === 0 ? (
+                <div className="flex flex-1 items-center justify-center text-[11px] text-muted-foreground/40">
+                  —
+                </div>
+              ) : (
+                items.map((o) => (
+                  <div
+                    key={String(o.id)}
+                    className="rounded-lg border border-border bg-white p-2.5 shadow-none transition-colors hover:border-violet-300"
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <FolioLink folio={o.folio} className="text-[11px]" />
+                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                        {o.piezas ?? 0} pz
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-[11px] font-medium text-foreground">{o.modelo ?? "—"}</p>
+                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{o.cliente ?? "—"}</p>
+                    {o.maquilero_nombre && (
+                      <p className="mt-0.5 truncate text-[10px] font-medium text-violet-600">{o.maquilero_nombre}</p>
+                    )}
+                    <div className="mt-1.5">
+                      <RiskBadge risk={o.__risk} days={o.__daysToDeadline} />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function ProgressBar({ value }: { value: number }) {
   const color =
     value >= 70
@@ -220,7 +313,9 @@ export function AnalyticsDashboard({
   const [selectedClientes, setSelectedClientes] = useState<string[]>([])
   const [fechaPedido, setFechaPedido] = useState<Date | undefined>()
   const [fechaCancel, setFechaCancel] = useState<Date | undefined>()
-  const [view, setView] = useState<"cards" | "list">("cards")
+  const [view, setView] = useState<"cards" | "list" | "kanban">("cards")
+  /** Activo (sin facturar) por defecto; o facturado. */
+  const [estadoFilter, setEstadoFilter] = useState<"activo" | "facturado">("activo")
 
   /** Filtro heredado del inicio (tarjetas de "Atención hoy"). */
   const [incomingFilter, setIncomingFilter] = useState<ModuleFilter | null>(initialFilter)
@@ -302,6 +397,9 @@ export function AnalyticsDashboard({
     const fc = fechaCancel ? format(fechaCancel, "yyyy-MM-dd") : null
     const clienteSet = new Set(selectedClientes)
     return enriched.filter((o) => {
+      // Activo (sin facturar) vs Facturado
+      if (estadoFilter === "activo" && o.fecha_facturacion) return false
+      if (estadoFilter === "facturado" && !o.fecha_facturacion) return false
       if (q) {
         const hay = `${o.folio || ""} ${o.modelo || ""}`.toLowerCase()
         if (!hay.includes(q)) return false
@@ -331,7 +429,7 @@ export function AnalyticsDashboard({
       if (incomingFilter === "corte-atrasado" && !etapaAtrasada(o, "corte")) return false
       return true
     })
-  }, [enriched, search, selectedClientes, fechaPedido, fechaCancel, incomingFilter])
+  }, [enriched, search, selectedClientes, fechaPedido, fechaCancel, incomingFilter, estadoFilter])
 
   const summary = useMemo(() => {
     const total = filtered.length
@@ -357,6 +455,7 @@ export function AnalyticsDashboard({
     setFechaPedido(undefined)
     setFechaCancel(undefined)
     setIncomingFilter(null)
+    setEstadoFilter("activo")
   }
 
   /** Exporta las órdenes filtradas (con el pipeline completo) a Excel. */
@@ -405,7 +504,8 @@ export function AnalyticsDashboard({
     selectedClientes.length > 0 ||
     fechaPedido !== undefined ||
     fechaCancel !== undefined ||
-    incomingFilter !== null
+    incomingFilter !== null ||
+    estadoFilter !== "activo"
 
   return (
     <div className="space-y-6">
@@ -454,6 +554,34 @@ export function AnalyticsDashboard({
                 <X className="size-3.5" />
               </button>
             )}
+          </div>
+
+          {/* Activo / Facturado */}
+          <div className="inline-flex overflow-hidden rounded-lg border border-border/60 bg-white">
+            <button
+              type="button"
+              onClick={() => setEstadoFilter("activo")}
+              className={cn(
+                "h-9 px-3 text-sm font-medium transition-colors",
+                estadoFilter === "activo"
+                  ? "bg-violet-100 text-violet-700"
+                  : "text-muted-foreground hover:bg-slate-50 hover:text-foreground",
+              )}
+            >
+              Activos
+            </button>
+            <button
+              type="button"
+              onClick={() => setEstadoFilter("facturado")}
+              className={cn(
+                "h-9 border-l border-border/60 px-3 text-sm font-medium transition-colors",
+                estadoFilter === "facturado"
+                  ? "bg-violet-100 text-violet-700"
+                  : "text-muted-foreground hover:bg-slate-50 hover:text-foreground",
+              )}
+            >
+              Facturados
+            </button>
           </div>
 
           {/* Cliente (multi-select) */}
@@ -517,6 +645,19 @@ export function AnalyticsDashboard({
               <List className="size-4" />
               <span className="hidden sm:inline">Lista</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setView("kanban")}
+              className={cn(
+                "flex h-9 items-center gap-1.5 border-l border-border/60 px-3 text-sm font-medium transition-colors",
+                view === "kanban"
+                  ? "bg-violet-100 text-violet-700"
+                  : "text-muted-foreground hover:bg-slate-50 hover:text-foreground",
+              )}
+            >
+              <KanbanSquare className="size-4" />
+              <span className="hidden sm:inline">Kanban</span>
+            </button>
           </div>
 
           <Button
@@ -565,6 +706,8 @@ export function AnalyticsDashboard({
             />
           ))}
         </div>
+      ) : view === "kanban" ? (
+        <SeguimientoKanban orders={filtered} />
       ) : (
         <OrdersListView
           orders={filtered}

@@ -83,7 +83,16 @@ function diffDias(a: Date, b: Date): number {
   return Math.round((a.getTime() - b.getTime()) / 86400000)
 }
 
-/** Evalúa la puntualidad de una etapa (diseño o corte) contra su plazo. */
+/**
+ * Evalúa la puntualidad de una etapa (diseño o corte).
+ *
+ * Modelo "antes de S1": una etapa es "a tiempo" si quedó lista en o antes
+ * de que arrancara maquila (S1); "a destiempo" solo si se registró después
+ * de S1. Los plazos de LEAD_DIAS (21/7 días) son la META de referencia
+ * (se muestran en el badge), pero no definen el pase/falla — el dato de
+ * fecha de la etapa es la fecha de programación, no de cierre real, así
+ * que exigir 7/21 días de anticipación marcaba casi todo a destiempo.
+ */
 export function evaluarEtapa(row: LeadTimeRow, etapa: Etapa): EvaluacionEtapa {
   const vacio: EvaluacionEtapa = {
     estado: "sin-referencia",
@@ -98,6 +107,7 @@ export function evaluarEtapa(row: LeadTimeRow, etapa: Etapa): EvaluacionEtapa {
   const ref = referenciaS1(row)
   if (!ref) return vacio
 
+  // Meta informativa (para el badge/tooltip): S1 − 21/7 días.
   const limite = new Date(ref.fecha)
   limite.setDate(limite.getDate() - LEAD_DIAS[etapa])
 
@@ -105,9 +115,9 @@ export function evaluarEtapa(row: LeadTimeRow, etapa: Etapa): EvaluacionEtapa {
     etapa === "diseno" ? row.cumplimiento_diseno === true : row.cumplimiento_corte === "Si"
   const fechaEtapa = parseLocalDate(etapa === "diseno" ? row.fecha_diseno : row.fecha_corte)
 
-  // Completada: se compara la fecha real de la etapa contra el límite
+  // Completada: a tiempo si se registró en o antes de S1; a destiempo si después.
   if (completada && fechaEtapa) {
-    const desfase = diffDias(fechaEtapa, limite)
+    const desfase = diffDias(fechaEtapa, ref.fecha) // fechaEtapa − S1
     return {
       estado: desfase <= 0 ? "a-tiempo" : "a-destiempo",
       limite,
@@ -116,19 +126,17 @@ export function evaluarEtapa(row: LeadTimeRow, etapa: Etapa): EvaluacionEtapa {
     }
   }
 
-  // Pendiente: se compara HOY contra el límite.
+  // Pendiente: solo es "a destiempo" si maquila ya arrancó (S1 real ya pasó)
+  // y la etapa sigue sin cerrarse. Con S1 futuro o proyectado → "en plazo".
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
-  const desfase = diffDias(hoy, limite)
-  // Solo se afirma "a destiempo" en pendientes cuando el S1 es REAL.
-  // Si S1 está proyectado (estimado desde la fecha de entrega), no se
-  // "reprueba" contra una fecha estimada: queda "pendiente" (en plazo).
-  const aDestiempo = desfase > 0 && !ref.proyectada
+  const desfaseVsS1 = diffDias(hoy, ref.fecha)
+  const aDestiempo = desfaseVsS1 > 0 && !ref.proyectada
   return {
     estado: aDestiempo ? "a-destiempo" : "pendiente",
     limite,
     referenciaProyectada: ref.proyectada,
-    diasDesfase: desfase,
+    diasDesfase: desfaseVsS1,
   }
 }
 

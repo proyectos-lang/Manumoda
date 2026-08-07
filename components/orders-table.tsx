@@ -25,6 +25,7 @@ import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { RiskBadge } from "@/components/risk-badge"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
+import { usePasswordGate } from "@/components/password-gate-dialog"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { computeRisk } from "@/lib/risk"
 import {
@@ -84,8 +85,8 @@ function formatDate(iso: string | null): string {
 }
 
 export function OrdersTable({ refreshKey, configMissing, initialFilter = null }: Props) {
+  const gate = usePasswordGate()
   const [orders, setOrders] = useState<OrdenProduccion[]>([])
-  const [entregadosOcultos, setEntregadosOcultos] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [incomingFilter, setIncomingFilter] = useState<ModuleFilter | null>(initialFilter)
@@ -129,6 +130,12 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
     }
     setDeleteTarget(null)
   }
+
+  // Cambiar fechas requiere contraseña
+  const requestFechaCancelacionChange = (row: OrdenProduccion, date: Date | undefined) =>
+    gate.request(() => handleFechaCancelacionChange(row, date))
+  const requestFechaLimiteConfirmacionChange = (row: OrdenProduccion, date: Date | undefined) =>
+    gate.request(() => handleFechaLimiteConfirmacionChange(row, date))
 
   const handleFechaCancelacionChange = async (row: OrdenProduccion, date: Date | undefined) => {
     if (row.id == null) return
@@ -257,23 +264,17 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
 
     setLoading(true)
     setError(null)
-    // Los pedidos entregados (facturados) cerraron su ciclo y no se listan aquí.
-    // Se cuentan aparte para dejar constancia de que existen.
-    const [{ data, error }, { count: entregados }] = await Promise.all([
-      supabase
-        .from("ordenes_produccion")
-        .select(
-          "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_facturacion",
-        )
-        .eq("idempresa", IDEMPRESA)
-        .is("fecha_facturacion", null)
-        .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
-      supabase
-        .from("ordenes_produccion")
-        .select("*", { count: "exact", head: true })
-        .eq("idempresa", IDEMPRESA)
-        .not("fecha_facturacion", "is", null),
-    ])
+    // Panel General muestra solo las órdenes pendientes de programar.
+    // Los facturados y las que ya están en producción viven en otros módulos.
+    const { data, error } = await supabase
+      .from("ordenes_produccion")
+      .select(
+        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_facturacion",
+      )
+      .eq("idempresa", IDEMPRESA)
+      .eq("fase_actual", "Por Programar")
+      .is("fecha_facturacion", null)
+      .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
 
     if (error) {
       console.error("Fetch error:", error)
@@ -281,7 +282,6 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       setOrders([])
     } else {
       setOrders((data ?? []) as OrdenProduccion[])
-      setEntregadosOcultos(entregados ?? 0)
     }
     setLoading(false)
   }
@@ -460,7 +460,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           <Calendar
                             mode="single"
                             selected={row.fecha_cancelacion ? new Date(row.fecha_cancelacion + "T00:00:00") : undefined}
-                            onSelect={(d) => handleFechaCancelacionChange(row, d)}
+                            onSelect={(d) => requestFechaCancelacionChange(row, d)}
                             initialFocus
                           />
                         </PopoverContent>
@@ -503,7 +503,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           <Calendar
                             mode="single"
                             selected={row.fecha_limite_confirmacion ? new Date(row.fecha_limite_confirmacion + "T00:00:00") : undefined}
-                            onSelect={(d) => handleFechaLimiteConfirmacionChange(row, d)}
+                            onSelect={(d) => requestFechaLimiteConfirmacionChange(row, d)}
                             initialFocus
                           />
                         </PopoverContent>
@@ -688,13 +688,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
             {"–"}
             {(currentPage - 1) * PAGE_SIZE + pageRows.length}
           </span>{" "}
-          de <span className="font-medium text-foreground">{filtered.length}</span> órdenes
-          {entregadosOcultos > 0 && (
-            <span className="ml-2 text-muted-foreground/70">
-              · {entregadosOcultos} entregado{entregadosOcultos === 1 ? "" : "s"} no se{" "}
-              {entregadosOcultos === 1 ? "muestra" : "muestran"}
-            </span>
-          )}
+          de <span className="font-medium text-foreground">{filtered.length}</span> órdenes por programar
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -791,6 +785,8 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <gate.Dialog />
     </div>
   )
 }

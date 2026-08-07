@@ -35,21 +35,21 @@ export function LeadTimeBadge({
   if (ev.estado === "na" || ev.estado === "sin-referencia") return null
 
   const nombre = etapa === "diseno" ? "Diseño" : "Corte"
-  const limiteTxt = ev.limite ? format(ev.limite, "dd MMM", { locale: es }) : "—"
+  const metaTxt = ev.limite ? format(ev.limite, "dd MMM", { locale: es }) : "—"
   const d = ev.diasDesfase
 
-  // Texto compacto: "-3d" con holgura, "+5d" de retraso
+  // Texto compacto: días respecto a S1. "-3d" antes de S1, "+5d" después.
   const desfaseTxt =
-    d === null ? "" : d === 0 ? "justo" : d > 0 ? `+${d}d` : `${d}d`
+    d === null ? "" : d === 0 ? "justo S1" : d > 0 ? `+${d}d` : `${d}d`
 
   const detalle =
     ev.estado === "a-destiempo"
-      ? `${nombre} debía estar listo el ${limiteTxt} (${LEAD_DIAS[etapa]} días antes de S1)` +
-        (d !== null && d > 0 ? ` — ${d} día(s) de retraso` : "")
+      ? `${nombre} se registró después de arrancar maquila (S1)` +
+        (d !== null && d > 0 ? ` — ${d} día(s) tarde` : "")
       : ev.estado === "a-tiempo"
-        ? `${nombre} se completó dentro del plazo (límite ${limiteTxt})`
-        : `Plazo de ${nombre}: ${limiteTxt}` +
-          (d !== null ? ` — quedan ${Math.abs(d)} día(s)` : "")
+        ? `${nombre} quedó listo antes de S1` +
+          (d !== null ? ` (${Math.abs(d)} día(s) antes)` : "")
+        : `${nombre} pendiente · meta ${metaTxt} (${LEAD_DIAS[etapa]} días antes de S1)`
 
   return (
     <span

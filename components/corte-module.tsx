@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
+import { usePasswordGate } from "@/components/password-gate-dialog"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { EficienciaTrend } from "@/components/eficiencia-trend"
 import { VacacionesPermisosTab } from "@/components/design-module"
@@ -127,7 +128,7 @@ export function CorteModule({
     <Tabs defaultValue="plan" className="w-full">
       <TabsList>
         <TabsTrigger value="plan">Plan de Corte Semanal</TabsTrigger>
-        <TabsTrigger value="bonos">Bonos</TabsTrigger>
+        <TabsTrigger value="bonos">Bonos por Productividad</TabsTrigger>
         <TabsTrigger value="vacaciones">Vacaciones / Permisos</TabsTrigger>
       </TabsList>
 
@@ -167,6 +168,7 @@ function PlanCorteTab({
   configMissing: boolean
   initialFilter?: ModuleFilter | null
 }) {
+  const gate = usePasswordGate()
   const [rows, setRows] = useState<VwPlanCorteDetalle[]>([])
   const [cortadores, setCortadores] = useState<Cortador[]>([])
   const [loading, setLoading] = useState(false)
@@ -386,6 +388,7 @@ function PlanCorteTab({
 
   return (
     <>
+    <gate.Dialog />
     <CorteMultipliersDialog open={multipliersOpen} onOpenChange={setMultipliersOpen} />
     <EditCorteVariablesSheet open={editVarsOpen} onClose={() => setEditVarsOpen(false)} />
     <div className="space-y-4">
@@ -475,7 +478,7 @@ function PlanCorteTab({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setMultipliersOpen(true)}
+            onClick={() => gate.request(() => setMultipliersOpen(true))}
             className="gap-1.5 bg-transparent"
           >
             <SlidersHorizontal className="size-3.5" />
@@ -484,7 +487,7 @@ function PlanCorteTab({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setEditVarsOpen(true)}
+            onClick={() => gate.request(() => setEditVarsOpen(true))}
             className="gap-1.5 bg-transparent"
           >
             <Settings2 className="size-3.5" />

@@ -349,11 +349,11 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       Modelo: r.modelo ?? "",
       Familia: r.familia ?? "",
       Maquilador: r.maquilero_nombre ?? "",
-      "Fecha Límite": r.fecha_limite_confirmacion ?? "",
+      "Límite de Confirmación": r.fecha_limite_confirmacion ?? "",
+      "Límite de Entrega": r.fecha_cancelacion ?? "",
+      "Límite de Entrega Original": r.fecha_cancelacion_original ?? "",
       "Contra Muestra": r.fecha_contra_muestra ?? "",
       "Última Revisión": r.fecha_ultima_revision ? String(r.fecha_ultima_revision).slice(0, 10) : "",
-      "Fecha Entrega": r.fecha_cancelacion ?? "",
-      "Fecha Entrega Original": r.fecha_cancelacion_original ?? "",
       Riesgo: r.riesgo_entrega ?? "",
       Fase: r.fase_actual ?? "",
       S1: r.fecha_s1 ?? "", S2: r.fecha_s2 ?? "", S3: r.fecha_s3 ?? "",
@@ -1115,9 +1115,9 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead>Modelo</TableHead>
                 <TableHead>Familia</TableHead>
                 <TableHead>Maquilador</TableHead>
-                <TableHead className="w-[110px]">Fecha Límite</TableHead>
+                <TableHead className="w-[110px]">Límite de Confirmación</TableHead>
+                <TableHead className="w-[110px]">Límite de Entrega</TableHead>
                 <TableHead className="w-[110px]">Contra Muestra</TableHead>
-                <TableHead className="w-[110px]">Fecha Entrega</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
                 <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
@@ -1183,15 +1183,15 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
-                        {r.fecha_contra_muestra
-                          ? formatDate(r.fecha_contra_muestra)
-                          : <span className="text-muted-foreground/60 italic">—</span>}
-                      </TableCell>
-                      <TableCell className="tabular-nums text-sm">
                         <FechaEntregaCell
                           fecha={r.fecha_cancelacion}
                           original={r.fecha_cancelacion_original}
                         />
+                      </TableCell>
+                      <TableCell className="tabular-nums text-sm">
+                        {r.fecha_contra_muestra
+                          ? formatDate(r.fecha_contra_muestra)
+                          : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell>
                         <span
@@ -1491,16 +1491,20 @@ function LeadTimeInfo() {
             {"   │◄──────── 21 días ────────►│"}
           </div>
           <ul className="space-y-1.5 text-xs text-muted-foreground">
-            <li>· <strong className="text-foreground">Corte</strong> debe estar listo {LEAD_DIAS.corte} días antes de S1.</li>
-            <li>· <strong className="text-foreground">Diseño</strong> {LEAD_DIAS.diseno} días antes (los 7 de corte más 14 propios).</li>
             <li>
-              · Si la etapa ya se cumplió, se compara su fecha real contra el límite. Si sigue
-              pendiente, se compara contra hoy.
+              · <strong className="text-foreground">A tiempo</strong> = la etapa quedó lista en o
+              antes de que arrancara maquila (S1). <strong className="text-foreground">A destiempo</strong>
+              {" "}= se registró después de S1.
+            </li>
+            <li>
+              · Meta de referencia: Corte {LEAD_DIAS.corte} días antes de S1, Diseño {LEAD_DIAS.diseno}
+              {" "}días antes. Se muestra en cada indicador pero no define el cumplimiento (la fecha
+              guardada es la de programación, no la de cierre real).
             </li>
             <li>
               · Cuando la orden aún no llega a S1, se estima esa fecha restando {PHASE_PACE.S1} días
-              a la fecha de entrega. Esos indicadores se muestran con borde punteado y no se
-              marcan "a destiempo" hasta tener un S1 real.
+              a la fecha de entrega. Esos indicadores van con borde punteado y no se marcan
+              "a destiempo" hasta tener un S1 real.
             </li>
             <li>· Las órdenes facturadas no se evalúan.</li>
           </ul>
