@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { getISOWeek } from "date-fns"
-import { Check, ChevronsUpDown, Loader2, Scissors } from "lucide-react"
+import { format, getISOWeek } from "date-fns"
+import { es } from "date-fns/locale"
+import { CalendarIcon, Check, ChevronsUpDown, Loader2, Scissors } from "lucide-react"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -19,6 +20,7 @@ import {
 import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
+import { Calendar } from "@/components/ui/calendar"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Command,
@@ -65,6 +67,8 @@ type FormState = {
   piezas_cortadas: string
   metros_utilizar: string
   semana: string
+  /** Fecha real en que se cortó (no la de captura). Mide la puntualidad vs S1. */
+  fecha: Date | undefined
 }
 
 const EMPTY_FORM: FormState = {
@@ -82,6 +86,7 @@ const EMPTY_FORM: FormState = {
   piezas_cortadas: "",
   metros_utilizar: "",
   semana: "",
+  fecha: undefined,
 }
 
 // ─── Dark-theme styling constants ─────────────────────────────────────────────
@@ -227,7 +232,7 @@ export function ScheduleCutDialog({
         .eq("idempresa", IDEMPRESA)
         .eq("semana", getISOWeek(new Date())),
       supabase.from("corte_programacion")
-        .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar, semana")
+        .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar, semana, fecha")
         .eq("idempresa", IDEMPRESA)
         .eq("folio", orden?.folio ?? "")
         .order("id", { ascending: false })
@@ -258,6 +263,7 @@ export function ScheduleCutDialog({
         combinacion: boolean | null; comp_entretela: boolean | null; comp_poquetin: boolean | null
         comp_forro: boolean | null; idcortador: number | null; idapoyo: number | null
         piezas_cortadas: number | null; metros_utilizar: number | null; semana: number | null
+        fecha: string | null
       }
       const existing = cpRes.data as ExistingCorte | null
       if (existing) {
@@ -277,6 +283,7 @@ export function ScheduleCutDialog({
           piezas_cortadas: existing.piezas_cortadas ? String(existing.piezas_cortadas) : "",
           metros_utilizar: existing.metros_utilizar ? String(existing.metros_utilizar) : "",
           semana: existing.semana ? String(existing.semana) : String(getISOWeek(new Date())),
+          fecha: existing.fecha ? new Date(`${String(existing.fecha).slice(0, 10)}T00:00:00`) : undefined,
         })
       } else {
         const matched = familiasList.find(
@@ -286,6 +293,7 @@ export function ScheduleCutDialog({
           ...prev,
           ...(matched ? { idfamilia: String(matched.id) } : {}),
           semana: String(getISOWeek(new Date())),
+          fecha: new Date(),
         }))
       }
       setLoading(false)
@@ -338,6 +346,7 @@ export function ScheduleCutDialog({
     if (isNaN(tendidosNum) || tendidosNum < 1 || tendidosNum > 8) { toast.error("Campo requerido", { description: "Ingresa los tendidos (1–8)." }); return }
     const semanaNum = parseInt(form.semana, 10)
     if (isNaN(semanaNum) || semanaNum < 1 || semanaNum > 53) { toast.error("Semana inválida", { description: "Ingresa una semana entre 1 y 53." }); return }
+    if (!form.fecha) { toast.error("Campo requerido", { description: "Indica la fecha en que se realizó el corte." }); return }
     // metros_utilizar es NOT NULL en la base: se exige un valor > 0
     const metrosNum = form.metros_utilizar ? parseFloat(form.metros_utilizar) : null
     if (metrosNum === null || isNaN(metrosNum) || metrosNum <= 0) { toast.error("Campo requerido", { description: "Ingresa los metros de tela (mayor a 0)." }); return }
@@ -366,6 +375,8 @@ export function ScheduleCutDialog({
         piezas_cortadas: piezasNum,
         metros_utilizar: metrosNum,
         semana: semanaNum,
+        // Fecha real del corte: de aquí sale la puntualidad vs S1
+        fecha: format(form.fecha, "yyyy-MM-dd"),
       }
 
       if (editRegistroId) {
@@ -653,8 +664,42 @@ export function ScheduleCutDialog({
               </div>
             </FormSection>
 
-            {/* Metros y Semana */}
-            <FormSection title="Metros y Semana">
+            {/* Fecha, Metros y Semana */}
+            <FormSection title="Fecha del Corte">
+              <div className="space-y-1.5">
+                <DLabel htmlFor="fecha_corte">Fecha en que se cortó <Req /></DLabel>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      id="fecha_corte"
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start gap-2 border-white/15 bg-white/10 font-normal text-white hover:bg-white/15 hover:text-white",
+                        !form.fecha && "text-white/40",
+                      )}
+                    >
+                      <CalendarIcon className="size-4" />
+                      {form.fecha
+                        ? format(form.fecha, "dd MMM yyyy", { locale: es })
+                        : "Seleccionar fecha…"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={form.fecha}
+                      onSelect={(d) => setForm(f => ({ ...f, fecha: d }))}
+                      locale={es}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                <p className="text-[10px] text-white/40">
+                  Es la fecha real del corte, no la de captura. De aquí sale el indicador de
+                  puntualidad contra el arranque de maquila (S1).
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <DLabel htmlFor="metros_utilizar">Metros de tela <Req /></DLabel>

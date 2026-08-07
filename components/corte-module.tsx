@@ -529,6 +529,7 @@ function PlanCorteTab({
                 />
               </TableHead>
               <TableHead className="whitespace-nowrap font-semibold">Folio</TableHead>
+              <TableHead className="whitespace-nowrap font-semibold">Fecha Corte</TableHead>
               <TableHead className="font-semibold">Familia</TableHead>
               <TableHead className="font-semibold">Categoría</TableHead>
               <TableHead className="font-semibold">Tela</TableHead>
@@ -549,14 +550,14 @@ function PlanCorteTab({
             {loading && rows.length === 0 ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 16 }).map((__, j) => (
+                  {Array.from({ length: 17 }).map((__, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={16} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={17} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0 ? "No hay registros en el plan de corte." : "Sin resultados para esta búsqueda."}
                 </TableCell>
               </TableRow>
@@ -582,6 +583,9 @@ function PlanCorteTab({
                       />
                     </TableCell>
                     <TableCell className="font-mono font-semibold">{r.folio}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+                      {r.fecha ? String(r.fecha).slice(0, 10) : "—"}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{r.familia ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{r.categoria_corte ?? r.categoria ?? "—"}</TableCell>
                     <TableCell className="max-w-[130px] truncate text-xs">{r.categoria_tela ?? r.tipo_tela ?? "—"}</TableCell>
