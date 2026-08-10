@@ -4,13 +4,16 @@
  * Barra de acción masiva para mover registros de una semana a otra.
  * Se usa en Diseño (diseno_programacion) y Corte (corte_programacion).
  *
- * Los registros ya cumplidos NO se pueden mover: sus horas ya contaron
- * en los bonos de su semana y moverlos alteraría liquidaciones cerradas.
- * Sus checkboxes quedan deshabilitados.
+ * Mover un registro ya cumplido traslada sus horas al bono de la semana
+ * destino y las resta de la de origen. Cada módulo decide cómo tratarlo:
+ *
+ * · `lockedCount` — Corte: los cumplidos no son seleccionables (candado).
+ * · `cumplidosCount` — Diseño: sí se pueden mover, con aviso del efecto
+ *   sobre los bonos de ambas semanas.
  */
 
 import { useState } from "react"
-import { ArrowRightLeft, Loader2, Lock, X } from "lucide-react"
+import { ArrowRightLeft, Loader2, Lock, TriangleAlert, X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -28,7 +31,8 @@ import {
 
 export function BulkMoveWeekBar({
   selectedCount,
-  lockedCount,
+  lockedCount = 0,
+  cumplidosCount = 0,
   onClear,
   onMove,
   moving,
@@ -37,7 +41,9 @@ export function BulkMoveWeekBar({
 }: {
   selectedCount: number
   /** Registros visibles bloqueados por estar ya cumplidos (no seleccionables). */
-  lockedCount: number
+  lockedCount?: number
+  /** Seleccionados que ya están cumplidos: se mueven, pero avisando. */
+  cumplidosCount?: number
   onClear: () => void
   onMove: (semana: number) => Promise<void> | void
   moving: boolean
@@ -79,6 +85,13 @@ export function BulkMoveWeekBar({
             <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
               <Lock className="size-3 shrink-0" />
               {lockedCount} {lockedCount === 1 ? "cumplido queda bloqueado" : "cumplidos quedan bloqueados"}
+            </p>
+          )}
+          {cumplidosCount > 0 && (
+            <p className="flex items-center gap-1 text-[11px] font-medium text-amber-700">
+              <TriangleAlert className="size-3 shrink-0" />
+              {cumplidosCount} ya {cumplidosCount === 1 ? "está cumplido" : "están cumplidos"}: sus horas
+              cambiarán de semana en los bonos
             </p>
           )}
         </div>
@@ -128,7 +141,19 @@ export function BulkMoveWeekBar({
             <AlertDialogDescription>
               Se actualizará la semana de {selectedCount}{" "}
               {selectedCount === 1 ? "registro" : "registros"}. La semana original se conserva
-              como referencia. Los registros ya cumplidos no se ven afectados.
+              como referencia.
+              {cumplidosCount > 0 ? (
+                <>
+                  {" "}
+                  <span className="font-medium text-amber-700">
+                    {cumplidosCount} {cumplidosCount === 1 ? "ya está cumplido" : "ya están cumplidos"}
+                  </span>
+                  : sus horas dejarán de contar en el bono de su semana actual y pasarán al de la
+                  semana {semanaNum}.
+                </>
+              ) : (
+                " Los registros ya cumplidos no se ven afectados."
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

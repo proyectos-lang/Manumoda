@@ -356,20 +356,25 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
 
   // ── Selección múltiple / mover de semana ─────────────────────────────────────
 
-  /** Un registro cumplido no se puede mover: sus horas ya contaron en los bonos. */
-  const isLocked = useCallback(
+  /**
+   * En Diseño un registro cumplido SÍ se puede mover de semana: se
+   * reprograma con frecuencia después de aprobado. El efecto sobre los
+   * bonos (las horas cambian de semana) se avisa en la barra y en la
+   * confirmación, pero no se bloquea.
+   */
+  const esCumplido = useCallback(
     (r: DisenoProgramacion) => Boolean(r.cumplimiento_diseno || r.cumplimiento_costura),
     [],
   )
 
-  // Solo las filas NO cumplidas son seleccionables
   const visibleIds = useMemo(
-    () => filteredRecords.filter((r) => !isLocked(r)).map((r) => r.id),
-    [filteredRecords, isLocked],
+    () => filteredRecords.map((r) => r.id),
+    [filteredRecords],
   )
-  const lockedCount = useMemo(
-    () => filteredRecords.filter(isLocked).length,
-    [filteredRecords, isLocked],
+  /** Cumplidos dentro de la selección: alimentan el aviso de la barra. */
+  const cumplidosSeleccionados = useMemo(
+    () => filteredRecords.filter((r) => selectedIds.has(r.id) && esCumplido(r)).length,
+    [filteredRecords, selectedIds, esCumplido],
   )
   const selectedVisible = useMemo(
     () => visibleIds.filter((id) => selectedIds.has(id)),
@@ -403,10 +408,9 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
     setMovingWeek(true)
     try {
       // Preservar la semana original la primera vez que se mueve un registro.
-      // isLocked filtra por si acaso: los cumplidos nunca deben moverse.
       const porSemanaOriginal = new Map<number | null, number[]>()
       for (const r of filteredRecords) {
-        if (!selectedIds.has(r.id) || isLocked(r)) continue
+        if (!selectedIds.has(r.id)) continue
         const orig = r.semana_original ?? r.semana
         const arr = porSemanaOriginal.get(orig) ?? []
         arr.push(r.id)
@@ -442,7 +446,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
       setMovingWeek(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configMissing, selectedVisible, selectedIds, filteredRecords, isLocked])
+  }, [configMissing, selectedVisible, selectedIds, filteredRecords])
 
   const kpis = useMemo(
     () => ({
@@ -853,7 +857,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
           {/* Barra de acción masiva (solo con filas seleccionadas) */}
           <BulkMoveWeekBar
             selectedCount={selectedVisible.length}
-            lockedCount={lockedCount}
+            cumplidosCount={cumplidosSeleccionados}
             onClear={() => setSelectedIds(new Set())}
             onMove={moverSemana}
             moving={movingWeek}
@@ -924,8 +928,6 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
                           <RowCheckbox
                             checked={selectedIds.has(row.id)}
                             onChange={(v) => toggleRow(row.id, v)}
-                            disabled={isLocked(row)}
-                            disabledTitle="Orden cumplida — sus horas ya contaron en los bonos de esta semana"
                           />
                         </TableCell>
                         <TableCell>
