@@ -77,6 +77,86 @@ function FaseBadge({ fase }: { fase: string | null | undefined }) {
   )
 }
 
+/**
+ * Botón de etapa (Diseño / Corte) en la columna de acciones.
+ *
+ * Cuatro estados, en este orden de prioridad:
+ *
+ * · `completado` — hay evidencia de que la etapa ocurrió (aprobación del
+ *   cliente en diseño, cumplimiento registrado en corte). Gana sobre
+ *   "omitida": si quedó constancia, la etapa se hizo.
+ * · `omitida`    — se marcó que la orden no la requiere.
+ * · `programado` — ya tiene semana asignada; se puede reprogramar.
+ * · sin programar.
+ *
+ * Completado sigue siendo clicable: una etapa cumplida todavía se puede
+ * reprogramar, igual que en el módulo de Diseño.
+ */
+function StageActionButton({
+  etapa,
+  completado,
+  omitida,
+  programado,
+  onClick,
+  disabled,
+}: {
+  etapa: "Diseño" | "Corte"
+  completado: boolean
+  omitida: boolean
+  programado: boolean
+  onClick: () => void
+  disabled: boolean
+}) {
+  if (completado) {
+    const motivo =
+      etapa === "Diseño"
+        ? "Aprobado por el cliente — clic para reprogramar"
+        : "Corte registrado como cumplido — clic para reprogramar"
+    return (
+      <Button
+        size="sm"
+        title={motivo}
+        className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+        onClick={onClick}
+        disabled={disabled}
+      >
+        <CheckCircle2 className="size-3.5" />
+        {etapa} Completado
+      </Button>
+    )
+  }
+
+  if (omitida) {
+    return (
+      <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
+        <Ban className="size-3.5" />
+        Omitió {etapa}
+      </Button>
+    )
+  }
+
+  if (programado) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+        onClick={onClick}
+        disabled={disabled}
+      >
+        <Pencil className="size-3.5" />
+        Reprogramar {etapa}
+      </Button>
+    )
+  }
+
+  return (
+    <Button size="sm" variant="outline" onClick={onClick} disabled={disabled}>
+      Programar en {etapa}
+    </Button>
+  )
+}
+
 /** Columnas `date`: se leen como medianoche local para no mostrar el día anterior. */
 function formatDate(iso: string | null): string {
   if (!iso) return "-"
@@ -110,6 +190,8 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
   const [editingClienteId, setEditingClienteId] = useState<number | string | null>(null)
   const [editingClienteValue, setEditingClienteValue] = useState("")
   const [savingClienteId, setSavingClienteId] = useState<number | string | null>(null)
+  /** Folios cuyo corte ya se registró como cumplido. */
+  const [corteCumplido, setCorteCumplido] = useState<Set<string>>(new Set())
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget?.id) return
@@ -270,7 +352,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
     const { data, error } = await supabase
       .from("ordenes_produccion")
       .select(
-        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_facturacion",
+        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_aprobacion_diseno, fecha_facturacion",
       )
       .eq("idempresa", IDEMPRESA)
       .eq("fase_actual", "Por Programar")
@@ -281,9 +363,29 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       console.error("Fetch error:", error)
       setError(error.message)
       setOrders([])
-    } else {
-      setOrders((data ?? []) as OrdenProduccion[])
+      setLoading(false)
+      return
     }
+
+    setOrders((data ?? []) as OrdenProduccion[])
+
+    // El corte cumplido vive en corte_programacion, no en la orden. Se piden
+    // solo los folios cumplidos (un puñado) en vez de cruzar los ~300 visibles.
+    const { data: corteData, error: corteError } = await supabase
+      .from("corte_programacion")
+      .select("folio")
+      .eq("idempresa", IDEMPRESA)
+      .eq("cumplimiento_corte", "Si")
+
+    if (corteError) {
+      // No bloquea la tabla: solo faltará distinguir "Corte Completado"
+      console.error("Fetch corte cumplido error:", corteError)
+    } else {
+      setCorteCumplido(
+        new Set((corteData ?? []).map((c) => (c as { folio: string }).folio).filter(Boolean)),
+      )
+    }
+
     setLoading(false)
   }
 
@@ -519,76 +621,32 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         {/* ── Botón Diseño ── */}
-                        {row.diseno_programado ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                            onClick={() => {
-                              if (row.id == null) return
-                              setScheduleId(row.id)
-                              setScheduleOpen(true)
-                            }}
-                            disabled={row.id == null}
-                          >
-                            <Pencil className="size-3.5" />
-                            Reprogramar Diseño
-                          </Button>
-                        ) : row.no_requiere_diseno ? (
-                          <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
-                            <Ban className="size-3.5" />
-                            Omitió Diseño
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              if (row.id == null) return
-                              setScheduleId(row.id)
-                              setScheduleOpen(true)
-                            }}
-                            disabled={row.id == null}
-                          >
-                            Programar en Diseño
-                          </Button>
-                        )}
+                        <StageActionButton
+                          etapa="Diseño"
+                          completado={Boolean(row.fecha_aprobacion_diseno)}
+                          omitida={Boolean(row.no_requiere_diseno)}
+                          programado={Boolean(row.diseno_programado)}
+                          disabled={row.id == null}
+                          onClick={() => {
+                            if (row.id == null) return
+                            setScheduleId(row.id)
+                            setScheduleOpen(true)
+                          }}
+                        />
 
                         {/* ── Botón Corte ── */}
-                        {row.corte_programado ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                            onClick={() => {
-                              if (row.id == null) return
-                              setScheduleCutId(row.id)
-                              setScheduleCutOpen(true)
-                            }}
-                            disabled={row.id == null}
-                          >
-                            <Pencil className="size-3.5" />
-                            Reprogramar Corte
-                          </Button>
-                        ) : row.no_requiere_corte ? (
-                          <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
-                            <Ban className="size-3.5" />
-                            Omitió Corte
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              if (row.id == null) return
-                              setScheduleCutId(row.id)
-                              setScheduleCutOpen(true)
-                            }}
-                            disabled={row.id == null}
-                          >
-                            Programar en Corte
-                          </Button>
-                        )}
+                        <StageActionButton
+                          etapa="Corte"
+                          completado={corteCumplido.has(row.folio)}
+                          omitida={Boolean(row.no_requiere_corte)}
+                          programado={Boolean(row.corte_programado)}
+                          disabled={row.id == null}
+                          onClick={() => {
+                            if (row.id == null) return
+                            setScheduleCutId(row.id)
+                            setScheduleCutOpen(true)
+                          }}
+                        />
 
                         {/* ── Menú de opciones adicionales ── */}
                         <DropdownMenu>
@@ -641,7 +699,8 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                                 Revertir: Habilitar Corte
                               </DropdownMenuItem>
                             )}
-                            {!row.diseno_programado && !row.no_requiere_diseno && (
+                            {/* Una etapa ya completada no puede marcarse como omitida */}
+                            {!row.diseno_programado && !row.no_requiere_diseno && !row.fecha_aprobacion_diseno && (
                               <DropdownMenuItem
                                 onClick={() => handleSkipPhase(row, "no_requiere_diseno")}
                                 className="text-amber-700 focus:text-amber-700"
@@ -650,7 +709,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                                 Marcar: No pasa por Diseño
                               </DropdownMenuItem>
                             )}
-                            {!row.corte_programado && !row.no_requiere_corte && (
+                            {!row.corte_programado && !row.no_requiere_corte && !corteCumplido.has(row.folio) && (
                               <DropdownMenuItem
                                 onClick={() => handleSkipPhase(row, "no_requiere_corte")}
                                 className="text-amber-700 focus:text-amber-700"
