@@ -148,12 +148,13 @@ function corteState(o: SeguimientoRow): StageState {
   return "pendiente"
 }
 
-// ── Kanban de Seguimiento (Diseño · Corte · S1…S7) ───────────────────────────
+// ── Kanban de Seguimiento (Sin Programar · Diseño · Corte · S1…S7) ───────────
 
-const KANBAN_COLS = ["Diseño", "Corte", "S1", "S2", "S3", "S4", "S5", "S6", "S7"] as const
+const KANBAN_COLS = ["Sin Programar", "Diseño", "Corte", "S1", "S2", "S3", "S4", "S5", "S6", "S7"] as const
 const MAQUILA_PHASES = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
 
 const KANBAN_COL_CLASS: Record<string, string> = {
+  "Sin Programar": "border-slate-300 bg-slate-100 text-slate-600",
   Diseño: "border-indigo-300 bg-indigo-50 text-indigo-700",
   Corte: "border-amber-300 bg-amber-50 text-amber-700",
   S1: "border-cyan-300 bg-cyan-50 text-cyan-700",
@@ -168,9 +169,13 @@ const KANBAN_COL_CLASS: Record<string, string> = {
 /** Columna del Kanban a la que pertenece una orden. */
 function kanbanColumn(o: SeguimientoRow): string {
   if (o.fase_actual && MAQUILA_PHASES.has(o.fase_actual)) return o.fase_actual
-  // Previa a S1: se ubica según el avance de corte
+  // Previa a S1: se ubica en la etapa más avanzada que ya tenga programada
   const cs = corteState(o)
-  return cs === "hecho" || cs === "programado" ? "Corte" : "Diseño"
+  if (cs === "hecho" || cs === "programado") return "Corte"
+  const ds = disenoState(o)
+  if (ds === "hecho" || ds === "programado") return "Diseño"
+  // Ni diseño, ni corte, ni maquila: aún no se programa en nada
+  return "Sin Programar"
 }
 
 function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
@@ -185,7 +190,7 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
   }, [orders])
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10">
       {KANBAN_COLS.map((col) => {
         const items = grouped[col] ?? []
         return (
@@ -423,7 +428,9 @@ export function AnalyticsDashboard({
         if (o.__risk !== "vencido" || o.fase_actual === "S7") return false
       }
       if (incomingFilter === "por-vencer") {
-        if (o.__risk !== "riesgo" || o.fase_actual === "S7") return false
+        // La tarjeta del inicio suma "En Riesgo" + "A Destiempo"
+        const porVencer = o.__risk === "riesgo" || o.__risk === "a-destiempo"
+        if (!porVencer || o.fase_actual === "S7") return false
       }
       if (incomingFilter === "diseno-atrasado" && !etapaAtrasada(o, "diseno")) return false
       if (incomingFilter === "corte-atrasado" && !etapaAtrasada(o, "corte")) return false
@@ -433,7 +440,16 @@ export function AnalyticsDashboard({
 
   const summary = useMemo(() => {
     const total = filtered.length
-    const counts = { entregado: 0, vencido: 0, riesgo: 0, "a-tiempo": 0, "sin-fecha": 0 } as Record<Risk, number>
+    // Sin cast: si falta una clave del tipo Risk, TypeScript lo marca
+    // (con `as` el conteo daba NaN al llegar un estado nuevo).
+    const counts: Record<Risk, number> = {
+      entregado: 0,
+      vencido: 0,
+      "a-destiempo": 0,
+      riesgo: 0,
+      "a-tiempo": 0,
+      "sin-fecha": 0,
+    }
     let progressSum = 0
     for (const o of filtered) {
       counts[o.__risk]++
@@ -442,6 +458,7 @@ export function AnalyticsDashboard({
     return {
       total,
       vencido: counts.vencido,
+      aDestiempo: counts["a-destiempo"],
       riesgo: counts.riesgo,
       aTiempo: counts["a-tiempo"],
       sinFecha: counts["sin-fecha"],
@@ -463,6 +480,7 @@ export function AnalyticsDashboard({
     const RISK_LABEL: Record<Risk, string> = {
       entregado: "Entregado",
       vencido: "Vencido",
+      "a-destiempo": "A Destiempo",
       riesgo: "En Riesgo",
       "a-tiempo": "A Tiempo",
       "sin-fecha": "Sin Fecha",
@@ -520,7 +538,7 @@ export function AnalyticsDashboard({
       />
 
       {/* Summary Strip */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
         <SummaryCard label="Total" value={summary.total} accent="violet" />
         <SummaryCard
           label="Avance Promedio"
@@ -528,6 +546,7 @@ export function AnalyticsDashboard({
           accent="cyan"
         />
         <SummaryCard label="A Tiempo" value={summary.aTiempo} accent="emerald" />
+        <SummaryCard label="A Destiempo" value={summary.aDestiempo} accent="amber" />
         <SummaryCard label="En Riesgo" value={summary.riesgo} accent="amber" />
         <SummaryCard label="Vencidos" value={summary.vencido} accent="rose" />
       </div>

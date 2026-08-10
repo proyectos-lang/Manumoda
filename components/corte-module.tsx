@@ -128,7 +128,7 @@ export function CorteModule({
     <Tabs defaultValue="plan" className="w-full">
       <TabsList>
         <TabsTrigger value="plan">Plan de Corte Semanal</TabsTrigger>
-        <TabsTrigger value="bonos">Bonos por Productividad</TabsTrigger>
+        <TabsTrigger value="bonos">Productividad</TabsTrigger>
         <TabsTrigger value="vacaciones">Vacaciones / Permisos</TabsTrigger>
       </TabsList>
 
@@ -388,7 +388,7 @@ function PlanCorteTab({
 
   return (
     <>
-    <gate.Dialog />
+    {gate.dialog}
     <CorteMultipliersDialog open={multipliersOpen} onOpenChange={setMultipliersOpen} />
     <EditCorteVariablesSheet open={editVarsOpen} onClose={() => setEditVarsOpen(false)} />
     <div className="space-y-4">

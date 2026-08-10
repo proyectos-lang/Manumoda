@@ -6,10 +6,23 @@
  */
 
 /**
- * `entregado` = la orden fue facturada. Cierra el ciclo: ya no cuenta
- * como vencida ni genera alertas, sin importar su fecha de entrega.
+ * Estados del semáforo de entrega, en el mismo vocabulario que el
+ * `riesgo_entrega` de las vistas SQL:
+ *
+ * · `entregado`   — facturada; cierra el ciclo y no genera alertas.
+ * · `vencido`     — la fecha de entrega ya pasó.
+ * · `a-destiempo` — no alcanza el ritmo esperado para su etapa actual.
+ * · `riesgo`      — entrega en 7 días o menos.
+ * · `a-tiempo`    — con margen suficiente.
+ * · `sin-fecha`   — no tiene fecha de entrega registrada.
  */
-export type Risk = "entregado" | "vencido" | "riesgo" | "a-tiempo" | "sin-fecha"
+export type Risk =
+  | "entregado"
+  | "vencido"
+  | "a-destiempo"
+  | "riesgo"
+  | "a-tiempo"
+  | "sin-fecha"
 
 /** Campos de fase que marcan avance en maquila. */
 export const PHASE_FIELDS = [
@@ -77,14 +90,29 @@ export const PHASE_PACE: Record<string, number> = {
 }
 
 /**
+ * Ritmo de una orden que aún no entra a maquila ("Por Programar",
+ * "Programada" o sin fase): necesita el ciclo completo.
+ *
+ * 75 = 54 días de S1 a la entrega + 21 del plazo de diseño previo a S1.
+ * Se escribe literal a propósito: `lead-times.ts` (donde vive LEAD_DIAS)
+ * importa de este archivo, así que importarlo de vuelta sería circular.
+ */
+export const PACE_SIN_FASE = 75
+
+/**
  * Clasifica el riesgo de entrega de una orden.
+ *
+ * Jerarquía (la misma del CASE en las vistas SQL):
+ * `entregado` → `vencido` → `riesgo` (entrega en ≤7 días) → `a-destiempo`
+ * (no alcanza el ritmo de su etapa) → `a-tiempo`.
+ *
+ * La entrega inminente se evalúa **antes** que el ritmo porque todo ritmo es
+ * ≥ 14 días: si se evaluara después, `riesgo` nunca se alcanzaría.
  *
  * - `progress >= 100` → siempre "a-tiempo" (la orden terminó; este atajo es
  *   deliberadamente distinto del SQL, que no conoce el avance del cliente).
- * - Con `faseActual`, aplica además la regla de ritmo por fase ("A Destiempo"
- *   en las vistas SQL): si hoy + días-esperados-de-la-fase rebasa la fecha de
- *   entrega, la orden va atrasada aunque falten más de 7 días → "riesgo".
- * - Sin `faseActual` (Diseño/Corte no la conocen), solo aplica el umbral
+ * - Una orden fuera de maquila usa `PACE_SIN_FASE` (el ciclo completo).
+ * - Sin `faseActual` (Diseño/Corte no la conocen) solo aplica el umbral
  *   simple de días.
  */
 export function computeRisk(
@@ -99,25 +127,24 @@ export function computeRisk(
   const days = daysUntil(fechaCancel)
   if (days === null) return { risk: "sin-fecha", days: null }
   if (days < 0) return { risk: "vencido", days }
-  const pace = faseActual ? PHASE_PACE[faseActual] : undefined
-  if (pace !== undefined && pace > days) return { risk: "riesgo", days }
   if (days <= 7) return { risk: "riesgo", days }
+  // Una fase conocida usa su ritmo; una orden que aún no entra a maquila
+  // necesita el ciclo completo. Sin fase declarada no se aplica ritmo.
+  const pace = faseActual ? (PHASE_PACE[faseActual] ?? PACE_SIN_FASE) : undefined
+  if (pace !== undefined && pace > days) return { risk: "a-destiempo", days }
   return { risk: "a-tiempo", days }
 }
 
-/**
- * Traduce el `riesgo_entrega` que calculan las vistas SQL al tipo `Risk`.
- * "A Destiempo" (la orden no alcanza el ritmo esperado para su fase) se
- * agrupa con "riesgo" para efectos de alertas.
- */
+/** Traduce el `riesgo_entrega` que calculan las vistas SQL al tipo `Risk`. */
 export function riskFromServer(riesgoEntrega: string | null | undefined): Risk {
   switch (riesgoEntrega) {
     case "Entregado":
       return "entregado"
     case "Vencido":
       return "vencido"
-    case "En Riesgo":
     case "A Destiempo":
+      return "a-destiempo"
+    case "En Riesgo":
       return "riesgo"
     case "A Tiempo":
       return "a-tiempo"
@@ -128,7 +155,7 @@ export function riskFromServer(riesgoEntrega: string | null | undefined): Risk {
 
 /** ¿Este riesgo amerita una alerta al usuario? */
 export function needsAttention(risk: Risk): boolean {
-  return risk === "vencido" || risk === "riesgo"
+  return risk === "vencido" || risk === "a-destiempo" || risk === "riesgo"
 }
 
 /**

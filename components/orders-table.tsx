@@ -53,7 +53,7 @@ type Props = {
   initialFilter?: ModuleFilter | null
 }
 
-const PAGE_SIZE = 10
+const PAGE_SIZE = 25
 
 const FASE_STYLES: Record<string, string> = {
   "Por Programar": "bg-slate-100 text-slate-700",
@@ -351,18 +351,19 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       )}
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <div className="overflow-x-auto">
+        {/* Alto fijo con encabezado pegajoso: la tabla ocupa más pantalla sin empujar el pie */}
+        <div className="max-h-[70vh] overflow-auto">
           <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50 hover:bg-muted/50">
+            <TableHeader className="sticky top-0 z-10">
+              <TableRow className="bg-muted hover:bg-muted">
                 <TableHead className="font-semibold">Folio</TableHead>
                 <TableHead className="font-semibold">Modelo</TableHead>
                 <TableHead className="font-semibold">Familia</TableHead>
                 <TableHead className="font-semibold">Cliente</TableHead>
                 <TableHead className="font-semibold text-right">Piezas</TableHead>
-                <TableHead className="font-semibold">Fecha Límite</TableHead>
+                <TableHead className="font-semibold">Límite de Confirmación</TableHead>
+                <TableHead className="font-semibold">Límite de Entrega</TableHead>
                 <TableHead className="font-semibold">Riesgo</TableHead>
-                <TableHead className="font-semibold">Límite Conf.</TableHead>
                 <TableHead className="font-semibold">Tipo Pedido</TableHead>
                 <TableHead className="font-semibold text-right">Acciones</TableHead>
                 <TableHead className="font-semibold">Fase Maquila</TableHead>
@@ -371,19 +372,19 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
             <TableBody>
               {loading && pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
                     <Loader2 className="mx-auto size-5 animate-spin" />
                   </TableCell>
                 </TableRow>
               ) : error ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-24 text-center text-destructive">
+                  <TableCell colSpan={11} className="h-24 text-center text-destructive">
                     {error}
                   </TableCell>
                 </TableRow>
               ) : pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
                     {orders.length === 0 ? (
                       <span>
                         Sin órdenes registradas aún.{" "}
@@ -440,6 +441,38 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           <Button
                             variant="ghost"
                             size="sm"
+                            disabled={savingConfirmId === row.id}
+                            className={cn(
+                              "h-auto gap-1.5 px-2 py-1 text-xs font-normal",
+                              savingConfirmId === row.id
+                                ? "opacity-60"
+                                : "text-muted-foreground hover:text-foreground",
+                            )}
+                          >
+                            {savingConfirmId === row.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <CalendarIcon className="size-3.5" />
+                            )}
+                            {formatDate(row.fecha_limite_confirmacion ?? null)}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={row.fecha_limite_confirmacion ? new Date(row.fecha_limite_confirmacion + "T00:00:00") : undefined}
+                            onSelect={(d) => requestFechaLimiteConfirmacionChange(row, d)}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             disabled={savingDateId === row.id}
                             className={cn(
                               "h-auto gap-1.5 px-2 py-1 text-xs font-normal",
@@ -476,38 +509,6 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                         )
                         return <RiskBadge risk={risk} days={days} />
                       })()}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={savingConfirmId === row.id}
-                            className={cn(
-                              "h-auto gap-1.5 px-2 py-1 text-xs font-normal",
-                              savingConfirmId === row.id
-                                ? "opacity-60"
-                                : "text-muted-foreground hover:text-foreground",
-                            )}
-                          >
-                            {savingConfirmId === row.id ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <CalendarIcon className="size-3.5" />
-                            )}
-                            {formatDate(row.fecha_limite_confirmacion ?? null)}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={row.fecha_limite_confirmacion ? new Date(row.fecha_limite_confirmacion + "T00:00:00") : undefined}
-                            onSelect={(d) => requestFechaLimiteConfirmacionChange(row, d)}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary" className="font-normal">
@@ -786,7 +787,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
         </AlertDialogContent>
       </AlertDialog>
 
-      <gate.Dialog />
+      {gate.dialog}
     </div>
   )
 }

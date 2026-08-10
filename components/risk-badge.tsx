@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, CheckCircle2, Circle, Clock, PackageCheck } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Circle, Clock, PackageCheck, TrendingDown } from "lucide-react"
 
 import type { Risk } from "@/lib/risk"
 import { cn } from "@/lib/utils"
@@ -25,6 +25,11 @@ export function RiskBadge({
       label: days !== null ? `Vencido · ${Math.abs(days)}d` : "Vencido",
       className: "border-rose-300 bg-rose-50 text-rose-700",
       icon: AlertTriangle,
+    },
+    "a-destiempo": {
+      label: days !== null ? `A Destiempo · ${days}d` : "A Destiempo",
+      className: "border-orange-300 bg-orange-50 text-orange-700",
+      icon: TrendingDown,
     },
     riesgo: {
       label: days !== null ? `En Riesgo · ${days}d` : "En Riesgo",

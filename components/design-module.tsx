@@ -592,7 +592,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
             Seguimiento Semanal
           </TabsTrigger>
           <TabsTrigger value="bonos" className="flex-1 sm:flex-none">
-            Bonos por Productividad
+            Productividad
           </TabsTrigger>
           <TabsTrigger value="impresion" className="flex-1 sm:flex-none">
             Hoja de Impresión
@@ -1033,7 +1033,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
       </Tabs>
 
       {/* Modales — fuera del árbol de Tabs para evitar problemas de z-index */}
-      <gate.Dialog />
+      {gate.dialog}
       <DisenoMultipliersDialog
         open={multipliersOpen}
         onOpenChange={setMultipliersOpen}

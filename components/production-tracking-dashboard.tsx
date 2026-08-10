@@ -266,7 +266,9 @@ export function ProductionTrackingDashboard({
     let sinFecha = 0
     for (const { risk } of riskByOrder.values()) {
       if (risk === "vencido") vencidos++
-      else if (risk === "riesgo") enRiesgo++
+      // "Próximos a vencer" agrupa las que no alcanzan el ritmo de su fase
+      // y las que tienen la entrega encima
+      else if (risk === "a-destiempo" || risk === "riesgo") enRiesgo++
       else if (risk === "sin-fecha") sinFecha++
     }
     return { vencidos, enRiesgo, sinFecha }
