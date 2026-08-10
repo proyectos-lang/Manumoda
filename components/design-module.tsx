@@ -959,10 +959,20 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
                         <TableCell className="text-right tabular-nums text-sm">
                           <PlanDisenoDesglosePopover row={row} cats={disMultCats} />
                           <span className="text-muted-foreground text-xs font-normal"> h</span>
+                          <HorasCumplidas
+                            cumplidas={row.horas_diseno_cumplidas}
+                            plan={row.horas_plan_diseno}
+                            rechazada={row.rechazo_orden}
+                          />
                         </TableCell>
                         <TableCell className="text-sm">{row.costureras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm font-medium text-violet-700">
                           {fmtH(row.horas_plan_costura)} <span className="text-muted-foreground text-xs font-normal">h</span>
+                          <HorasCumplidas
+                            cumplidas={row.horas_costura_cumplidas}
+                            plan={row.horas_plan_costura}
+                            rechazada={row.rechazo_orden}
+                          />
                         </TableCell>
                         <TableCell><AprobacionBadge fecha={row.fecha_aprobacion_diseno} /></TableCell>
                         <TableCell><StatusBadge row={row} /></TableCell>
@@ -1171,7 +1181,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
     const field = row.tipo_personal === "Diseño" ? "iddisenadora" : "idcosturera"
     const { data } = await supabase
       .from("diseno_programacion")
-      .select("folio, modelo, familia, cliente, horas_plan_diseno, cumplimiento_diseno, cumplimiento_costura, horas_diseno_cumplidas, horas_costura_cumplidas, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja")
+      .select("folio, modelo, familia, cliente, horas_plan_diseno, horas_plan_costura, cumplimiento_diseno, cumplimiento_costura, horas_diseno_cumplidas, horas_costura_cumplidas, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja")
       .eq("idempresa", IDEMPRESA)
       .eq("semana", row.semana)
       .eq(field, personId)
@@ -1340,7 +1350,12 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
                   const esDisenadora = row.tipo_personal === "Diseño"
                   const detail = detailCache[key] ?? []
                   const isLoadingThis = loadingDetail === key
-                  const totalPlan = detail.reduce((a, d) => a + (d.horas_plan_diseno ?? 0), 0)
+                  // El plan es el del área de la fila: una costurera no se mide
+                  // contra las horas planeadas de diseño.
+                  const totalPlan = detail.reduce(
+                    (a, d) => a + ((esDisenadora ? d.horas_plan_diseno : d.horas_plan_costura) ?? 0),
+                    0,
+                  )
                   const totalCum = detail.reduce((a, d) => a + ((esDisenadora ? d.horas_diseno_cumplidas : d.horas_costura_cumplidas) ?? 0), 0)
                   const foliosCumplidos = detail.filter((d) => esDisenadora ? d.cumplimiento_diseno : d.cumplimiento_costura).length
                   return (
@@ -1434,7 +1449,10 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
                                             <TableCell className="py-1">{d.familia ?? "—"}</TableCell>
                                             <TableCell className="py-1">{d.cliente ?? "—"}</TableCell>
                                             <TableCell className="py-1 text-right tabular-nums">
-                                              <PlanDisenoDesglosePopover row={d} cats={disMultCats} />
+                                              {/* El desglose de multiplicadores solo aplica a diseño */}
+                                              {esDisenadora
+                                                ? <PlanDisenoDesglosePopover row={d} cats={disMultCats} />
+                                                : fmtH(d.horas_plan_costura)}
                                             </TableCell>
                                             <TableCell className="py-1 text-center">
                                               {cumplido
@@ -1482,6 +1500,7 @@ type DesignFolioRow = {
   familia: string | null
   cliente: string | null
   horas_plan_diseno: number | null
+  horas_plan_costura: number | null
   cumplimiento_diseno: boolean | null
   cumplimiento_costura: boolean | null
   horas_diseno_cumplidas: number | null
@@ -2896,8 +2915,44 @@ function getStatusKey(row: DisenoProgramacion): string {
   return "pendiente"
 }
 
+/**
+ * Segunda línea bajo las horas de plan: cuánto contó realmente esa fila.
+ *
+ * Sin esto la tabla solo mostraba el plan mientras las tarjetas de arriba
+ * suman las cumplidas, y no había forma de reconciliarlas fila por fila
+ * — sobre todo en las órdenes rechazadas, donde el trigger acredita la
+ * mitad del plan (scripts 006 y 012).
+ */
+function HorasCumplidas({
+  cumplidas,
+  plan,
+  rechazada,
+}: {
+  cumplidas: number | null | undefined
+  plan: number | null | undefined
+  rechazada: boolean | null | undefined
+}) {
+  const c = Number(cumplidas ?? 0)
+  const p = Number(plan ?? 0)
+  if (p === 0 && c === 0) return null
+
+  if (c === 0) {
+    return <p className="mt-0.5 text-[11px] font-normal text-muted-foreground/60">sin cumplir</p>
+  }
+
+  const mitad = rechazada && Math.abs(c - p / 2) < 0.01
+  return (
+    <p
+      className="mt-0.5 text-[11px] font-normal text-emerald-600"
+      title={mitad ? "Orden rechazada: cuenta la mitad de las horas planeadas" : undefined}
+    >
+      {fmtH(c)} h cumplidas{mitad && " (½ por rechazo)"}
+    </p>
+  )
+}
+
 function StatusBadge({ row }: { row: DisenoProgramacion }) {
-  if (row.rechazo_orden) return <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"><XCircle className="size-3" />Rechazado</span>
+  if (row.rechazo_orden) return <span title="Las horas cumplidas cuentan a la mitad" className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"><XCircle className="size-3" />Rechazado</span>
   if (row.cumplimiento_diseno && row.cumplimiento_costura) return <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-3" />Completo</span>
   if (row.cumplimiento_diseno) return <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700"><CheckCircle2 className="size-3" />Diseño OK</span>
   if (row.cumplimiento_costura) return <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700"><CheckCircle2 className="size-3" />Costura OK</span>
