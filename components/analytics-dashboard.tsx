@@ -27,6 +27,7 @@ import {
   computeProgress,
   computeRisk,
   daysUntil,
+  parseLocalDate,
   riskFromServer,
   type Risk,
 } from "@/lib/risk"
@@ -286,10 +287,12 @@ function PhaseBadge({ phase }: { phase: string | null | undefined }) {
   )
 }
 
+/** Columnas `date`: medianoche local, para no mostrar el día anterior. */
 function fmtDate(d: string | null | undefined): string {
-  if (!d) return "—"
+  const p = parseLocalDate(d)
+  if (!p) return "—"
   try {
-    return format(new Date(d), "dd MMM yyyy", { locale: es })
+    return format(p, "dd MMM yyyy", { locale: es })
   } catch {
     return "—"
   }

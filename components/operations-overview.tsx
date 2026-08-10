@@ -117,10 +117,24 @@ const CMYK_COLORS = [
   "oklch(0.6 0.18 195)", // teal
 ]
 
+/** Columnas `date`: medianoche local, para no mostrar el día anterior. */
 function formatDate(iso: string | null) {
-  if (!iso) return null
+  const d = parseLocalDate(iso)
+  if (!d) return null
   try {
-    return format(new Date(iso), "dd MMM yyyy", { locale: es })
+    return format(d, "dd MMM yyyy", { locale: es })
+  } catch {
+    return null
+  }
+}
+
+/** Columnas `timestamp`: la hora sí importa para ubicar el día local. */
+function formatTimestamp(iso: string | null) {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return null
+  try {
+    return format(d, "dd MMM yyyy", { locale: es })
   } catch {
     return null
   }
@@ -1205,7 +1219,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
                         {r.fecha_ultima_revision
-                          ? formatDate(r.fecha_ultima_revision)
+                          ? formatTimestamp(r.fecha_ultima_revision)
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell>

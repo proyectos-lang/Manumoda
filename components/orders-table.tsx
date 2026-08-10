@@ -27,7 +27,7 @@ import { RiskBadge } from "@/components/risk-badge"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import { usePasswordGate } from "@/components/password-gate-dialog"
 import type { ModuleFilter } from "@/lib/module-filter"
-import { computeRisk } from "@/lib/risk"
+import { computeRisk, parseLocalDate } from "@/lib/risk"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -77,10 +77,11 @@ function FaseBadge({ fase }: { fase: string | null | undefined }) {
   )
 }
 
+/** Columnas `date`: se leen como medianoche local para no mostrar el día anterior. */
 function formatDate(iso: string | null): string {
   if (!iso) return "-"
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return iso
+  const d = parseLocalDate(iso)
+  if (!d) return iso
   return d.toLocaleDateString("es-MX", { year: "numeric", month: "2-digit", day: "2-digit" })
 }
 
@@ -460,7 +461,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                         <PopoverContent className="w-auto p-0" align="start">
                           <Calendar
                             mode="single"
-                            selected={row.fecha_limite_confirmacion ? new Date(row.fecha_limite_confirmacion + "T00:00:00") : undefined}
+                            selected={row.fecha_limite_confirmacion ? parseLocalDate(row.fecha_limite_confirmacion) ?? undefined : undefined}
                             onSelect={(d) => requestFechaLimiteConfirmacionChange(row, d)}
                             initialFocus
                           />
@@ -492,7 +493,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                         <PopoverContent className="w-auto p-0" align="start">
                           <Calendar
                             mode="single"
-                            selected={row.fecha_cancelacion ? new Date(row.fecha_cancelacion + "T00:00:00") : undefined}
+                            selected={row.fecha_cancelacion ? parseLocalDate(row.fecha_cancelacion) ?? undefined : undefined}
                             onSelect={(d) => requestFechaCancelacionChange(row, d)}
                             initialFocus
                           />

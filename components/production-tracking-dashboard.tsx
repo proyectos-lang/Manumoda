@@ -18,7 +18,7 @@ import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
-import { computeProgress, computeRisk, daysUntil, relativeDays, type Risk } from "@/lib/risk"
+import { computeProgress, computeRisk, daysUntil, parseLocalDate, relativeDays, type Risk } from "@/lib/risk"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { cn } from "@/lib/utils"
 
@@ -126,7 +126,18 @@ const EMPTY_FORM: FormState = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseDate(v: string | null | undefined): Date | null {
+/**
+ * Parsea una columna `date` (`YYYY-MM-DD`) a medianoche **local**.
+ *
+ * `new Date("2026-08-10")` la interpreta como medianoche UTC, así que en
+ * México (UTC-6) queda en el día anterior a las 18:00. Como `toISODate`
+ * lee el día con `getDate()`, cargar y volver a guardar restaba un día
+ * en cada pasada.
+ */
+const parseDate = parseLocalDate
+
+/** Parsea un `timestamp` completo; aquí sí importa la hora. */
+function parseTimestamp(v: string | null | undefined): Date | null {
   if (!v) return null
   const d = new Date(v)
   return isNaN(d.getTime()) ? null : d
@@ -146,7 +157,7 @@ function fmtShort(d: string | null | undefined): string {
 }
 
 function fmtDateTime(d: string | null | undefined): string {
-  const p = parseDate(d)
+  const p = parseTimestamp(d)
   if (!p) return "—"
   return format(p, "dd MMM yy, HH:mm", { locale: es })
 }

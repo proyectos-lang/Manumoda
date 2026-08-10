@@ -15,6 +15,20 @@ function normalizeKey(k: string): string {
     .replace(/Ñ/g, "N")
 }
 
+/**
+ * `YYYY-MM-DD` con el día **local** del objeto Date.
+ *
+ * `toISOString()` convierte a UTC: una fecha a medianoche local en México
+ * (UTC-6) se serializa como el día anterior a las 18:00, así que recortar
+ * los primeros 10 caracteres devolvía un día menos.
+ */
+function toLocalISODate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
 function excelDateToISO(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null
   if (typeof value === "number") {
@@ -26,7 +40,7 @@ function excelDateToISO(value: unknown): string | null {
     return `${parsed.y}-${mm}-${dd}`
   }
   if (value instanceof Date) {
-    return value.toISOString().slice(0, 10)
+    return toLocalISODate(value)
   }
   const str = String(value).trim()
   // Try ISO first
@@ -40,7 +54,7 @@ function excelDateToISO(value: unknown): string | null {
     return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`
   }
   const dt = new Date(str)
-  if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10)
+  if (!isNaN(dt.getTime())) return toLocalISODate(dt)
   return null
 }
 
