@@ -20,6 +20,7 @@ import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { OrdenProduccion } from "@/lib/types"
 import { computeProgress, computeRisk, daysUntil, parseLocalDate, relativeDays, type Risk } from "@/lib/risk"
 import type { ModuleFilter } from "@/lib/module-filter"
+import { useReadOnly } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
 
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
@@ -277,9 +278,8 @@ export function ProductionTrackingDashboard({
     let sinFecha = 0
     for (const { risk } of riskByOrder.values()) {
       if (risk === "vencido") vencidos++
-      // "Próximos a vencer" agrupa las que no alcanzan el ritmo de su fase
-      // y las que tienen la entrega encima
-      else if (risk === "a-destiempo" || risk === "riesgo") enRiesgo++
+      // "A Destiempo": no alcanza el ritmo esperado de su fase
+      else if (risk === "a-destiempo") enRiesgo++
       else if (risk === "sin-fecha") sinFecha++
     }
     return { vencidos, enRiesgo, sinFecha }
@@ -488,6 +488,7 @@ function TableView({
   riskByOrder: Map<string, { risk: Risk; days: number | null }>
   onFacturado: (id: number | string | undefined, fecha: string | null) => void
 }) {
+  const readOnly = useReadOnly()
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <Table>
@@ -622,21 +623,27 @@ function TableView({
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1.5">
-                    <FacturarButton
-                      folio={o.folio}
-                      ordenId={o.id}
-                      faseActual={o.fase_actual}
-                      fechaFacturacion={o.fecha_facturacion}
-                      onDone={(fecha) => onFacturado(o.id, fecha)}
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => onUpdate(o)}
-                      className="gap-1.5 bg-violet-600 text-white hover:bg-violet-700"
-                    >
-                      <ClipboardPen className="size-3.5" />
-                      Registrar Avance
-                    </Button>
+                    {readOnly ? (
+                      <span className="text-xs text-muted-foreground/50">—</span>
+                    ) : (
+                      <>
+                        <FacturarButton
+                          folio={o.folio}
+                          ordenId={o.id}
+                          faseActual={o.fase_actual}
+                          fechaFacturacion={o.fecha_facturacion}
+                          onDone={(fecha) => onFacturado(o.id, fecha)}
+                        />
+                        <Button
+                          size="sm"
+                          onClick={() => onUpdate(o)}
+                          className="gap-1.5 bg-violet-600 text-white hover:bg-violet-700"
+                        >
+                          <ClipboardPen className="size-3.5" />
+                          Registrar Avance
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

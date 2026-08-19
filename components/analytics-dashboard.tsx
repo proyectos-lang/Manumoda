@@ -431,9 +431,7 @@ export function AnalyticsDashboard({
         if (o.__risk !== "vencido" || o.fase_actual === "S7") return false
       }
       if (incomingFilter === "por-vencer") {
-        // La tarjeta del inicio suma "En Riesgo" + "A Destiempo"
-        const porVencer = o.__risk === "riesgo" || o.__risk === "a-destiempo"
-        if (!porVencer || o.fase_actual === "S7") return false
+        if (o.__risk !== "a-destiempo" || o.fase_actual === "S7") return false
       }
       if (incomingFilter === "diseno-atrasado" && !etapaAtrasada(o, "diseno")) return false
       if (incomingFilter === "corte-atrasado" && !etapaAtrasada(o, "corte")) return false
@@ -449,7 +447,6 @@ export function AnalyticsDashboard({
       entregado: 0,
       vencido: 0,
       "a-destiempo": 0,
-      riesgo: 0,
       "a-tiempo": 0,
       "sin-fecha": 0,
     }
@@ -462,7 +459,6 @@ export function AnalyticsDashboard({
       total,
       vencido: counts.vencido,
       aDestiempo: counts["a-destiempo"],
-      riesgo: counts.riesgo,
       aTiempo: counts["a-tiempo"],
       sinFecha: counts["sin-fecha"],
       avgProgress: total > 0 ? Math.round(progressSum / total) : 0,
@@ -484,7 +480,6 @@ export function AnalyticsDashboard({
       entregado: "Entregado",
       vencido: "Vencido",
       "a-destiempo": "A Destiempo",
-      riesgo: "En Riesgo",
       "a-tiempo": "A Tiempo",
       "sin-fecha": "Sin Fecha",
     }
@@ -550,7 +545,6 @@ export function AnalyticsDashboard({
         />
         <SummaryCard label="A Tiempo" value={summary.aTiempo} accent="emerald" />
         <SummaryCard label="A Destiempo" value={summary.aDestiempo} accent="amber" />
-        <SummaryCard label="En Riesgo" value={summary.riesgo} accent="amber" />
         <SummaryCard label="Vencidos" value={summary.vencido} accent="rose" />
       </div>
 

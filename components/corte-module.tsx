@@ -20,7 +20,8 @@ import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { VwBonosCorte, VwPlanCorteDetalle } from "@/lib/types"
-import { computeRisk, needsAttention } from "@/lib/risk"
+import { esProximoAVencer } from "@/lib/risk"
+import { useReadOnly } from "@/lib/auth-context"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { cn } from "@/lib/utils"
 
@@ -168,6 +169,7 @@ function PlanCorteTab({
   configMissing: boolean
   initialFilter?: ModuleFilter | null
 }) {
+  const readOnly = useReadOnly()
   const gate = usePasswordGate()
   const [rows, setRows] = useState<VwPlanCorteDetalle[]>([])
   const [cortadores, setCortadores] = useState<Cortador[]>([])
@@ -270,7 +272,7 @@ function PlanCorteTab({
     const foliosPorVencer = new Set<string>()
     for (const r of filtered) {
       if (r.cumplimiento_corte === "Si") cumplidos++
-      if (r.folio && needsAttention(computeRisk(r.fecha_cancelacion, 0).risk)) {
+      if (r.folio && esProximoAVencer(r.fecha_cancelacion)) {
         foliosPorVencer.add(r.folio)
       }
     }
@@ -479,6 +481,7 @@ function PlanCorteTab({
             variant="outline"
             size="sm"
             onClick={() => gate.request(() => setMultipliersOpen(true))}
+            disabled={readOnly}
             className="gap-1.5 bg-transparent"
           >
             <SlidersHorizontal className="size-3.5" />
@@ -488,6 +491,7 @@ function PlanCorteTab({
             variant="outline"
             size="sm"
             onClick={() => gate.request(() => setEditVarsOpen(true))}
+            disabled={readOnly}
             className="gap-1.5 bg-transparent"
           >
             <Settings2 className="size-3.5" />
@@ -506,14 +510,14 @@ function PlanCorteTab({
       )}
 
       {/* Barra de acción masiva (solo con filas seleccionadas) */}
-      <BulkMoveWeekBar
+      {!readOnly && <BulkMoveWeekBar
         selectedCount={selectedVisible.length}
         lockedCount={lockedCount}
         onClear={() => setSelectedIds(new Set())}
         onMove={moverSemana}
         moving={movingWeek}
         entidad={selectedVisible.length === 1 ? "registro de corte" : "registros de corte"}
-      />
+      />}
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-border">

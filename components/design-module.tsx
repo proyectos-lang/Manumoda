@@ -88,7 +88,8 @@ import {
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { computeRisk, needsAttention } from "@/lib/risk"
+import { esProximoAVencer } from "@/lib/risk"
+import { useReadOnly } from "@/lib/auth-context"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
@@ -208,6 +209,7 @@ const ESTADO_LABEL: Record<string, string> = {
 // ── Componente principal ───────────────────────────────────────────────────────
 
 export function DesignModule({ configMissing, initialFilter = null }: Props) {
+  const readOnly = useReadOnly()
   const gate = usePasswordGate()
   // Estado principal
   const [records, setRecords] = useState<DisenoProgramacion[]>([])
@@ -457,7 +459,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
       // Folios distintos: un mismo pedido puede tener varias filas por reprogramación
       porVencer: new Set(
         filteredRecords
-          .filter((r) => r.folio && needsAttention(computeRisk(r.fecha_cancelacion, 0).risk))
+          .filter((r) => r.folio && esProximoAVencer(r.fecha_cancelacion))
           .map((r) => r.folio),
       ).size,
     }),
@@ -855,14 +857,14 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
           </div>
 
           {/* Barra de acción masiva (solo con filas seleccionadas) */}
-          <BulkMoveWeekBar
+          {!readOnly && <BulkMoveWeekBar
             selectedCount={selectedVisible.length}
             cumplidosCount={cumplidosSeleccionados}
             onClear={() => setSelectedIds(new Set())}
             onMove={moverSemana}
             moving={movingWeek}
             entidad={selectedVisible.length === 1 ? "orden de diseño" : "órdenes de diseño"}
-          />
+          />}
 
           {/* Tabla de seguimiento */}
           <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -979,7 +981,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
                         <TableCell className="text-right">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button size="sm" variant="outline" className="size-8 p-0">
+                              <Button size="sm" variant="outline" className="size-8 p-0" disabled={readOnly}>
                                 <MoreHorizontal className="size-4" />
                               </Button>
                             </DropdownMenuTrigger>
@@ -1094,6 +1096,7 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
 // ── Tab 2: Calculadora de Bonos ───────────────────────────────────────────────
 
 function BonosTab({ configMissing }: { configMissing: boolean }) {
+  const readOnly = useReadOnly()
   const [bonos, setBonos] = useState<VwBonosDiseno[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1264,7 +1267,7 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
             variant="outline"
             size="sm"
             onClick={recalcularHorasDiseno}
-            disabled={recalculating || configMissing}
+            disabled={readOnly || recalculating || configMissing}
             className="gap-2 bg-transparent text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
           >
             <RefreshCw className={cn("size-4", recalculating && "animate-spin")} />

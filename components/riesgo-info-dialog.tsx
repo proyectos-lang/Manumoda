@@ -33,7 +33,8 @@ export function RiesgoInfoDialog() {
           <DialogTitle>Semáforo de riesgo de entrega</DialogTitle>
           <DialogDescription>
             Cada orden se clasifica comparando su fecha de entrega con hoy y con el ritmo
-            esperado de su fase.
+            esperado de su fase. Los tres estados son <strong>A Tiempo</strong>,{" "}
+            <strong>A Destiempo</strong> y <strong>Vencido</strong>.
           </DialogDescription>
         </DialogHeader>
 
@@ -46,10 +47,9 @@ export function RiesgoInfoDialog() {
             <Rule color="bg-rose-500" label="Vencido">
               La fecha de entrega ya pasó.
             </Rule>
-            <Rule color="bg-amber-500" label="En Riesgo">
-              Faltan 7 días o menos para la entrega, <em>o</em> la orden va{" "}
-              <strong>a destiempo</strong>: al ritmo estándar de su fase no alcanza a terminar
-              antes de la fecha de entrega.
+            <Rule color="bg-orange-500" label="A Destiempo">
+              Al ritmo estándar de su fase no alcanza a terminar antes de la fecha de
+              entrega, aunque esa fecha todavía no llegue.
             </Rule>
             <Rule color="bg-emerald-500" label="A Tiempo">
               Hay margen suficiente según la fase actual.

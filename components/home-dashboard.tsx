@@ -24,6 +24,7 @@ import { daysUntil } from "@/lib/risk"
 import { etapaAtrasada } from "@/lib/lead-times"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { ExcelUploader } from "@/components/excel-uploader"
+import { useReadOnly } from "@/lib/auth-context"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ModuleKey } from "@/components/app-sidebar"
@@ -122,6 +123,7 @@ export function HomeDashboard({
   /** Callback tras una carga exitosa (para refrescar otros módulos). */
   onUploaded?: () => void
 }) {
+  const readOnly = useReadOnly()
   const [stats, setStats] = useState<Stats | null>(null)
   const [atencion, setAtencion] = useState<Atencion | null>(null)
   const [loading, setLoading] = useState(true)
@@ -204,7 +206,7 @@ export function HomeDashboard({
           if (r.fase_actual === "S7") continue // terminadas no cuentan
           if (r.fecha_facturacion) continue // facturadas = entregadas, cierran el ciclo
           if (r.riesgo_entrega === "Vencido") at.vencidos++
-          else if (r.riesgo_entrega === "En Riesgo" || r.riesgo_entrega === "A Destiempo") at.porVencer++
+          else if (r.riesgo_entrega === "A Destiempo") at.porVencer++
 
           if (!r.no_requiere_diseno && r.fecha_diseno && !r.cumplimiento_diseno) at.disenoPendiente++
           if (!r.no_requiere_corte && r.fecha_corte && r.cumplimiento_corte !== "Si") at.cortePendiente++
@@ -273,6 +275,7 @@ export function HomeDashboard({
       )}
 
       {/* ── Ingestión de órdenes (Excel) ── */}
+      {!readOnly && (
       <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
@@ -293,6 +296,7 @@ export function HomeDashboard({
           onUploaded={() => onUploaded?.()}
         />
       </section>
+      )}
 
       {/* ── ¿Qué necesita atención hoy? ── */}
       <section>

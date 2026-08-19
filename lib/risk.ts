@@ -7,12 +7,15 @@
 
 /**
  * Estados del semáforo de entrega, en el mismo vocabulario que el
- * `riesgo_entrega` de las vistas SQL:
+ * `riesgo_entrega` de las vistas SQL.
+ *
+ * Los tres estados de la convención son **A Tiempo, A Destiempo y
+ * Vencido**; `entregado` y `sin-fecha` no son grados de riesgo sino
+ * casos en que la orden sale de la evaluación.
  *
  * · `entregado`   — facturada; cierra el ciclo y no genera alertas.
  * · `vencido`     — la fecha de entrega ya pasó.
  * · `a-destiempo` — no alcanza el ritmo esperado para su etapa actual.
- * · `riesgo`      — entrega en 7 días o menos.
  * · `a-tiempo`    — con margen suficiente.
  * · `sin-fecha`   — no tiene fecha de entrega registrada.
  */
@@ -20,7 +23,6 @@ export type Risk =
   | "entregado"
   | "vencido"
   | "a-destiempo"
-  | "riesgo"
   | "a-tiempo"
   | "sin-fecha"
 
@@ -103,11 +105,8 @@ export const PACE_SIN_FASE = 75
  * Clasifica el riesgo de entrega de una orden.
  *
  * Jerarquía (la misma del CASE en las vistas SQL):
- * `entregado` → `vencido` → `riesgo` (entrega en ≤7 días) → `a-destiempo`
- * (no alcanza el ritmo de su etapa) → `a-tiempo`.
- *
- * La entrega inminente se evalúa **antes** que el ritmo porque todo ritmo es
- * ≥ 14 días: si se evaluara después, `riesgo` nunca se alcanzaría.
+ * `entregado` → `vencido` → `a-destiempo` (no alcanza el ritmo de su
+ * etapa) → `a-tiempo`.
  *
  * - `progress >= 100` → siempre "a-tiempo" (la orden terminó; este atajo es
  *   deliberadamente distinto del SQL, que no conoce el avance del cliente).
@@ -127,7 +126,6 @@ export function computeRisk(
   const days = daysUntil(fechaCancel)
   if (days === null) return { risk: "sin-fecha", days: null }
   if (days < 0) return { risk: "vencido", days }
-  if (days <= 7) return { risk: "riesgo", days }
   // Una fase conocida usa su ritmo; una orden que aún no entra a maquila
   // necesita el ciclo completo. Sin fase declarada no se aplica ritmo.
   const pace = faseActual ? (PHASE_PACE[faseActual] ?? PACE_SIN_FASE) : undefined
@@ -144,8 +142,10 @@ export function riskFromServer(riesgoEntrega: string | null | undefined): Risk {
       return "vencido"
     case "A Destiempo":
       return "a-destiempo"
+    // "En Riesgo" desapareció del semáforo; se mapea al estado vigente más
+    // cercano por si alguna vista o dato quedara sin migrar.
     case "En Riesgo":
-      return "riesgo"
+      return "a-destiempo"
     case "A Tiempo":
       return "a-tiempo"
     default:
@@ -155,7 +155,25 @@ export function riskFromServer(riesgoEntrega: string | null | undefined): Risk {
 
 /** ¿Este riesgo amerita una alerta al usuario? */
 export function needsAttention(risk: Risk): boolean {
-  return risk === "vencido" || risk === "a-destiempo" || risk === "riesgo"
+  return risk === "vencido" || risk === "a-destiempo"
+}
+
+/** Umbral de "entrega encima" para las tarjetas de atención. */
+export const DIAS_POR_VENCER = 7
+
+/**
+ * ¿La entrega está encima (o ya pasó)?
+ *
+ * Es una alerta operativa, no un estado del semáforo: Diseño y Corte no
+ * conocen la fase de maquila, así que no pueden aplicar la regla de ritmo
+ * y se guían solo por la cercanía de la fecha.
+ */
+export function esProximoAVencer(
+  fechaCancel: string | null | undefined,
+  dias: number = DIAS_POR_VENCER,
+): boolean {
+  const d = daysUntil(fechaCancel)
+  return d !== null && d <= dias
 }
 
 /**

@@ -178,8 +178,10 @@ function getRiesgoVisuals(r: string | null | undefined) {
   if (v.includes("destiempo") || v.includes("a destiempo")) {
     return { label: r ?? "A Destiempo", className: "bg-orange-500/10 text-orange-500 ring-orange-500/20" }
   }
+  // "En Riesgo" salió de la convención: si llegara de un dato sin migrar,
+  // se muestra como A Destiempo en vez de inventar un cuarto estado.
   if (v.includes("riesgo")) {
-    return { label: r ?? "En Riesgo", className: "bg-yellow-500/10 text-yellow-500 ring-yellow-500/20" }
+    return { label: "A Destiempo", className: "bg-orange-500/10 text-orange-500 ring-orange-500/20" }
   }
   if (v.includes("tiempo")) {
     return { label: r ?? "A Tiempo", className: "bg-emerald-500/10 text-emerald-500 ring-emerald-500/20" }
@@ -907,7 +909,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 labelStyle={{ color: "rgba(255,255,255,0.55)", marginBottom: 4 }}
                 formatter={(v: number, name: string) => [
                   `${v} órdenes`,
-                  name === "a_tiempo" ? "A Tiempo / En Riesgo" : name === "a_destiempo" ? "A Destiempo" : "Vencidas",
+                  name === "a_tiempo" ? "A Tiempo" : name === "a_destiempo" ? "A Destiempo" : "Vencidas",
                 ]}
               />
               <Legend
@@ -917,7 +919,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 iconSize={8}
                 wrapperStyle={{ fontSize: 11 }}
                 formatter={(v: string) =>
-                  v === "a_tiempo" ? "A Tiempo / En Riesgo" : v === "a_destiempo" ? "A Destiempo" : "Vencidas"
+                  v === "a_tiempo" ? "A Tiempo" : v === "a_destiempo" ? "A Destiempo" : "Vencidas"
                 }
               />
               <Bar dataKey="a_tiempo" stackId="a" fill="#22c55e" name="a_tiempo" radius={[0, 0, 0, 0]} />
