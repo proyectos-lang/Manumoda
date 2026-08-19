@@ -154,6 +154,8 @@ export type SessionUser = {
   nombre: string
   username: string
   es_admin: boolean
+  /** Ve sus módulos pero no puede modificar nada. Excluyente con es_admin. */
+  solo_lectura: boolean
   permisos: string[]
 }
 

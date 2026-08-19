@@ -1,7 +1,7 @@
 "use client"
 
 import Image from "next/image"
-import { Home, Upload, KanbanSquare, Scissors, Settings, User, BarChart3, Activity, Palette, Users, LogOut } from "lucide-react"
+import { Home, Upload, KanbanSquare, Scissors, Settings, User, BarChart3, Activity, Eye, Palette, Users, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { SessionUser } from "@/lib/types"
 
@@ -74,9 +74,14 @@ export function AppSidebar({
   user: SessionUser
   onLogout: () => void
 }) {
-  const visibleNav = NAV.filter(
-    (item) => item.key === "inicio" || item.key === "configuracion" || user.es_admin || user.permisos.includes(item.key)
-  )
+  // Configuración solo administra (catálogos, usuarios): un usuario de solo
+  // lectura no tiene nada que hacer ahí, así que se le oculta.
+  const soloLectura = user.solo_lectura && !user.es_admin
+  const visibleNav = NAV.filter((item) => {
+    if (item.key === "inicio") return true
+    if (item.key === "configuracion") return !soloLectura
+    return user.es_admin || user.permisos.includes(item.key)
+  })
 
   return (
     <aside className="sidebar-cmyk-gradient fixed inset-y-0 left-0 z-40 hidden w-[280px] flex-col border-r border-sidebar-border lg:flex">
@@ -134,7 +139,10 @@ export function AppSidebar({
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-sidebar-foreground">{user.nombre}</p>
-            <p className="truncate text-xs text-sidebar-foreground/60">{user.es_admin ? "Administrador" : "Operador"}</p>
+            <p className="flex items-center gap-1 truncate text-xs text-sidebar-foreground/60">
+              {soloLectura && <Eye className="size-3 shrink-0" />}
+              {user.es_admin ? "Administrador" : soloLectura ? "Solo lectura" : "Operador"}
+            </p>
           </div>
           <button
             type="button"

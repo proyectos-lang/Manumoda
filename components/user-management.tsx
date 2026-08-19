@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { Loader2, Pencil, Plus, ShieldCheck, UserX, UserCheck, KeyRound } from "lucide-react"
+import { Eye, Loader2, Pencil, Plus, ShieldCheck, UserX, UserCheck, KeyRound } from "lucide-react"
 import { toast } from "sonner"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { SessionUser } from "@/lib/types"
@@ -36,6 +36,7 @@ type UserRecord = {
   nombre: string
   username: string
   es_admin: boolean
+  solo_lectura: boolean
   activo: boolean
 }
 
@@ -59,6 +60,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [esAdmin, setEsAdmin] = useState(false)
+  const [soloLectura, setSoloLectura] = useState(false)
   const [permisos, setPermisos] = useState<Set<string>>(new Set())
 
   const fetchUsers = useCallback(async () => {
@@ -67,7 +69,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
     setLoading(true)
     const { data, error } = await supabase
       .from("usuarios")
-      .select("id, nombre, username, es_admin, activo")
+      .select("id, nombre, username, es_admin, solo_lectura, activo")
       .eq("idempresa", IDEMPRESA)
       .order("nombre", { ascending: true })
     if (error) toast.error("Error al cargar usuarios: " + error.message)
@@ -95,6 +97,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
     setUsername("")
     setPassword("")
     setEsAdmin(false)
+    setSoloLectura(false)
     setPermisos(new Set())
     setSheetOpen(true)
   }
@@ -105,6 +108,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
     setUsername(user.username)
     setPassword("")
     setEsAdmin(user.es_admin)
+    setSoloLectura(user.solo_lectura)
     const p = await fetchPermisos(user.id)
     setPermisos(p)
     setSheetOpen(true)
@@ -157,6 +161,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
           nombre: trimNombre,
           username: trimUsername,
           es_admin: esAdmin,
+          solo_lectura: !esAdmin && soloLectura,
         }
         if (password) {
           const hash = await hashPassword(password)
@@ -176,7 +181,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
         if (!hash) { toast.error("Error al procesar la contraseña."); setSaving(false); return }
         const { data, error } = await supabase
           .from("usuarios")
-          .insert({ idempresa: IDEMPRESA, nombre: trimNombre, username: trimUsername, password_hash: hash, es_admin: esAdmin, activo: true })
+          .insert({ idempresa: IDEMPRESA, nombre: trimNombre, username: trimUsername, password_hash: hash, es_admin: esAdmin, solo_lectura: !esAdmin && soloLectura, activo: true })
           .select("id")
           .single()
         if (error || !data) { toast.error("Error al crear usuario: " + (error?.message ?? "")); setSaving(false); return }
@@ -281,6 +286,10 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                       <Badge className="gap-1 bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-100">
                         <ShieldCheck className="size-3" /> Admin
                       </Badge>
+                    ) : u.solo_lectura ? (
+                      <Badge className="gap-1 bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-100">
+                        <Eye className="size-3" /> Solo lectura
+                      </Badge>
                     ) : (
                       <Badge variant="secondary" className="text-muted-foreground">Operador</Badge>
                     )}
@@ -378,10 +387,26 @@ export function UserManagement({ currentUser }: UserManagementProps) {
               </div>
               <Switch
                 checked={esAdmin}
-                onCheckedChange={setEsAdmin}
+                onCheckedChange={(v) => { setEsAdmin(v); if (v) setSoloLectura(false) }}
                 disabled={editing?.id === currentUser.id}
               />
             </div>
+
+            {!esAdmin && (
+              <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
+                <div className="pr-4">
+                  <p className="text-sm font-medium">Solo lectura</p>
+                  <p className="text-xs text-muted-foreground">
+                    Ve sus módulos pero no puede crear, editar ni eliminar nada
+                  </p>
+                </div>
+                <Switch
+                  checked={soloLectura}
+                  onCheckedChange={setSoloLectura}
+                  disabled={editing?.id === currentUser.id}
+                />
+              </div>
+            )}
 
             {!esAdmin && (
               <div className="space-y-3">

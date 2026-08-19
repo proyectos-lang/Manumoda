@@ -19,7 +19,7 @@ export async function POST(req: Request) {
 
   const { data: user } = await supabase
     .from("usuarios")
-    .select("id, nombre, username, password_hash, es_admin, activo")
+    .select("id, nombre, username, password_hash, es_admin, solo_lectura, activo")
     .eq("idempresa", 1)
     .eq("username", username)
     .maybeSingle()
@@ -44,6 +44,8 @@ export async function POST(req: Request) {
     nombre: user.nombre,
     username: user.username,
     es_admin: user.es_admin,
+    // Un admin nunca es de solo lectura (constraint en la tabla, script 026)
+    solo_lectura: Boolean(user.solo_lectura) && !user.es_admin,
     permisos: (permisosData ?? []).map((p: { modulo: string }) => p.modulo),
   })
 }

@@ -3,12 +3,26 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import type { SessionUser } from "@/lib/types"
+import { setSupabaseReadOnly } from "@/lib/supabase/client"
 
 type AuthContextValue = {
   user: SessionUser | null
   loading: boolean
+  /** El usuario ve sus módulos pero no puede modificar nada. */
+  readOnly: boolean
   login: (username: string, password: string) => Promise<{ error?: string }>
   logout: () => void
+}
+
+/**
+ * Sincroniza el modo de solo lectura del cliente de Supabase con la sesión.
+ *
+ * Es un guardarraíl contra cambios accidentales, no una frontera de
+ * seguridad: sin RLS (script 015) la anon key del navegador sigue pudiendo
+ * escribir desde la consola.
+ */
+function aplicarSoloLectura(user: SessionUser | null) {
+  setSupabaseReadOnly(Boolean(user?.solo_lectura) && !user?.es_admin)
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -35,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback((expired = false) => {
     clearExpiryTimer()
     setUser(null)
+    aplicarSoloLectura(null)
     localStorage.removeItem(SESSION_KEY)
     if (expired) {
       toast.info("Sesión cerrada", { description: "Pasó 1 hora desde que iniciaste sesión." })
@@ -63,6 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           localStorage.removeItem(SESSION_KEY)
         } else {
           setUser(stored.user)
+          aplicarSoloLectura(stored.user)
           scheduleExpiry(SESSION_MAX_MS - elapsed)
         }
       }
@@ -83,6 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const sessionUser = data as SessionUser
       const stored: StoredSession = { user: sessionUser, loginAt: Date.now() }
       setUser(sessionUser)
+      aplicarSoloLectura(sessionUser)
       localStorage.setItem(SESSION_KEY, JSON.stringify(stored))
       scheduleExpiry(SESSION_MAX_MS)
       return {}
@@ -92,7 +109,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [scheduleExpiry])
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout: () => logout(false) }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        readOnly: Boolean(user?.solo_lectura) && !user?.es_admin,
+        login,
+        logout: () => logout(false),
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )
@@ -102,4 +127,16 @@ export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error("useAuth debe usarse dentro de AuthProvider")
   return ctx
+}
+
+/**
+ * ¿La sesión activa es de solo lectura?
+ *
+ * Atajo para que los módulos deshabiliten sus controles de escritura sin
+ * tener que enterarse del resto de la sesión. El bloqueo efectivo lo hace
+ * el cliente de Supabase (`lib/supabase/client.ts`); esto solo evita
+ * ofrecer botones que van a fallar.
+ */
+export function useReadOnly(): boolean {
+  return useAuth().readOnly
 }

@@ -28,6 +28,7 @@ import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import { usePasswordGate } from "@/components/password-gate-dialog"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { computeRisk, parseLocalDate } from "@/lib/risk"
+import { useReadOnly } from "@/lib/auth-context"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -166,6 +167,7 @@ function formatDate(iso: string | null): string {
 }
 
 export function OrdersTable({ refreshKey, configMissing, initialFilter = null }: Props) {
+  const readOnly = useReadOnly()
   const gate = usePasswordGate()
   const [orders, setOrders] = useState<OrdenProduccion[]>([])
   const [loading, setLoading] = useState(false)
@@ -524,9 +526,11 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                       ) : (
                         <button
                           type="button"
+                          disabled={readOnly}
                           onClick={() => { setEditingClienteId(row.id ?? null); setEditingClienteValue(row.cliente ?? "") }}
                           className={cn(
-                            "rounded px-1 py-0.5 text-left text-sm transition-colors hover:bg-muted",
+                            "rounded px-1 py-0.5 text-left text-sm transition-colors",
+                            readOnly ? "cursor-default" : "hover:bg-muted",
                             savingClienteId === row.id ? "opacity-60" : "",
                             !row.cliente ? "text-muted-foreground italic" : "text-foreground",
                           )}
@@ -544,7 +548,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           <Button
                             variant="ghost"
                             size="sm"
-                            disabled={savingConfirmId === row.id}
+                            disabled={readOnly || savingConfirmId === row.id}
                             className={cn(
                               "h-auto gap-1.5 px-2 py-1 text-xs font-normal",
                               savingConfirmId === row.id
@@ -576,7 +580,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           <Button
                             variant="ghost"
                             size="sm"
-                            disabled={savingDateId === row.id}
+                            disabled={readOnly || savingDateId === row.id}
                             className={cn(
                               "h-auto gap-1.5 px-2 py-1 text-xs font-normal",
                               savingDateId === row.id
@@ -626,7 +630,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           completado={Boolean(row.fecha_aprobacion_diseno)}
                           omitida={Boolean(row.no_requiere_diseno)}
                           programado={Boolean(row.diseno_programado)}
-                          disabled={row.id == null}
+                          disabled={readOnly || row.id == null}
                           onClick={() => {
                             if (row.id == null) return
                             setScheduleId(row.id)
@@ -640,7 +644,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           completado={corteCumplido.has(row.folio)}
                           omitida={Boolean(row.no_requiere_corte)}
                           programado={Boolean(row.corte_programado)}
-                          disabled={row.id == null}
+                          disabled={readOnly || row.id == null}
                           onClick={() => {
                             if (row.id == null) return
                             setScheduleCutId(row.id)
@@ -655,7 +659,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                               size="sm"
                               variant="ghost"
                               className="px-1.5"
-                              disabled={skippingId === row.id}
+                              disabled={readOnly || skippingId === row.id}
                             >
                               {skippingId === row.id
                                 ? <Loader2 className="size-3.5 animate-spin" />

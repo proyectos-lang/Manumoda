@@ -5,6 +5,7 @@ import { AlertTriangle, Loader2, Scissors, Settings as SettingsIcon, Palette } f
 import { OrdersTable } from "@/components/orders-table"
 import { ProductionTrackingDashboard } from "@/components/production-tracking-dashboard"
 import { AppSidebar, type ModuleKey } from "@/components/app-sidebar"
+import { ReadOnlyBanner } from "@/components/read-only-banner"
 import { AppHeader } from "@/components/app-header"
 import { HomeDashboard } from "@/components/home-dashboard"
 import { ConfigCatalogs } from "@/components/config-catalogs"
@@ -75,7 +76,9 @@ export default function Page() {
       <div className="lg:pl-[280px]">
         <AppHeader title={TITLES[active]} />
 
-        <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-[1400px] space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+          <ReadOnlyBanner />
+
           {active === "inicio" && (
             <HomeDashboard
               configMissing={configMissing}
