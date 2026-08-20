@@ -27,6 +27,7 @@ import {
   Search,
   Settings2,
   ShieldAlert,
+  Shirt,
   Trash2,
   TriangleAlert,
   Wallet,
@@ -40,6 +41,7 @@ import { useAuth, useReadOnly } from "@/lib/auth-context"
 import { fmtCurrency } from "@/lib/format"
 import { parseLocalDate } from "@/lib/risk"
 import type {
+  LavanderiaPago,
   MaquilaPago,
   MaquilaPenalizacion,
   MaquilaRecepcion,
@@ -49,8 +51,6 @@ import { cn } from "@/lib/utils"
 
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { KpiCard } from "@/components/kpi-card"
-import { usePasswordGate } from "@/components/password-gate-dialog"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -1486,35 +1486,58 @@ function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boo
     </div>
   )
 }
-
 // ─── Pestaña 4: Lavandería ───────────────────────────────────────────────────
 
+/**
+ * La lavandería es un acreedor aparte del maquilero, con su propio ciclo:
+ * se le envían unidades, devuelve otras (la diferencia es merma), y se le
+ * paga por lo que devolvió, con abonos parciales si hace falta.
+ *
+ * Por eso tiene su propia tabla de pagos y su propio saldo, en vez de una
+ * simple marca de pagado.
+ */
 function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
   const readOnly = useReadOnly()
-  const gate = usePasswordGate()
-  const [soloPendientes, setSoloPendientes] = useState(true)
+  const { user } = useAuth()
+  const [filtro, setFiltro] = useState<"pendientes" | "todas">("pendientes")
+  const [search, setSearch] = useState("")
   const [guardando, setGuardando] = useState<string | null>(null)
+  const [gestionando, setGestionando] = useState<string | null>(null)
 
-  const conLavanderia = useMemo(
-    () =>
-      rows.filter(
-        (r) => r.costo_lavanderia != null && (!soloPendientes || !r.lavanderia_pagada),
-      ),
-    [rows, soloPendientes],
-  )
+  const conLavanderia = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return rows.filter((r) => {
+      if (r.costo_lavanderia == null) return false
+      if (filtro === "pendientes" && r.estado_lavanderia === "Saldado") return false
+      if (q && !`${r.folio} ${r.cliente ?? ""}`.toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [rows, filtro, search])
 
-  const total = useMemo(
-    () => conLavanderia.reduce((s, r) => s + num(r.valor_lavanderia), 0),
-    [conLavanderia],
-  )
+  const kpis = useMemo(() => {
+    let valor = 0
+    let pagado = 0
+    let sinRecibir = 0
+    for (const r of conLavanderia) {
+      valor += num(r.valor_lavanderia)
+      pagado += num(r.lavanderia_pagado)
+      if (r.piezas_lavanderia_recibidas === 0) sinRecibir++
+    }
+    return { valor, pagado, saldo: valor - pagado, sinRecibir }
+  }, [conLavanderia])
 
-  const guardarUnidades = async (folio: string, piezas: number | null) => {
+  /** Guarda enviadas o recibidas en la orden. */
+  const guardarPiezas = async (
+    folio: string,
+    campo: "piezas_lavanderia" | "piezas_lavanderia_recibidas",
+    piezas: number | null,
+  ) => {
     const supabase = getSupabase()
     if (!supabase) return
     setGuardando(folio)
     const { error } = await supabase
       .from("ordenes_produccion")
-      .update({ piezas_lavanderia: piezas })
+      .update({ [campo]: piezas })
       .eq("folio", folio)
       .eq("idempresa", IDEMPRESA)
     setGuardando(null)
@@ -1525,39 +1548,94 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
     onRefresh()
   }
 
-  const marcar = async (folio: string, pagar: boolean) => {
+  /** Atajo: liquida el saldo pendiente de un folio en un solo movimiento. */
+  const marcarPagada = async (row: VwPagoMaquilas) => {
     const supabase = getSupabase()
     if (!supabase) return
-    setGuardando(folio)
-    const { error } = await supabase
-      .from("ordenes_produccion")
-      .update({ fecha_pago_lavanderia: pagar ? hoyISO() : null })
-      .eq("folio", folio)
-      .eq("idempresa", IDEMPRESA)
-    setGuardando(null)
-    if (error) {
-      toast.error("No se pudo actualizar", { description: error.message })
+    const saldo = num(row.saldo_lavanderia)
+    if (saldo <= CENTAVO) {
+      toast.warning("Este folio no tiene saldo pendiente con la lavandería.")
       return
     }
-    toast.success(pagar ? `Lavandería de ${folio} marcada como pagada` : `Pago revertido en ${folio}`)
+    setGuardando(row.folio)
+    const { error } = await supabase.from("lavanderia_pagos").insert({
+      idempresa: IDEMPRESA,
+      folio: row.folio,
+      fecha: hoyISO(),
+      monto: Number(saldo.toFixed(2)),
+      capturado_por: user?.username ?? null,
+      comentarios: "Pago total desde la pestaña de Lavandería",
+    })
+    setGuardando(null)
+    if (error) {
+      toast.error("No se pudo registrar el pago", { description: error.message })
+      return
+    }
+    toast.success(`Lavandería de ${row.folio} pagada · ${fmtCurrency(saldo)}`)
     onRefresh()
   }
 
   return (
     <div className="space-y-4">
-      {gate.dialog}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard
+          label="Valor lavandería"
+          value={kpis.valor}
+          format={fmtCurrency}
+          icon={<Shirt className="size-3.5" />}
+          iconBg="bg-cyan-100 ring-cyan-200"
+          iconColor="text-cyan-600"
+          valueColor="text-cyan-700"
+        />
+        <KpiCard
+          label="Pagado"
+          value={kpis.pagado}
+          format={fmtCurrency}
+          icon={<Wallet className="size-3.5" />}
+          iconBg="bg-emerald-100 ring-emerald-200"
+          iconColor="text-emerald-600"
+          valueColor="text-emerald-700"
+        />
+        <KpiCard
+          label="Saldo pendiente"
+          value={kpis.saldo}
+          format={fmtCurrency}
+          icon={<Banknote className="size-3.5" />}
+          iconBg="bg-sky-100 ring-sky-200"
+          iconColor="text-sky-600"
+          valueColor={kpis.saldo > CENTAVO ? "text-sky-700" : "text-foreground"}
+        />
+        <KpiCard
+          label="Sin recibir"
+          value={kpis.sinRecibir}
+          icon={<AlertTriangle className="size-3.5" />}
+          iconBg="bg-amber-100 ring-amber-200"
+          iconColor="text-amber-600"
+          valueColor={kpis.sinRecibir > 0 ? "text-amber-600" : "text-foreground"}
+          hint="Falta marcar las unidades que regresaron"
+        />
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Folio o cliente…"
+            className="h-9 w-56 pl-8"
+          />
+        </div>
         <Button
           size="sm"
-          variant={soloPendientes ? "default" : "outline"}
-          onClick={() => setSoloPendientes(!soloPendientes)}
+          variant={filtro === "pendientes" ? "default" : "outline"}
+          onClick={() => setFiltro(filtro === "pendientes" ? "todas" : "pendientes")}
           className="h-9"
         >
-          {soloPendientes ? "Solo pendientes" : "Todas"}
+          {filtro === "pendientes" ? "Solo pendientes" : "Todas"}
         </Button>
-        <span className="text-xs text-muted-foreground">
-          {conLavanderia.length} folios · {fmtCurrency(total)}
+        <span className="ml-auto text-xs text-muted-foreground">
+          {conLavanderia.length} folios
         </span>
       </div>
 
@@ -1567,11 +1645,14 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               <TableHead className="font-semibold">Folio</TableHead>
               <TableHead className="font-semibold">Cliente</TableHead>
+              <TableHead className="font-semibold text-right">Enviadas</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
-              <TableHead className="font-semibold text-right">Valor Maquila</TableHead>
+              <TableHead className="font-semibold text-right">Merma</TableHead>
               <TableHead className="font-semibold text-right">Valor Lavandería</TableHead>
               <TableHead className="font-semibold text-right">Total</TableHead>
-              <TableHead className="font-semibold">Pago</TableHead>
+              <TableHead className="font-semibold text-right">Pagado</TableHead>
+              <TableHead className="font-semibold text-right">Saldo</TableHead>
+              <TableHead className="font-semibold">Estado</TableHead>
               <TableHead className="font-semibold text-right">Acción</TableHead>
             </TableRow>
           </TableHeader>
@@ -1579,7 +1660,7 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 7 }).map((__, j) => (
+                  {Array.from({ length: 11 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -1588,83 +1669,372 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
               ))
             ) : conLavanderia.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
-                  {soloPendientes
+                <TableCell colSpan={11} className="h-24 text-center text-sm text-muted-foreground">
+                  {filtro === "pendientes"
                     ? "No hay lavandería pendiente de pago."
-                    : "Ningún folio tiene costo de lavandería capturado."}
+                    : "Ningún folio tiene valor de lavandería capturado."}
                 </TableCell>
               </TableRow>
             ) : (
-              conLavanderia.map((r) => (
-                <TableRow key={r.folio} className="hover:bg-muted/30">
-                  <TableCell>
-                    <FolioLink folio={r.folio} className="text-xs" />
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{r.cliente ?? "—"}</TableCell>
-                  <TableCell className="text-right">
-                    <UnidadesLavanderia
-                      valor={r.piezas_lavanderia}
-                      sugerido={r.piezas_recibidas}
-                      disabled={readOnly || guardando === r.folio}
-                      onSave={(v) => guardarUnidades(r.folio, v)}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right text-sm">
-                    <ValorUnitario valor={r.costo_lavanderia} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm font-medium">
-                    {fmtCurrency(num(r.valor_lavanderia))}
-                  </TableCell>
-                  <TableCell>
-                    {r.lavanderia_pagada ? (
-                      <Badge className="border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
-                        Pagada · {fmtFecha(r.fecha_pago_lavanderia)}
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="text-muted-foreground">
-                        Pendiente
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={readOnly || guardando === r.folio}
-                      onClick={() =>
-                        gate.request(() => marcar(r.folio, !r.lavanderia_pagada))
-                      }
-                      className="gap-1.5"
+              conLavanderia.map((r) => {
+                const saldo = num(r.saldo_lavanderia)
+                return (
+                  <TableRow key={r.folio} className="hover:bg-muted/30">
+                    <TableCell>
+                      <FolioLink folio={r.folio} className="text-xs" />
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{r.cliente ?? "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <PiezasEditable
+                        valor={r.piezas_lavanderia}
+                        sugerido={r.piezas_recibidas}
+                        etiquetaSugerido="usar recibidas del maquilero"
+                        disabled={readOnly || guardando === r.folio}
+                        onSave={(v) => guardarPiezas(r.folio, "piezas_lavanderia", v)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <PiezasEditable
+                        valor={r.piezas_lavanderia_recibidas}
+                        sugerido={r.piezas_lavanderia}
+                        etiquetaSugerido="usar enviadas"
+                        disabled={readOnly || guardando === r.folio}
+                        onSave={(v) => guardarPiezas(r.folio, "piezas_lavanderia_recibidas", v)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">
+                      {r.merma_lavanderia > 0 ? (
+                        <span className="text-amber-600" title="Enviadas menos recibidas">
+                          {r.merma_lavanderia.toLocaleString("es-MX")}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/50">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      <ValorUnitario valor={r.costo_lavanderia} />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm font-medium">
+                      {fmtCurrency(num(r.valor_lavanderia))}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm text-emerald-700">
+                      {num(r.lavanderia_pagado) > 0 ? (
+                        fmtCurrency(num(r.lavanderia_pagado))
+                      ) : (
+                        <span className="text-muted-foreground/50">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "text-right tabular-nums text-sm font-semibold",
+                        saldo < -CENTAVO ? "text-rose-600" : "text-foreground",
+                      )}
                     >
-                      {guardando === r.folio && <Loader2 className="size-3.5 animate-spin" />}
-                      {r.lavanderia_pagada ? "Revertir" : "Marcar pagada"}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
+                      {fmtCurrency(saldo)}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          "inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
+                          ESTADO_STYLE[
+                            (r.estado_lavanderia === "Sin valor"
+                              ? "Sin costo"
+                              : r.estado_lavanderia) as VwPagoMaquilas["estado_pago"]
+                          ],
+                        )}
+                      >
+                        {r.estado_lavanderia}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {!readOnly && saldo > CENTAVO && (
+                          <Button
+                            size="sm"
+                            onClick={() => marcarPagada(r)}
+                            disabled={guardando === r.folio}
+                            className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                            title={`Registra un pago por el saldo completo (${fmtCurrency(saldo)})`}
+                          >
+                            {guardando === r.folio && <Loader2 className="size-3.5 animate-spin" />}
+                            Marcar pagada
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setGestionando(r.folio)}
+                          className="gap-1.5"
+                        >
+                          <Settings2 className="size-3.5" />
+                          {readOnly ? "Ver" : "Gestionar"}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>
       </div>
+
+      {gestionando && (
+        <GestionLavanderiaDialog
+          row={conLavanderia.find((r) => r.folio === gestionando)!}
+          onClose={() => setGestionando(null)}
+          onSaved={onRefresh}
+          readOnly={readOnly}
+        />
+      )}
     </div>
   )
 }
 
+// ─── Modal de gestión de lavandería ──────────────────────────────────────────
+
+function GestionLavanderiaDialog({
+  row,
+  onClose,
+  onSaved,
+  readOnly,
+}: {
+  row: VwPagoMaquilas
+  onClose: () => void
+  onSaved: () => void
+  readOnly: boolean
+}) {
+  const { user } = useAuth()
+  const [pagos, setPagos] = useState<LavanderiaPago[]>([])
+  const [cargando, setCargando] = useState(true)
+
+  const saldoPendiente = Math.max(0, num(row.saldo_lavanderia))
+  const [fecha, setFecha] = useState(hoyISO())
+  const [monto, setMonto] = useState(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : "")
+  const [referencia, setReferencia] = useState("")
+  const [guardando, setGuardando] = useState(false)
+
+  const cargar = useCallback(async () => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    setCargando(true)
+    const { data } = await supabase
+      .from("lavanderia_pagos")
+      .select("*")
+      .eq("idempresa", IDEMPRESA)
+      .eq("folio", row.folio)
+      .order("fecha")
+    setPagos((data as LavanderiaPago[]) ?? [])
+    setCargando(false)
+  }, [row.folio])
+
+  useEffect(() => {
+    cargar()
+  }, [cargar])
+
+  const refrescar = () => {
+    cargar()
+    onSaved()
+  }
+
+  const n = Number(monto)
+  const valido = Number.isFinite(n) && n > 0
+  const excede = valido && n > saldoPendiente + CENTAVO
+
+  const pagar = async () => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    setGuardando(true)
+    const { error } = await supabase.from("lavanderia_pagos").insert({
+      idempresa: IDEMPRESA,
+      folio: row.folio,
+      fecha,
+      monto: Number(n.toFixed(2)),
+      referencia: referencia.trim() || null,
+      capturado_por: user?.username ?? null,
+    })
+    setGuardando(false)
+    if (error) {
+      toast.error("No se pudo registrar el pago", { description: error.message })
+      return
+    }
+    toast.success(`Pago a lavandería registrado en ${row.folio}`)
+    setMonto("")
+    setReferencia("")
+    refrescar()
+  }
+
+  const borrar = async (id: number) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("lavanderia_pagos")
+      .delete()
+      .eq("id", id)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudo eliminar el pago", { description: error.message })
+      return
+    }
+    toast.success("Pago eliminado")
+    refrescar()
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Shirt className="size-4 text-cyan-600" />
+            Lavandería · Folio {row.folio}
+          </DialogTitle>
+          <DialogDescription>
+            {row.cliente ?? "sin cliente"} · {row.modelo ?? "sin modelo"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3 sm:grid-cols-5">
+          <Resumen
+            label="Enviadas"
+            valor={row.piezas_lavanderia > 0 ? row.piezas_lavanderia.toLocaleString("es-MX") : "—"}
+          />
+          <Resumen
+            label="Recibidas"
+            valor={
+              row.piezas_lavanderia_recibidas > 0
+                ? row.piezas_lavanderia_recibidas.toLocaleString("es-MX")
+                : "—"
+            }
+          />
+          <Resumen
+            label="Valor"
+            valor={`${fmtCurrency(num(row.costo_lavanderia))}/pz`}
+          />
+          <Resumen label="Total" valor={fmtCurrency(num(row.valor_lavanderia))} />
+          <Resumen
+            label="Saldo"
+            valor={fmtCurrency(num(row.saldo_lavanderia))}
+            tono={num(row.saldo_lavanderia) < -CENTAVO ? "text-rose-600" : "text-foreground"}
+          />
+        </div>
+
+        {row.piezas_lavanderia_recibidas === 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/80 px-3 py-2">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
+            <p className="text-[11px] text-amber-900">
+              Falta marcar las <span className="font-semibold">unidades recibidas</span> de
+              lavandería. Se le paga por lo que devolvió, así que sin ese dato el total es $0.
+              Se captura en la columna Recibidas de la tabla.
+            </p>
+          </div>
+        )}
+
+        {cargando ? (
+          <div className="flex justify-center py-6">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <Seccion
+            titulo="Pagos a lavandería"
+            total={`${fmtCurrency(num(row.lavanderia_pagado))} pagados`}
+            formulario={
+              readOnly ? undefined : (
+                <div className="flex flex-wrap items-end gap-2">
+                  <CampoMini label="Fecha" ancho="w-36">
+                    <Input
+                      type="date"
+                      value={fecha}
+                      onChange={(e) => setFecha(e.target.value)}
+                      className="h-8"
+                    />
+                  </CampoMini>
+                  <CampoMini label="Monto" ancho="w-32">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={monto}
+                      onChange={(e) => setMonto(e.target.value)}
+                      className="h-8"
+                    />
+                  </CampoMini>
+                  <CampoMini label="Referencia" ancho="flex-1 min-w-40">
+                    <Input
+                      value={referencia}
+                      onChange={(e) => setReferencia(e.target.value)}
+                      placeholder="Transferencia, cheque…"
+                      className="h-8"
+                    />
+                  </CampoMini>
+                  <Button
+                    size="sm"
+                    onClick={pagar}
+                    disabled={!valido || guardando}
+                    className={cn(
+                      "h-8 gap-1.5 text-white",
+                      excede ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700",
+                    )}
+                  >
+                    {guardando ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Wallet className="size-3.5" />
+                    )}
+                    {excede ? "Pagar de más" : "Pagar"}
+                  </Button>
+                  <p className="w-full text-[11px] text-muted-foreground">
+                    Saldo pendiente: {fmtCurrency(saldoPendiente)}
+                    {excede && (
+                      <span className="ml-2 font-medium text-rose-600">
+                        Excede en {fmtCurrency(n - saldoPendiente)}.
+                      </span>
+                    )}
+                  </p>
+                </div>
+              )
+            }
+          >
+            {pagos.length === 0 ? (
+              <Vacio texto="Sin pagos registrados" />
+            ) : (
+              pagos.map((g) => (
+                <FilaMovimiento
+                  key={g.id}
+                  fecha={g.fecha}
+                  principal={fmtCurrency(num(g.monto))}
+                  detalle={g.referencia ?? g.comentarios}
+                  onBorrar={readOnly ? undefined : () => borrar(g.id)}
+                />
+              ))
+            )}
+          </Seccion>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cerrar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /**
- * Unidades enviadas a lavandería, editables en línea.
- *
- * Es un campo propio del folio: la lavandería recibe un lote que no tiene
- * por qué coincidir con lo que devolvió el maquilero. Se ofrece lo recibido
- * como atajo, pero quien captura decide.
+ * Cantidad de piezas editable en línea, con atajo para copiar un valor
+ * sugerido. Se usa para las unidades enviadas y recibidas de lavandería:
+ * son campos propios del folio, no se derivan de nada.
  */
-function UnidadesLavanderia({
+function PiezasEditable({
   valor,
   sugerido,
+  etiquetaSugerido,
   disabled,
   onSave,
 }: {
   valor: number
   sugerido: number
+  etiquetaSugerido: string
   disabled: boolean
   onSave: (v: number | null) => void
 }) {
@@ -1689,7 +2059,11 @@ function UnidadesLavanderia({
   if (disabled) {
     return (
       <span className="tabular-nums text-sm">
-        {valor > 0 ? valor.toLocaleString("es-MX") : <span className="text-muted-foreground/50">—</span>}
+        {valor > 0 ? (
+          valor.toLocaleString("es-MX")
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
       </span>
     )
   }
@@ -1721,7 +2095,7 @@ function UnidadesLavanderia({
         <button
           type="button"
           onClick={() => onSave(sugerido)}
-          title={`Usar las ${sugerido} piezas recibidas del maquilero`}
+          title={etiquetaSugerido}
           className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-sky-300 hover:text-sky-700"
         >
           usar {sugerido.toLocaleString("es-MX")}

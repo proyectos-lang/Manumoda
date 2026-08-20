@@ -183,24 +183,38 @@ export type VwPagoMaquilas = {
   fase_actual: string | null
   fecha_cancelacion: string | null
   fecha_facturacion: string | null
-  fecha_pago_lavanderia: string | null
   piezas_orden: number | null
   costo_maquila: number | null
   costo_lavanderia: number | null
   precio_venta: number | null
   precio_publico: number | null
-  /** Unidades enviadas a lavandería. Campo propio: no es lo recibido del maquilero. */
-  piezas_lavanderia: number
   piezas_recibidas: number
   piezas_penalizadas: number
   ultima_recepcion: string | null
   ultimo_pago: string | null
   valor_maquila: number
   valor_penalizaciones: number
-  valor_lavanderia: number
   valor_a_pagar: number
   valor_pagado: number
   saldo: number
+  // ── Lavandería: acreedor aparte, con su propio saldo (script 030) ──
+  /** Unidades enviadas a lavandería. */
+  piezas_lavanderia: number
+  /** Unidades que la lavandería devolvió. Base de lo que se le paga. */
+  piezas_lavanderia_recibidas: number
+  /** Enviadas menos recibidas. */
+  merma_lavanderia: number
+  valor_lavanderia: number
+  lavanderia_pagado: number
+  saldo_lavanderia: number
+  ultimo_pago_lavanderia: string | null
+  estado_lavanderia:
+    | "Sin valor"
+    | "Sin recepción"
+    | "Sobrepagado"
+    | "Saldado"
+    | "Parcial"
+    | "Pendiente"
   /** false = la orden no tiene costo capturado; no es lo mismo que $0. */
   costo_capturado: boolean
   lavanderia_pagada: boolean
@@ -227,6 +241,17 @@ export type MaquilaRecepcion = {
 }
 
 export type MaquilaPenalizacion = MaquilaRecepcion & { motivo: string }
+
+export type LavanderiaPago = {
+  id: number
+  idempresa: number
+  folio: string
+  fecha: string
+  monto: number
+  referencia: string | null
+  comentarios: string | null
+  capturado_por: string | null
+}
 
 export type MaquilaPago = {
   id: number
