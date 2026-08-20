@@ -20,13 +20,12 @@ import { es } from "date-fns/locale"
 import {
   AlertTriangle,
   Banknote,
-  ChevronDown,
-  ChevronRight,
   Download,
   Loader2,
   PackageCheck,
   RefreshCw,
   Search,
+  Settings2,
   ShieldAlert,
   Trash2,
   TriangleAlert,
@@ -54,7 +53,6 @@ import { usePasswordGate } from "@/components/password-gate-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -72,7 +70,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
   DialogContent,
@@ -243,7 +240,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
   const [search, setSearch] = useState("")
   const [filtroMaquilero, setFiltroMaquilero] = useState("__all__")
   const [filtroEstado, setFiltroEstado] = useState("__all__")
-  const [expandido, setExpandido] = useState<string | null>(null)
+  const [gestionando, setGestionando] = useState<string | null>(null)
 
   const maquileros = useMemo(
     () =>
@@ -442,23 +439,24 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
-              <TableHead className="w-8" />
               <TableHead className="font-semibold">Folio</TableHead>
               <TableHead className="font-semibold">Maquilero</TableHead>
               <TableHead className="font-semibold text-right">Orden</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
+              <TableHead className="font-semibold text-right">Costo unit.</TableHead>
               <TableHead className="font-semibold text-right">Penalizadas</TableHead>
               <TableHead className="font-semibold text-right">Valor a pagar</TableHead>
               <TableHead className="font-semibold text-right">Pagado</TableHead>
               <TableHead className="font-semibold text-right">Saldo</TableHead>
               <TableHead className="font-semibold">Estado</TableHead>
+              <TableHead className="font-semibold text-right">Acción</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 10 }).map((__, j) => (
+                  {Array.from({ length: 11 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -467,7 +465,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
               ))
             ) : filtradas.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={11} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0
                     ? "Sin órdenes con maquilero asignado."
                     : "Sin folios para los filtros aplicados."}
@@ -478,9 +476,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
                 <FolioRow
                   key={r.folio}
                   row={r}
-                  expandido={expandido === r.folio}
-                  onToggle={() => setExpandido(expandido === r.folio ? null : r.folio)}
-                  onRefresh={onRefresh}
+                  onGestionar={() => setGestionando(r.folio)}
                   readOnly={readOnly}
                 />
               ))
@@ -491,130 +487,154 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
     </div>
   )
 }
-
-// ─── Fila de folio con su detalle ────────────────────────────────────────────
+// ─── Fila de folio ───────────────────────────────────────────────────────────
 
 function FolioRow({
   row,
-  expandido,
-  onToggle,
-  onRefresh,
+  onGestionar,
   readOnly,
 }: {
   row: VwPagoMaquilas
-  expandido: boolean
-  onToggle: () => void
-  onRefresh: () => void
+  onGestionar: () => void
   readOnly: boolean
 }) {
   const saldo = num(row.saldo)
   const sobrepago = saldo < -CENTAVO
 
   return (
-    <>
-      <TableRow
-        className={cn("cursor-pointer hover:bg-muted/30", expandido && "bg-muted/30")}
-        onClick={onToggle}
-      >
-        <TableCell className="text-muted-foreground">
-          {expandido ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-        </TableCell>
-        <TableCell onClick={(e) => e.stopPropagation()}>
-          <FolioLink folio={row.folio} className="text-xs" />
-          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{row.modelo ?? "—"}</p>
-        </TableCell>
-        <TableCell className="text-sm">{row.beneficiario ?? "—"}</TableCell>
-        <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
-          {row.piezas_orden?.toLocaleString("es-MX") ?? "—"}
-        </TableCell>
-        <TableCell className="text-right tabular-nums text-sm">
-          {row.piezas_recibidas.toLocaleString("es-MX")}
-        </TableCell>
-        <TableCell className="text-right tabular-nums text-sm">
-          {row.piezas_penalizadas > 0 ? (
-            <span
-              className={cn(
-                row.penalizadas_exceden_recibidas ? "font-semibold text-rose-600" : "text-rose-600",
-              )}
-              title={
-                row.penalizadas_exceden_recibidas
-                  ? "Se penalizaron más piezas de las recibidas — probable error de captura"
-                  : undefined
-              }
-            >
-              {row.piezas_penalizadas.toLocaleString("es-MX")}
-              {row.penalizadas_exceden_recibidas && " ⚠"}
-            </span>
-          ) : (
-            <span className="text-muted-foreground/50">—</span>
-          )}
-        </TableCell>
-        <TableCell className="text-right text-sm font-medium">
-          <Importe valor={num(row.valor_a_pagar)} capturado={row.costo_capturado} />
-        </TableCell>
-        <TableCell className="text-right tabular-nums text-sm text-emerald-700">
-          {num(row.valor_pagado) > 0 ? fmtCurrency(num(row.valor_pagado)) : <span className="text-muted-foreground/50">—</span>}
-        </TableCell>
-        <TableCell
-          className={cn(
-            "text-right tabular-nums text-sm font-semibold",
-            sobrepago ? "text-rose-600" : "text-foreground",
-          )}
-        >
-          {row.costo_capturado ? fmtCurrency(saldo) : "—"}
-        </TableCell>
-        <TableCell>
+    <TableRow className="hover:bg-muted/30">
+      <TableCell>
+        <FolioLink folio={row.folio} className="text-xs" />
+        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{row.modelo ?? "—"}</p>
+      </TableCell>
+      <TableCell className="text-sm">{row.beneficiario ?? "—"}</TableCell>
+      <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
+        {row.piezas_orden?.toLocaleString("es-MX") ?? "—"}
+      </TableCell>
+      <TableCell className="text-right tabular-nums text-sm">
+        {row.piezas_recibidas.toLocaleString("es-MX")}
+      </TableCell>
+
+      {/* Costo unitario: la pregunta que hay que poder responder de un vistazo */}
+      <TableCell className="text-right text-sm">
+        <CostoUnitario valor={row.costo_maquila} />
+      </TableCell>
+
+      <TableCell className="text-right tabular-nums text-sm">
+        {row.piezas_penalizadas > 0 ? (
           <span
             className={cn(
-              "inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
-              ESTADO_STYLE[row.estado_pago],
+              row.penalizadas_exceden_recibidas ? "font-semibold text-rose-600" : "text-rose-600",
             )}
+            title={
+              row.penalizadas_exceden_recibidas
+                ? "Se penalizaron más piezas de las recibidas — probable error de captura"
+                : undefined
+            }
           >
-            {row.estado_pago}
+            {row.piezas_penalizadas.toLocaleString("es-MX")}
+            {row.penalizadas_exceden_recibidas && " ⚠"}
           </span>
-        </TableCell>
-      </TableRow>
-
-      {expandido && (
-        <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={10} className="p-0">
-            <DetalleFolio row={row} onRefresh={onRefresh} readOnly={readOnly} />
-          </TableCell>
-        </TableRow>
-      )}
-    </>
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right text-sm font-medium">
+        <Importe valor={num(row.valor_a_pagar)} capturado={row.costo_capturado} />
+      </TableCell>
+      <TableCell className="text-right tabular-nums text-sm text-emerald-700">
+        {num(row.valor_pagado) > 0 ? (
+          fmtCurrency(num(row.valor_pagado))
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
+      </TableCell>
+      <TableCell
+        className={cn(
+          "text-right tabular-nums text-sm font-semibold",
+          sobrepago ? "text-rose-600" : "text-foreground",
+        )}
+      >
+        {row.costo_capturado ? fmtCurrency(saldo) : "—"}
+      </TableCell>
+      <TableCell>
+        <span
+          className={cn(
+            "inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
+            ESTADO_STYLE[row.estado_pago],
+          )}
+        >
+          {row.estado_pago}
+        </span>
+      </TableCell>
+      <TableCell className="text-right">
+        <Button size="sm" variant="outline" onClick={onGestionar} className="gap-1.5">
+          <Settings2 className="size-3.5" />
+          {readOnly ? "Ver" : "Gestionar"}
+        </Button>
+      </TableCell>
+    </TableRow>
   )
 }
 
-// ─── Detalle: recepciones, penalizaciones y pagos ────────────────────────────
+/**
+ * Costo de maquila por pieza.
+ *
+ * Distingue el dato faltante del cero: un folio sin costo capturado no es
+ * un folio que valga cero. Si se pintaran igual, un maquilero al que se le
+ * debe parecería saldado.
+ */
+function CostoUnitario({ valor }: { valor: number | null }) {
+  if (valor == null) {
+    return (
+      <span
+        className="inline-flex whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+        title="La columna Costo Maquila del Excel viene vacía para este folio"
+      >
+        Sin costo
+      </span>
+    )
+  }
+  return <span className="tabular-nums font-medium">{fmtCurrency(Number(valor))}</span>
+}
 
-function DetalleFolio({
+// ─── Modal de gestión del folio ──────────────────────────────────────────────
+
+/**
+ * Todo lo que se puede hacer con un folio, en un solo lugar: ver sus costos
+ * unitarios, registrar recepciones, penalizaciones y pagos.
+ *
+ * Los formularios de alta van EN LÍNEA, no en diálogos anidados: abrir un
+ * modal dentro de otro pelea con el foco y obliga a cerrar dos cosas para
+ * volver a la tabla.
+ */
+function GestionFolioDialog({
   row,
-  onRefresh,
+  onClose,
+  onSaved,
   readOnly,
 }: {
   row: VwPagoMaquilas
-  onRefresh: () => void
+  onClose: () => void
+  onSaved: () => void
   readOnly: boolean
 }) {
   const { user } = useAuth()
-  const gate = usePasswordGate()
   const [recepciones, setRecepciones] = useState<MaquilaRecepcion[]>([])
   const [penalizaciones, setPenalizaciones] = useState<MaquilaPenalizacion[]>([])
   const [pagos, setPagos] = useState<MaquilaPago[]>([])
   const [cargando, setCargando] = useState(true)
-  const [dialogo, setDialogo] = useState<"recepcion" | "penalizacion" | "pago" | null>(null)
 
   const cargar = useCallback(async () => {
     const supabase = getSupabase()
     if (!supabase) return
     setCargando(true)
-    const filtro = (t: string) =>
+    const q = (t: string) =>
       supabase.from(t).select("*").eq("idempresa", IDEMPRESA).eq("folio", row.folio).order("fecha")
     const [r, p, g] = await Promise.all([
-      filtro("maquila_recepciones"),
-      filtro("maquila_penalizaciones"),
-      filtro("maquila_pagos"),
+      q("maquila_recepciones"),
+      q("maquila_penalizaciones"),
+      q("maquila_pagos"),
     ])
     setRecepciones((r.data as MaquilaRecepcion[]) ?? [])
     setPenalizaciones((p.data as MaquilaPenalizacion[]) ?? [])
@@ -628,17 +648,28 @@ function DetalleFolio({
 
   const refrescar = () => {
     cargar()
-    onRefresh()
+    onSaved()
+  }
+
+  const guardar = async (tabla: string, payload: Record<string, unknown>, etiqueta: string) => {
+    const supabase = getSupabase()
+    if (!supabase) return false
+    const { error } = await supabase
+      .from(tabla)
+      .insert({ idempresa: IDEMPRESA, folio: row.folio, capturado_por: user?.username ?? null, ...payload })
+    if (error) {
+      toast.error(`No se pudo registrar ${etiqueta}`, { description: error.message })
+      return false
+    }
+    toast.success(`${etiqueta} registrada en ${row.folio}`)
+    refrescar()
+    return true
   }
 
   const borrar = async (tabla: string, id: number, etiqueta: string) => {
     const supabase = getSupabase()
     if (!supabase) return
-    const { error } = await supabase
-      .from(tabla)
-      .delete()
-      .eq("id", id)
-      .eq("idempresa", IDEMPRESA)
+    const { error } = await supabase.from(tabla).delete().eq("id", id).eq("idempresa", IDEMPRESA)
     if (error) {
       // El trigger del script 028 impide borrar lo que ya sostiene un pago
       toast.error(`No se pudo eliminar ${etiqueta}`, { description: error.message })
@@ -648,375 +679,92 @@ function DetalleFolio({
     refrescar()
   }
 
-  if (cargando) {
-    return (
-      <div className="flex justify-center border-t border-border bg-muted/20 py-6">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4 border-t border-border bg-muted/20 px-5 py-4">
-      {gate.dialog}
-
-      {!row.costo_capturado && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/80 px-3 py-2">
-          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
-          <p className="text-[11px] text-amber-900">
-            Este folio no tiene <span className="font-semibold">costo de maquila</span> capturado.
-            Se pueden registrar recepciones, pero no pagos: no hay contra qué calcularlos. El costo
-            viene de la columna <code className="font-mono">Costo Maquila</code> del Excel.
-          </p>
-        </div>
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <BloqueDetalle
-          titulo="Recepciones"
-          total={`${row.piezas_recibidas.toLocaleString("es-MX")} pz`}
-          onAgregar={readOnly ? undefined : () => setDialogo("recepcion")}
-          vacio="Sin recepciones registradas"
-          filas={recepciones.map((r) => ({
-            id: r.id,
-            izq: fmtFecha(r.fecha),
-            centro: `${r.piezas.toLocaleString("es-MX")} pz`,
-            der: r.comentarios ?? "",
-            onBorrar: readOnly ? undefined : () => borrar("maquila_recepciones", r.id, "La recepción"),
-          }))}
-        />
-
-        <BloqueDetalle
-          titulo="Penalizaciones"
-          total={fmtCurrency(num(row.valor_penalizaciones))}
-          onAgregar={readOnly ? undefined : () => setDialogo("penalizacion")}
-          vacio="Sin penalizaciones"
-          filas={penalizaciones.map((p) => ({
-            id: p.id,
-            izq: fmtFecha(p.fecha),
-            centro: `${p.piezas} pz · ${fmtCurrency(p.piezas * num(row.precio_venta))}`,
-            der: p.motivo,
-            onBorrar: readOnly
-              ? undefined
-              : () => borrar("maquila_penalizaciones", p.id, "La penalización"),
-          }))}
-        />
-
-        <BloqueDetalle
-          titulo="Pagos"
-          total={fmtCurrency(num(row.valor_pagado))}
-          onAgregar={
-            readOnly || !row.costo_capturado ? undefined : () => setDialogo("pago")
-          }
-          vacio="Sin pagos registrados"
-          filas={pagos.map((g) => ({
-            id: g.id,
-            izq: fmtFecha(g.fecha),
-            centro: fmtCurrency(num(g.monto)),
-            der: g.referencia ?? "",
-            onBorrar: readOnly ? undefined : () => borrar("maquila_pagos", g.id, "El pago"),
-          }))}
-        />
-      </div>
-
-      {dialogo && (
-        <DialogoMovimiento
-          tipo={dialogo}
-          row={row}
-          usuario={user?.username ?? null}
-          gate={gate}
-          onClose={() => setDialogo(null)}
-          onSaved={refrescar}
-        />
-      )}
-    </div>
-  )
-}
-
-function BloqueDetalle({
-  titulo,
-  total,
-  onAgregar,
-  vacio,
-  filas,
-}: {
-  titulo: string
-  total: string
-  onAgregar?: () => void
-  vacio: string
-  filas: {
-    id: number
-    izq: string
-    centro: string
-    der: string
-    onBorrar?: () => void
-  }[]
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div>
-          <p className="text-xs font-semibold text-foreground">{titulo}</p>
-          <p className="text-[11px] tabular-nums text-muted-foreground">{total}</p>
-        </div>
-        {onAgregar && (
-          <Button size="sm" variant="outline" onClick={onAgregar} className="h-7 gap-1 text-xs">
-            Agregar
-          </Button>
-        )}
-      </div>
-      {filas.length === 0 ? (
-        <p className="py-3 text-center text-[11px] text-muted-foreground/60">{vacio}</p>
-      ) : (
-        <ul className="space-y-1">
-          {filas.map((f) => (
-            <li
-              key={f.id}
-              className="flex items-center gap-2 rounded border border-border/60 bg-background px-2 py-1 text-[11px]"
-            >
-              <span className="w-14 shrink-0 text-muted-foreground">{f.izq}</span>
-              <span className="shrink-0 font-medium tabular-nums text-foreground">{f.centro}</span>
-              <span className="truncate text-muted-foreground">{f.der}</span>
-              {f.onBorrar && (
-                <button
-                  type="button"
-                  onClick={f.onBorrar}
-                  title="Eliminar"
-                  className="ml-auto shrink-0 text-muted-foreground/50 transition-colors hover:text-destructive"
-                >
-                  <Trash2 className="size-3" />
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
-
-// ─── Diálogo de alta ─────────────────────────────────────────────────────────
-
-function DialogoMovimiento({
-  tipo,
-  row,
-  usuario,
-  gate,
-  onClose,
-  onSaved,
-}: {
-  tipo: "recepcion" | "penalizacion" | "pago"
-  row: VwPagoMaquilas
-  usuario: string | null
-  gate: ReturnType<typeof usePasswordGate>
-  onClose: () => void
-  onSaved: () => void
-}) {
   const saldoPendiente = Math.max(0, num(row.saldo))
-  const [fecha, setFecha] = useState(hoyISO())
-  const [piezas, setPiezas] = useState("")
-  // El pago arranca con el saldo exacto: pre-llenarlo es la medida
-  // anti-sobrepago más efectiva y no cuesta nada.
-  const [monto, setMonto] = useState(tipo === "pago" ? saldoPendiente.toFixed(2) : "")
-  const [motivo, setMotivo] = useState("")
-  const [referencia, setReferencia] = useState("")
-  const [comentarios, setComentarios] = useState("")
-  const [guardando, setGuardando] = useState(false)
-
-  const TITULOS = {
-    recepcion: "Registrar recepción",
-    penalizacion: "Registrar penalización",
-    pago: "Registrar pago",
-  } as const
-
-  const piezasNum = Number(piezas)
-  const montoNum = Number(monto)
-  const excedeSaldo = tipo === "pago" && montoNum > saldoPendiente + CENTAVO
-
-  const valido =
-    tipo === "pago"
-      ? Number.isFinite(montoNum) && montoNum > 0
-      : Number.isFinite(piezasNum) &&
-        piezasNum > 0 &&
-        (tipo !== "penalizacion" || motivo.trim() !== "")
-
-  const guardar = async () => {
-    const supabase = getSupabase()
-    if (!supabase) return
-    setGuardando(true)
-
-    const base = { idempresa: IDEMPRESA, folio: row.folio, fecha, capturado_por: usuario }
-    const tabla =
-      tipo === "recepcion"
-        ? "maquila_recepciones"
-        : tipo === "penalizacion"
-          ? "maquila_penalizaciones"
-          : "maquila_pagos"
-
-    // Record<string, unknown>: las tres tablas tienen columnas distintas y el
-    // tipado de Supabase no puede resolver la unión desde una sola llamada.
-    const payload: Record<string, unknown> =
-      tipo === "pago"
-        ? {
-            ...base,
-            monto: Number(montoNum.toFixed(2)),
-            referencia: referencia.trim() || null,
-            // Deja rastro de con qué costo se pagó, por si el Excel lo cambia
-            costo_maquila_aplicado: row.costo_maquila,
-            comentarios: comentarios.trim() || null,
-          }
-        : tipo === "penalizacion"
-          ? {
-              ...base,
-              piezas: Math.trunc(piezasNum),
-              motivo: motivo.trim(),
-              comentarios: comentarios.trim() || null,
-            }
-          : { ...base, piezas: Math.trunc(piezasNum), comentarios: comentarios.trim() || null }
-
-    const { error } = await supabase.from(tabla).insert(payload)
-    setGuardando(false)
-
-    if (error) {
-      toast.error("No se pudo guardar", { description: error.message })
-      return
-    }
-    toast.success(`${TITULOS[tipo].replace("Registrar ", "")} registrada en ${row.folio}`)
-    onClose()
-    onSaved()
-  }
-
-  // Escribir dinero pasa por el gate de contraseña, igual que cambiar fechas
-  const confirmar = () => gate.request(guardar)
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{TITULOS[tipo]}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Settings2 className="size-4 text-emerald-600" />
+            Folio {row.folio}
+          </DialogTitle>
           <DialogDescription>
-            Folio {row.folio} · {row.beneficiario ?? "sin maquilero"}
-            {tipo !== "pago" && (
-              <>
-                {" "}
-                · recibidas {row.piezas_recibidas.toLocaleString("es-MX")} de{" "}
-                {row.piezas_orden?.toLocaleString("es-MX") ?? "?"}
-              </>
-            )}
+            {row.beneficiario ?? "Sin maquilero"} · {row.modelo ?? "sin modelo"} ·{" "}
+            {row.cliente ?? "sin cliente"}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="mov-fecha">Fecha</Label>
-            <Input
-              id="mov-fecha"
-              type="date"
-              value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
-            />
-          </div>
-
-          {tipo === "pago" ? (
-            <>
-              <div className="space-y-1.5">
-                <Label htmlFor="mov-monto">Monto</Label>
-                <Input
-                  id="mov-monto"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={monto}
-                  onChange={(e) => setMonto(e.target.value)}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Saldo pendiente: {fmtCurrency(saldoPendiente)}
-                </p>
-                {excedeSaldo && (
-                  <p className="flex items-start gap-1 text-[11px] font-medium text-rose-600">
-                    <TriangleAlert className="mt-0.5 size-3 shrink-0" />
-                    Excede el saldo en {fmtCurrency(montoNum - saldoPendiente)}. El folio quedará
-                    sobrepagado.
-                  </p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="mov-ref">Referencia</Label>
-                <Input
-                  id="mov-ref"
-                  value={referencia}
-                  onChange={(e) => setReferencia(e.target.value)}
-                  placeholder="Folio de transferencia, cheque…"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Si se repite, el sistema rechaza el pago: casi siempre es una captura doble.
-                </p>
-              </div>
-            </>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="mov-piezas">Piezas</Label>
-              <Input
-                id="mov-piezas"
-                type="number"
-                min="1"
-                value={piezas}
-                onChange={(e) => setPiezas(e.target.value)}
-              />
-              {tipo === "penalizacion" && piezasNum > 0 && (
-                <p className="text-[11px] text-muted-foreground">
-                  Se descontarán {fmtCurrency(piezasNum * num(row.precio_venta))} (
-                  {piezasNum} × {fmtCurrency(num(row.precio_venta))} de precio de venta)
-                  {piezasNum > row.piezas_recibidas && (
-                    <span className="block font-medium text-rose-600">
-                      Son más piezas de las recibidas ({row.piezas_recibidas}).
-                    </span>
-                  )}
-                </p>
-              )}
-            </div>
-          )}
-
-          {tipo === "penalizacion" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="mov-motivo">Motivo</Label>
-              <Input
-                id="mov-motivo"
-                value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
-                placeholder="Costura abierta, manchas, talla incorrecta…"
-              />
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <Label htmlFor="mov-com">Comentarios</Label>
-            <Textarea
-              id="mov-com"
-              rows={2}
-              value={comentarios}
-              onChange={(e) => setComentarios(e.target.value)}
-            />
-          </div>
+        {/* Costos unitarios del folio, tal como vinieron del Excel */}
+        <div className="grid grid-cols-2 gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:grid-cols-4">
+          <DatoUnitario label="Costo maquila" valor={row.costo_maquila} destacado />
+          <DatoUnitario label="Costo lavandería" valor={row.costo_lavanderia} />
+          <DatoUnitario label="Precio venta" valor={row.precio_venta} />
+          <DatoUnitario label="Precio público" valor={row.precio_publico} />
         </div>
 
+        {!row.costo_capturado && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/80 px-3 py-2">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
+            <p className="text-[11px] text-amber-900">
+              Sin <span className="font-semibold">costo de maquila</span>, la columna{" "}
+              <code className="font-mono">Costo Maquila</code> del Excel viene vacía para este
+              folio. Se pueden registrar recepciones, pero no pagos: no hay contra qué calcularlos.
+            </p>
+          </div>
+        )}
+
+        {/* Resumen del dinero */}
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3 sm:grid-cols-4">
+          <Resumen
+            label="Recibidas"
+            valor={`${row.piezas_recibidas.toLocaleString("es-MX")} / ${
+              row.piezas_orden?.toLocaleString("es-MX") ?? "—"
+            }`}
+          />
+          <Resumen label="Valor a pagar" valor={row.costo_capturado ? fmtCurrency(num(row.valor_a_pagar)) : "—"} />
+          <Resumen label="Pagado" valor={fmtCurrency(num(row.valor_pagado))} tono="text-emerald-700" />
+          <Resumen
+            label="Saldo"
+            valor={row.costo_capturado ? fmtCurrency(num(row.saldo)) : "—"}
+            tono={num(row.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground"}
+          />
+        </div>
+
+        {cargando ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <SeccionRecepciones
+              filas={recepciones}
+              row={row}
+              readOnly={readOnly}
+              onGuardar={guardar}
+              onBorrar={borrar}
+            />
+            <SeccionPenalizaciones
+              filas={penalizaciones}
+              row={row}
+              readOnly={readOnly}
+              onGuardar={guardar}
+              onBorrar={borrar}
+            />
+            <SeccionPagos
+              filas={pagos}
+              row={row}
+              readOnly={readOnly}
+              saldoPendiente={saldoPendiente}
+              onGuardar={guardar}
+              onBorrar={borrar}
+            />
+          </div>
+        )}
+
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={guardando}>
-            Cancelar
-          </Button>
-          <Button
-            onClick={confirmar}
-            disabled={!valido || guardando}
-            className={cn(
-              "gap-1.5",
-              excedeSaldo
-                ? "bg-rose-600 hover:bg-rose-700"
-                : "bg-emerald-600 hover:bg-emerald-700",
-              "text-white",
-            )}
-          >
-            {guardando && <Loader2 className="size-3.5 animate-spin" />}
-            {excedeSaldo ? "Pagar de más" : "Guardar"}
+          <Button variant="outline" onClick={onClose}>
+            Cerrar
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1024,12 +772,469 @@ function DialogoMovimiento({
   )
 }
 
+function DatoUnitario({
+  label,
+  valor,
+  destacado,
+}: {
+  label: string
+  valor: number | null
+  destacado?: boolean
+}) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      {valor == null ? (
+        <p className="text-sm font-medium text-amber-600">Sin dato</p>
+      ) : (
+        <p className={cn("text-sm font-semibold tabular-nums", destacado && "text-emerald-700")}>
+          {fmtCurrency(Number(valor))}
+          <span className="ml-1 text-[10px] font-normal text-muted-foreground">/pz</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
+function Resumen({ label, valor, tono }: { label: string; valor: string; tono?: string }) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={cn("text-sm font-semibold tabular-nums", tono ?? "text-foreground")}>{valor}</p>
+    </div>
+  )
+}
+
+type GuardarFn = (
+  tabla: string,
+  payload: Record<string, unknown>,
+  etiqueta: string,
+) => Promise<boolean>
+type BorrarFn = (tabla: string, id: number, etiqueta: string) => void
+
+/** Contenedor de una sección del modal: título, total y lista. */
+function Seccion({
+  titulo,
+  total,
+  children,
+  formulario,
+}: {
+  titulo: string
+  total: string
+  children: React.ReactNode
+  formulario?: React.ReactNode
+}) {
+  return (
+    <div className="rounded-lg border border-border">
+      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
+        <p className="text-xs font-semibold text-foreground">{titulo}</p>
+        <p className="text-xs font-medium tabular-nums text-muted-foreground">{total}</p>
+      </div>
+      <div className="divide-y divide-border/60">{children}</div>
+      {formulario && <div className="border-t border-border bg-muted/20 p-2">{formulario}</div>}
+    </div>
+  )
+}
+
+function FilaMovimiento({
+  fecha,
+  principal,
+  detalle,
+  onBorrar,
+}: {
+  fecha: string
+  principal: string
+  detalle?: string | null
+  onBorrar?: () => void
+}) {
+  return (
+    <div className="flex items-center gap-3 px-3 py-1.5 text-xs">
+      <span className="w-16 shrink-0 text-muted-foreground">{fmtFecha(fecha)}</span>
+      <span className="w-28 shrink-0 font-medium tabular-nums text-foreground">{principal}</span>
+      <span className="truncate text-muted-foreground">{detalle ?? ""}</span>
+      {onBorrar && (
+        <button
+          type="button"
+          onClick={onBorrar}
+          title="Eliminar"
+          className="ml-auto shrink-0 text-muted-foreground/50 transition-colors hover:text-destructive"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      )}
+    </div>
+  )
+}
+
+function Vacio({ texto }: { texto: string }) {
+  return <p className="px-3 py-3 text-center text-[11px] text-muted-foreground/60">{texto}</p>
+}
+
+// ── Sección: recepciones ──
+
+function SeccionRecepciones({
+  filas,
+  row,
+  readOnly,
+  onGuardar,
+  onBorrar,
+}: {
+  filas: MaquilaRecepcion[]
+  row: VwPagoMaquilas
+  readOnly: boolean
+  onGuardar: GuardarFn
+  onBorrar: BorrarFn
+}) {
+  const [fecha, setFecha] = useState(hoyISO())
+  const [piezas, setPiezas] = useState("")
+  const [comentarios, setComentarios] = useState("")
+  const [guardando, setGuardando] = useState(false)
+
+  const n = Number(piezas)
+  const valido = Number.isFinite(n) && n > 0
+  const excede = valido && row.piezas_orden != null && row.piezas_recibidas + n > row.piezas_orden
+
+  const enviar = async () => {
+    setGuardando(true)
+    const ok = await onGuardar(
+      "maquila_recepciones",
+      { fecha, piezas: Math.trunc(n), comentarios: comentarios.trim() || null },
+      "La recepción",
+    )
+    setGuardando(false)
+    if (ok) {
+      setPiezas("")
+      setComentarios("")
+    }
+  }
+
+  return (
+    <Seccion
+      titulo="Recepciones"
+      total={`${row.piezas_recibidas.toLocaleString("es-MX")} pz recibidas`}
+      formulario={
+        readOnly ? undefined : (
+          <div className="flex flex-wrap items-end gap-2">
+            <CampoMini label="Fecha" ancho="w-36">
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
+            </CampoMini>
+            <CampoMini label="Piezas" ancho="w-24">
+              <Input
+                type="number"
+                min="1"
+                value={piezas}
+                onChange={(e) => setPiezas(e.target.value)}
+                className="h-8"
+              />
+            </CampoMini>
+            <CampoMini label="Comentario" ancho="flex-1 min-w-40">
+              <Input
+                value={comentarios}
+                onChange={(e) => setComentarios(e.target.value)}
+                className="h-8"
+              />
+            </CampoMini>
+            <Button
+              size="sm"
+              onClick={enviar}
+              disabled={!valido || guardando}
+              className="h-8 gap-1.5 bg-sky-600 text-white hover:bg-sky-700"
+            >
+              {guardando ? <Loader2 className="size-3.5 animate-spin" /> : <PackageCheck className="size-3.5" />}
+              Recibir
+            </Button>
+            {excede && (
+              <p className="w-full text-[11px] font-medium text-amber-600">
+                Con esta recepción se supera la cantidad de la orden (
+                {row.piezas_orden?.toLocaleString("es-MX")} pz).
+              </p>
+            )}
+          </div>
+        )
+      }
+    >
+      {filas.length === 0 ? (
+        <Vacio texto="Sin recepciones registradas" />
+      ) : (
+        filas.map((r) => (
+          <FilaMovimiento
+            key={r.id}
+            fecha={r.fecha}
+            principal={`${r.piezas.toLocaleString("es-MX")} pz`}
+            detalle={r.comentarios}
+            onBorrar={readOnly ? undefined : () => onBorrar("maquila_recepciones", r.id, "La recepción")}
+          />
+        ))
+      )}
+    </Seccion>
+  )
+}
+
+// ── Sección: penalizaciones ──
+
+function SeccionPenalizaciones({
+  filas,
+  row,
+  readOnly,
+  onGuardar,
+  onBorrar,
+}: {
+  filas: MaquilaPenalizacion[]
+  row: VwPagoMaquilas
+  readOnly: boolean
+  onGuardar: GuardarFn
+  onBorrar: BorrarFn
+}) {
+  const [fecha, setFecha] = useState(hoyISO())
+  const [piezas, setPiezas] = useState("")
+  const [motivo, setMotivo] = useState("")
+  const [guardando, setGuardando] = useState(false)
+
+  const n = Number(piezas)
+  const valido = Number.isFinite(n) && n > 0 && motivo.trim() !== ""
+  const importe = valido ? n * num(row.precio_venta) : 0
+  const excede = valido && n > row.piezas_recibidas
+
+  const enviar = async () => {
+    setGuardando(true)
+    const ok = await onGuardar(
+      "maquila_penalizaciones",
+      { fecha, piezas: Math.trunc(n), motivo: motivo.trim() },
+      "La penalización",
+    )
+    setGuardando(false)
+    if (ok) {
+      setPiezas("")
+      setMotivo("")
+    }
+  }
+
+  return (
+    <Seccion
+      titulo="Penalizaciones"
+      total={
+        row.precio_venta == null
+          ? "Sin precio de venta"
+          : `${row.piezas_penalizadas} pz · ${fmtCurrency(num(row.valor_penalizaciones))}`
+      }
+      formulario={
+        readOnly ? undefined : (
+          <div className="flex flex-wrap items-end gap-2">
+            <CampoMini label="Fecha" ancho="w-36">
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
+            </CampoMini>
+            <CampoMini label="Piezas malas" ancho="w-28">
+              <Input
+                type="number"
+                min="1"
+                value={piezas}
+                onChange={(e) => setPiezas(e.target.value)}
+                className="h-8"
+              />
+            </CampoMini>
+            <CampoMini label="Motivo" ancho="flex-1 min-w-40">
+              <Input
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder="Costura abierta, manchas…"
+                className="h-8"
+              />
+            </CampoMini>
+            <Button
+              size="sm"
+              onClick={enviar}
+              disabled={!valido || guardando}
+              className="h-8 gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
+            >
+              {guardando && <Loader2 className="size-3.5 animate-spin" />}
+              Penalizar
+            </Button>
+            {valido && (
+              <p className="w-full text-[11px] text-muted-foreground">
+                {row.precio_venta == null ? (
+                  <span className="font-medium text-amber-600">
+                    Este folio no tiene precio de venta: la penalización se registrará pero
+                    descontará $0.
+                  </span>
+                ) : (
+                  <>
+                    Descuenta {fmtCurrency(importe)} ({n} × {fmtCurrency(num(row.precio_venta))} de
+                    precio de venta)
+                  </>
+                )}
+                {excede && (
+                  <span className="block font-medium text-rose-600">
+                    Son más piezas de las recibidas ({row.piezas_recibidas}).
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        )
+      }
+    >
+      {filas.length === 0 ? (
+        <Vacio texto="Sin penalizaciones" />
+      ) : (
+        filas.map((p) => (
+          <FilaMovimiento
+            key={p.id}
+            fecha={p.fecha}
+            principal={`${p.piezas} pz · ${fmtCurrency(p.piezas * num(row.precio_venta))}`}
+            detalle={p.motivo}
+            onBorrar={
+              readOnly ? undefined : () => onBorrar("maquila_penalizaciones", p.id, "La penalización")
+            }
+          />
+        ))
+      )}
+    </Seccion>
+  )
+}
+
+// ── Sección: pagos ──
+
+function SeccionPagos({
+  filas,
+  row,
+  readOnly,
+  saldoPendiente,
+  onGuardar,
+  onBorrar,
+}: {
+  filas: MaquilaPago[]
+  row: VwPagoMaquilas
+  readOnly: boolean
+  saldoPendiente: number
+  onGuardar: GuardarFn
+  onBorrar: BorrarFn
+}) {
+  const [fecha, setFecha] = useState(hoyISO())
+  // Pre-llenar el saldo exacto es la medida anti-sobrepago más efectiva
+  const [monto, setMonto] = useState(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : "")
+  const [referencia, setReferencia] = useState("")
+  const [guardando, setGuardando] = useState(false)
+
+  const n = Number(monto)
+  const valido = Number.isFinite(n) && n > 0
+  const excede = valido && n > saldoPendiente + CENTAVO
+
+  const enviar = async () => {
+    setGuardando(true)
+    const ok = await onGuardar(
+      "maquila_pagos",
+      {
+        fecha,
+        monto: Number(n.toFixed(2)),
+        referencia: referencia.trim() || null,
+        // Deja rastro de con qué costo se calculó, por si el Excel lo cambia
+        costo_maquila_aplicado: row.costo_maquila,
+      },
+      "El pago",
+    )
+    setGuardando(false)
+    if (ok) {
+      setMonto("")
+      setReferencia("")
+    }
+  }
+
+  return (
+    <Seccion
+      titulo="Pagos"
+      total={`${fmtCurrency(num(row.valor_pagado))} pagados`}
+      formulario={
+        readOnly ? undefined : !row.costo_capturado ? (
+          <p className="text-[11px] text-muted-foreground">
+            No se pueden registrar pagos sin costo de maquila capturado.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-end gap-2">
+            <CampoMini label="Fecha" ancho="w-36">
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
+            </CampoMini>
+            <CampoMini label="Monto" ancho="w-32">
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={monto}
+                onChange={(e) => setMonto(e.target.value)}
+                className="h-8"
+              />
+            </CampoMini>
+            <CampoMini label="Referencia" ancho="flex-1 min-w-40">
+              <Input
+                value={referencia}
+                onChange={(e) => setReferencia(e.target.value)}
+                placeholder="Transferencia, cheque…"
+                className="h-8"
+              />
+            </CampoMini>
+            <Button
+              size="sm"
+              onClick={enviar}
+              disabled={!valido || guardando}
+              className={cn(
+                "h-8 gap-1.5 text-white",
+                excede ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700",
+              )}
+            >
+              {guardando ? <Loader2 className="size-3.5 animate-spin" /> : <Wallet className="size-3.5" />}
+              {excede ? "Pagar de más" : "Pagar"}
+            </Button>
+            <p className="w-full text-[11px] text-muted-foreground">
+              Saldo pendiente: {fmtCurrency(saldoPendiente)}
+              {excede && (
+                <span className="ml-2 font-medium text-rose-600">
+                  Excede en {fmtCurrency(n - saldoPendiente)}: el folio quedará sobrepagado.
+                </span>
+              )}
+            </p>
+          </div>
+        )
+      }
+    >
+      {filas.length === 0 ? (
+        <Vacio texto="Sin pagos registrados" />
+      ) : (
+        filas.map((g) => (
+          <FilaMovimiento
+            key={g.id}
+            fecha={g.fecha}
+            principal={fmtCurrency(num(g.monto))}
+            detalle={g.referencia}
+            onBorrar={readOnly ? undefined : () => onBorrar("maquila_pagos", g.id, "El pago")}
+          />
+        ))
+      )}
+    </Seccion>
+  )
+}
+
+function CampoMini({
+  label,
+  ancho,
+  children,
+}: {
+  label: string
+  ancho: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className={cn("space-y-1", ancho)}>
+      <label className="block text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
 // ─── Pestaña 2: Recepciones ──────────────────────────────────────────────────
 
 function RecepcionesTab({ rows, loading, onRefresh }: TabProps) {
   const readOnly = useReadOnly()
-  const { user } = useAuth()
-  const gate = usePasswordGate()
   const [search, setSearch] = useState("")
   const [objetivo, setObjetivo] = useState<VwPagoMaquilas | null>(null)
 
@@ -1043,8 +1248,6 @@ function RecepcionesTab({ rows, loading, onRefresh }: TabProps) {
 
   return (
     <div className="space-y-4">
-      {gate.dialog}
-
       <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-4 py-2.5">
         <PackageCheck className="mt-0.5 size-4 shrink-0 text-sky-600" />
         <p className="text-xs text-sky-900">
@@ -1142,13 +1345,11 @@ function RecepcionesTab({ rows, loading, onRefresh }: TabProps) {
       </div>
 
       {objetivo && (
-        <DialogoMovimiento
-          tipo="recepcion"
+        <GestionFolioDialog
           row={objetivo}
-          usuario={user?.username ?? null}
-          gate={gate}
           onClose={() => setObjetivo(null)}
           onSaved={onRefresh}
+          readOnly={readOnly}
         />
       )}
     </div>
