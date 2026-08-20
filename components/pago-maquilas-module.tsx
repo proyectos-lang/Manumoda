@@ -443,7 +443,8 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
               <TableHead className="font-semibold">Maquilero</TableHead>
               <TableHead className="font-semibold text-right">Orden</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
-              <TableHead className="font-semibold text-right">Costo unit.</TableHead>
+              <TableHead className="font-semibold text-right">Valor Maquila</TableHead>
+              <TableHead className="font-semibold text-right">Valor Lavandería</TableHead>
               <TableHead className="font-semibold text-right">Penalizadas</TableHead>
               <TableHead className="font-semibold text-right">Valor a pagar</TableHead>
               <TableHead className="font-semibold text-right">Pagado</TableHead>
@@ -456,7 +457,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 11 }).map((__, j) => (
+                  {Array.from({ length: 12 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -465,7 +466,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
               ))
             ) : filtradas.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={12} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0
                     ? "Sin órdenes con maquilero asignado."
                     : "Sin folios para los filtros aplicados."}
@@ -484,9 +485,19 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
           </TableBody>
         </Table>
       </div>
+
+      {gestionando && (
+        <GestionFolioDialog
+          row={filtradas.find((r) => r.folio === gestionando) ?? rows.find((r) => r.folio === gestionando)!}
+          onClose={() => setGestionando(null)}
+          onSaved={onRefresh}
+          readOnly={readOnly}
+        />
+      )}
     </div>
   )
 }
+
 // ─── Fila de folio ───────────────────────────────────────────────────────────
 
 function FolioRow({
@@ -515,9 +526,13 @@ function FolioRow({
         {row.piezas_recibidas.toLocaleString("es-MX")}
       </TableCell>
 
-      {/* Costo unitario: la pregunta que hay que poder responder de un vistazo */}
+      {/* Valores por pieza tal como vienen del Excel. Poder verlos de un
+          vistazo es la pregunta que el usuario necesita responder. */}
       <TableCell className="text-right text-sm">
-        <CostoUnitario valor={row.costo_maquila} />
+        <ValorUnitario valor={row.costo_maquila} />
+      </TableCell>
+      <TableCell className="text-right text-sm">
+        <ValorUnitario valor={row.costo_lavanderia} etiquetaVacia="Sin valor" />
       </TableCell>
 
       <TableCell className="text-right tabular-nums text-sm">
@@ -578,24 +593,35 @@ function FolioRow({
 }
 
 /**
- * Costo de maquila por pieza.
+ * Valor por pieza tal como viene del Excel (Costo Maquila / Costo Lavandería).
  *
- * Distingue el dato faltante del cero: un folio sin costo capturado no es
- * un folio que valga cero. Si se pintaran igual, un maquilero al que se le
- * debe parecería saldado.
+ * Distingue el dato faltante del cero: un folio sin valor capturado no es un
+ * folio que valga cero. Si se pintaran igual, un maquilero al que se le debe
+ * parecería saldado.
  */
-function CostoUnitario({ valor }: { valor: number | null }) {
+function ValorUnitario({
+  valor,
+  etiquetaVacia = "Sin valor",
+}: {
+  valor: number | null
+  etiquetaVacia?: string
+}) {
   if (valor == null) {
     return (
       <span
         className="inline-flex whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-        title="La columna Costo Maquila del Excel viene vacía para este folio"
+        title="La columna correspondiente del Excel viene vacía para este folio"
       >
-        Sin costo
+        {etiquetaVacia}
       </span>
     )
   }
-  return <span className="tabular-nums font-medium">{fmtCurrency(Number(valor))}</span>
+  return (
+    <span className="whitespace-nowrap tabular-nums font-medium">
+      {fmtCurrency(Number(valor))}
+      <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">/pz</span>
+    </span>
+  )
 }
 
 // ─── Modal de gestión del folio ──────────────────────────────────────────────
@@ -697,8 +723,8 @@ function GestionFolioDialog({
 
         {/* Costos unitarios del folio, tal como vinieron del Excel */}
         <div className="grid grid-cols-2 gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:grid-cols-4">
-          <DatoUnitario label="Costo maquila" valor={row.costo_maquila} destacado />
-          <DatoUnitario label="Costo lavandería" valor={row.costo_lavanderia} />
+          <DatoUnitario label="Valor maquila" valor={row.costo_maquila} destacado />
+          <DatoUnitario label="Valor lavandería" valor={row.costo_lavanderia} />
           <DatoUnitario label="Precio venta" valor={row.precio_venta} />
           <DatoUnitario label="Precio público" valor={row.precio_publico} />
         </div>
@@ -715,12 +741,20 @@ function GestionFolioDialog({
         )}
 
         {/* Resumen del dinero */}
-        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3 sm:grid-cols-5">
           <Resumen
             label="Recibidas"
             valor={`${row.piezas_recibidas.toLocaleString("es-MX")} / ${
               row.piezas_orden?.toLocaleString("es-MX") ?? "—"
             }`}
+          />
+          <Resumen
+            label="Lavandería"
+            valor={
+              row.piezas_lavanderia > 0
+                ? `${row.piezas_lavanderia.toLocaleString("es-MX")} pz · ${fmtCurrency(num(row.valor_lavanderia))}`
+                : "Sin unidades"
+            }
           />
           <Resumen label="Valor a pagar" valor={row.costo_capturado ? fmtCurrency(num(row.valor_a_pagar)) : "—"} />
           <Resumen label="Pagado" valor={fmtCurrency(num(row.valor_pagado))} tono="text-emerald-700" />
@@ -1474,6 +1508,23 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
     [conLavanderia],
   )
 
+  const guardarUnidades = async (folio: string, piezas: number | null) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    setGuardando(folio)
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ piezas_lavanderia: piezas })
+      .eq("folio", folio)
+      .eq("idempresa", IDEMPRESA)
+    setGuardando(null)
+    if (error) {
+      toast.error("No se pudieron guardar las unidades", { description: error.message })
+      return
+    }
+    onRefresh()
+  }
+
   const marcar = async (folio: string, pagar: boolean) => {
     const supabase = getSupabase()
     if (!supabase) return
@@ -1517,7 +1568,8 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
               <TableHead className="font-semibold">Folio</TableHead>
               <TableHead className="font-semibold">Cliente</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
-              <TableHead className="font-semibold text-right">Costo unit.</TableHead>
+              <TableHead className="font-semibold text-right">Valor Maquila</TableHead>
+              <TableHead className="font-semibold text-right">Valor Lavandería</TableHead>
               <TableHead className="font-semibold text-right">Total</TableHead>
               <TableHead className="font-semibold">Pago</TableHead>
               <TableHead className="font-semibold text-right">Acción</TableHead>
@@ -1549,11 +1601,16 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
                     <FolioLink folio={r.folio} className="text-xs" />
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{r.cliente ?? "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">
-                    {r.piezas_recibidas.toLocaleString("es-MX")}
+                  <TableCell className="text-right">
+                    <UnidadesLavanderia
+                      valor={r.piezas_lavanderia}
+                      sugerido={r.piezas_recibidas}
+                      disabled={readOnly || guardando === r.folio}
+                      onSave={(v) => guardarUnidades(r.folio, v)}
+                    />
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
-                    {fmtCurrency(num(r.costo_lavanderia))}
+                  <TableCell className="text-right text-sm">
+                    <ValorUnitario valor={r.costo_lavanderia} />
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-sm font-medium">
                     {fmtCurrency(num(r.valor_lavanderia))}
@@ -1589,6 +1646,97 @@ function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
           </TableBody>
         </Table>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Unidades enviadas a lavandería, editables en línea.
+ *
+ * Es un campo propio del folio: la lavandería recibe un lote que no tiene
+ * por qué coincidir con lo que devolvió el maquilero. Se ofrece lo recibido
+ * como atajo, pero quien captura decide.
+ */
+function UnidadesLavanderia({
+  valor,
+  sugerido,
+  disabled,
+  onSave,
+}: {
+  valor: number
+  sugerido: number
+  disabled: boolean
+  onSave: (v: number | null) => void
+}) {
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(String(valor || ""))
+
+  useEffect(() => {
+    if (!editando) setTexto(String(valor || ""))
+  }, [valor, editando])
+
+  const confirmar = () => {
+    setEditando(false)
+    const t = texto.trim()
+    const n = t === "" ? null : Math.trunc(Number(t))
+    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+      setTexto(String(valor || ""))
+      return
+    }
+    if (n !== (valor || null)) onSave(n)
+  }
+
+  if (disabled) {
+    return (
+      <span className="tabular-nums text-sm">
+        {valor > 0 ? valor.toLocaleString("es-MX") : <span className="text-muted-foreground/50">—</span>}
+      </span>
+    )
+  }
+
+  if (editando) {
+    return (
+      <Input
+        autoFocus
+        type="number"
+        min="0"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") confirmar()
+          if (e.key === "Escape") {
+            setTexto(String(valor || ""))
+            setEditando(false)
+          }
+        }}
+        className="ml-auto h-7 w-24 text-right"
+      />
+    )
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-1.5">
+      {valor === 0 && sugerido > 0 && (
+        <button
+          type="button"
+          onClick={() => onSave(sugerido)}
+          title={`Usar las ${sugerido} piezas recibidas del maquilero`}
+          className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-sky-300 hover:text-sky-700"
+        >
+          usar {sugerido.toLocaleString("es-MX")}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => setEditando(true)}
+        className={cn(
+          "rounded px-1.5 py-0.5 text-sm tabular-nums transition-colors hover:bg-muted",
+          valor > 0 ? "font-medium text-foreground" : "text-muted-foreground/60",
+        )}
+      >
+        {valor > 0 ? valor.toLocaleString("es-MX") : "—"}
+      </button>
     </div>
   )
 }

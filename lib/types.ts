@@ -189,6 +189,8 @@ export type VwPagoMaquilas = {
   costo_lavanderia: number | null
   precio_venta: number | null
   precio_publico: number | null
+  /** Unidades enviadas a lavandería. Campo propio: no es lo recibido del maquilero. */
+  piezas_lavanderia: number
   piezas_recibidas: number
   piezas_penalizadas: number
   ultima_recepcion: string | null
