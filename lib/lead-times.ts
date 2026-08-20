@@ -37,14 +37,51 @@ export type Puntualidad =
 
 /** Campos que necesita la evaluación (los expone vw_seguimiento_integrado). */
 export type LeadTimeRow = {
+  fase_actual?: string | null
   fecha_s1?: string | null
   fecha_cancelacion?: string | null
   fecha_diseno?: string | null
   cumplimiento_diseno?: boolean | null
+  /** Aprobación del cliente: marca el fin de Diseño y el paso a Corte. */
+  fecha_aprobacion_diseno?: string | null
   no_requiere_diseno?: boolean | null
   fecha_corte?: string | null
   cumplimiento_corte?: string | null
   no_requiere_corte?: boolean | null
+}
+
+/** Etapas del flujo. Una orden está en exactamente una a la vez. */
+export type EtapaPipeline = "sin-programar" | "diseno" | "corte" | "maquila"
+
+const FASES_MAQUILA = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
+
+export const ETAPA_LABEL: Record<EtapaPipeline, string> = {
+  "sin-programar": "Sin Programar",
+  diseno: "Diseño",
+  corte: "Corte",
+  maquila: "Maquila",
+}
+
+/**
+ * Etapa en la que se encuentra la orden **ahora mismo**.
+ *
+ * Sigue el vocabulario que ve el usuario en Panel General:
+ *
+ * · "Reprogramar Diseño"  → está trabajando en diseño.
+ * · "Diseño Completado"   → el cliente ya aprobó, así que pasa a corte
+ *   aunque todavía no tenga semana de corte asignada.
+ *
+ * Por eso la aprobación del cliente (`fecha_aprobacion_diseno`) manda
+ * sobre el avance interno de diseño (`cumplimiento_diseno`): lo primero
+ * cierra la etapa de cara al cliente, lo segundo solo dice que la
+ * diseñadora terminó sus horas.
+ */
+export function etapaActual(row: LeadTimeRow): EtapaPipeline {
+  if (row.fase_actual && FASES_MAQUILA.has(row.fase_actual)) return "maquila"
+  if (row.cumplimiento_corte === "Si" || row.fecha_corte) return "corte"
+  if (row.fecha_aprobacion_diseno) return "corte"
+  if (row.cumplimiento_diseno || row.fecha_diseno) return "diseno"
+  return "sin-programar"
 }
 
 /**
@@ -140,9 +177,57 @@ export function evaluarEtapa(row: LeadTimeRow, etapa: Etapa): EvaluacionEtapa {
   }
 }
 
-/** ¿Esta etapa está atrasada y requiere atención? */
+/**
+ * Puntualidad de la orden **en la etapa donde está parada ahora**.
+ *
+ * Es la lectura que pidió operación: cada orden se cuenta una sola vez,
+ * en su etapa actual, y se compara contra la meta de esa etapa
+ * (Diseño: S1 − 21 días · Corte: S1 − 7 días).
+ *
+ * Se diferencia de `evaluarEtapa`, que califica una etapa concreta sin
+ * mirar dónde está la orden: ahí una orden que ni siquiera empezó diseño
+ * también salía evaluada —y reprobada— en corte.
+ */
+export function evaluarEtapaActual(row: LeadTimeRow): {
+  etapa: EtapaPipeline
+  estado: Puntualidad
+  limite: Date | null
+  diasDesfase: number | null
+} {
+  const etapa = etapaActual(row)
+
+  // Fuera de diseño/corte no hay meta previa a S1 que medir
+  if (etapa !== "diseno" && etapa !== "corte") {
+    return { etapa, estado: "na", limite: null, diasDesfase: null }
+  }
+
+  const ref = referenciaS1(row)
+  if (!ref) return { etapa, estado: "sin-referencia", limite: null, diasDesfase: null }
+
+  const limite = new Date(ref.fecha)
+  limite.setDate(limite.getDate() - LEAD_DIAS[etapa])
+
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+  const diasDesfase = diffDias(hoy, limite)
+
+  return {
+    estado: diasDesfase > 0 ? "a-destiempo" : "a-tiempo",
+    etapa,
+    limite,
+    diasDesfase,
+  }
+}
+
+/**
+ * ¿Esta etapa está atrasada y requiere atención?
+ *
+ * Solo cuenta si la orden **está** en esa etapa: una orden todavía en
+ * diseño no es "corte atrasado".
+ */
 export function etapaAtrasada(row: LeadTimeRow, etapa: Etapa): boolean {
-  return evaluarEtapa(row, etapa).estado === "a-destiempo"
+  if (etapaActual(row) !== etapa) return false
+  return evaluarEtapaActual(row).estado === "a-destiempo"
 }
 
 export const PUNTUALIDAD_LABEL: Record<Puntualidad, string> = {

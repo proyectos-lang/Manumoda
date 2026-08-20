@@ -37,7 +37,7 @@ import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { EntregadoBadge } from "@/components/facturar-button"
 import { LeadTimeBadge } from "@/components/lead-time-badge"
-import { etapaAtrasada, evaluarEtapa, PUNTUALIDAD_LABEL } from "@/lib/lead-times"
+import { etapaActual, etapaAtrasada, evaluarEtapa, PUNTUALIDAD_LABEL } from "@/lib/lead-times"
 import { RiesgoInfoDialog } from "@/components/riesgo-info-dialog"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
 import type { ModuleFilter } from "@/lib/module-filter"
@@ -152,7 +152,6 @@ function corteState(o: SeguimientoRow): StageState {
 // ── Kanban de Seguimiento (Sin Programar · Diseño · Corte · S1…S7) ───────────
 
 const KANBAN_COLS = ["Sin Programar", "Diseño", "Corte", "S1", "S2", "S3", "S4", "S5", "S6", "S7"] as const
-const MAQUILA_PHASES = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
 
 const KANBAN_COL_CLASS: Record<string, string> = {
   "Sin Programar": "border-slate-300 bg-slate-100 text-slate-600",
@@ -167,15 +166,20 @@ const KANBAN_COL_CLASS: Record<string, string> = {
   S7: "border-emerald-300 bg-emerald-50 text-emerald-700",
 }
 
-/** Columna del Kanban a la que pertenece una orden. */
+/**
+ * Columna del Kanban a la que pertenece una orden.
+ *
+ * Comparte la regla de `etapaActual` en lib/lead-times.ts, con el
+ * vocabulario que ve el usuario en Panel General: mientras el botón dice
+ * "Reprogramar Diseño" la orden está en Diseño; en cuanto dice "Diseño
+ * Completado" (el cliente aprobó) pasa a Corte, aunque todavía no tenga
+ * semana de corte asignada.
+ */
 function kanbanColumn(o: SeguimientoRow): string {
-  if (o.fase_actual && MAQUILA_PHASES.has(o.fase_actual)) return o.fase_actual
-  // Previa a S1: se ubica en la etapa más avanzada que ya tenga programada
-  const cs = corteState(o)
-  if (cs === "hecho" || cs === "programado") return "Corte"
-  const ds = disenoState(o)
-  if (ds === "hecho" || ds === "programado") return "Diseño"
-  // Ni diseño, ni corte, ni maquila: aún no se programa en nada
+  const etapa = etapaActual(o)
+  if (etapa === "maquila" && o.fase_actual) return o.fase_actual
+  if (etapa === "corte") return "Corte"
+  if (etapa === "diseno") return "Diseño"
   return "Sin Programar"
 }
 

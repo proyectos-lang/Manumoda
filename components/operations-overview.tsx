@@ -35,7 +35,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { FolioLink } from "@/components/folio-detail-drawer"
-import { LEAD_DIAS, evaluarEtapa, type LeadTimeRow } from "@/lib/lead-times"
+import { LEAD_DIAS, etapaActual, evaluarEtapaActual, type LeadTimeRow } from "@/lib/lead-times"
 import { PHASE_PACE, parseLocalDate } from "@/lib/risk"
 import {
   Dialog,
@@ -238,7 +238,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
         supabase
           .from("vw_seguimiento_integrado")
           .select(
-            "folio, fecha_s1, fecha_cancelacion, fecha_diseno, cumplimiento_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
+            "folio, fase_actual, fecha_s1, fecha_cancelacion, fecha_diseno, cumplimiento_diseno, fecha_aprobacion_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
           )
           .eq("idempresa", IDEMPRESA),
       ])
@@ -331,17 +331,26 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
     return [...previos, ...maquila]
   }, [leadRows, filteredRows])
 
-  /** Cumplimiento de los plazos previos a S1 (Diseño 21 d · Corte 7 d). */
+  /**
+   * Puntualidad de las órdenes que están **ahora mismo** en Diseño y en Corte.
+   *
+   * Cada orden se cuenta una sola vez, en la etapa donde está parada. Antes
+   * se evaluaba cada orden contra las dos etapas, así que una que ni siquiera
+   * había empezado diseño aparecía reprobando corte y hundía ese indicador.
+   *
+   * `sinFecha` son las que no tienen entrega ni S1: no hay contra qué medirlas,
+   * y se reportan aparte en vez de contarlas como incumplimiento.
+   */
   const leadStats = useMemo(() => {
-    const base = { aTiempo: 0, aDestiempo: 0, pendiente: 0 }
+    const base = { aTiempo: 0, aDestiempo: 0, sinFecha: 0 }
     const stats = { diseno: { ...base }, corte: { ...base } }
     for (const r of leadRows) {
-      for (const etapa of ["diseno", "corte"] as const) {
-        const { estado } = evaluarEtapa(r, etapa)
-        if (estado === "a-tiempo") stats[etapa].aTiempo++
-        else if (estado === "a-destiempo") stats[etapa].aDestiempo++
-        else if (estado === "pendiente") stats[etapa].pendiente++
-      }
+      const etapa = etapaActual(r)
+      if (etapa !== "diseno" && etapa !== "corte") continue
+      const { estado } = evaluarEtapaActual(r)
+      if (estado === "a-tiempo") stats[etapa].aTiempo++
+      else if (estado === "a-destiempo") stats[etapa].aDestiempo++
+      else stats[etapa].sinFecha++
     }
     const pct = (s: typeof base) => {
       const evaluadas = s.aTiempo + s.aDestiempo
@@ -635,11 +644,12 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-foreground">
-              Cumplimiento de plazos antes de maquila
+              Puntualidad de las órdenes en Diseño y Corte
             </h3>
             <p className="text-xs text-muted-foreground">
-              Diseño debe estar listo <strong>{LEAD_DIAS.diseno} días</strong> antes de S1 ·
-              Corte <strong>{LEAD_DIAS.corte} días</strong> antes
+              Cada orden cuenta en la etapa donde está hoy · Diseño debe estar listo{" "}
+              <strong>{LEAD_DIAS.diseno} días</strong> antes de S1 · Corte{" "}
+              <strong>{LEAD_DIAS.corte} días</strong> antes
             </p>
           </div>
           <LeadTimeInfo />
@@ -653,7 +663,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               pct={leadStats.pctDiseno}
               aTiempo={leadStats.diseno.aTiempo}
               aDestiempo={leadStats.diseno.aDestiempo}
-              pendiente={leadStats.diseno.pendiente}
+              sinFecha={leadStats.diseno.sinFecha}
               loading={loading}
             />
             <LeadKpi
@@ -662,7 +672,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               pct={leadStats.pctCorte}
               aTiempo={leadStats.corte.aTiempo}
               aDestiempo={leadStats.corte.aDestiempo}
-              pendiente={leadStats.corte.pendiente}
+              sinFecha={leadStats.corte.sinFecha}
               loading={loading}
             />
           </div>
@@ -1439,7 +1449,7 @@ function LeadKpi({
   pct,
   aTiempo,
   aDestiempo,
-  pendiente,
+  sinFecha,
   loading,
 }: {
   etapa: string
@@ -1447,7 +1457,8 @@ function LeadKpi({
   pct: number | null
   aTiempo: number
   aDestiempo: number
-  pendiente: number
+  /** En la etapa pero sin entrega ni S1: no hay contra qué medirlas. */
+  sinFecha: number
   loading: boolean
 }) {
   const tone =
@@ -1469,11 +1480,17 @@ function LeadKpi({
           <p className={cn("mt-2 text-3xl font-bold tabular-nums", tone)}>
             {pct === null ? "—" : `${pct}%`}
           </p>
-          <p className="text-[11px] text-muted-foreground">a tiempo</p>
+          <p className="text-[11px] text-muted-foreground">
+            de {aTiempo + aDestiempo} órdenes en esta etapa
+          </p>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
             <span className="text-emerald-600">{aTiempo} a tiempo</span>
             <span className="text-rose-600">{aDestiempo} a destiempo</span>
-            {pendiente > 0 && <span className="text-muted-foreground">{pendiente} en plazo</span>}
+            {sinFecha > 0 && (
+              <span className="text-muted-foreground" title="Sin fecha de entrega ni S1: no hay contra qué medirlas">
+                {sinFecha} sin fecha
+              </span>
+            )}
           </div>
         </>
       )}
