@@ -37,6 +37,15 @@ export type OrdenProduccion = {
   fecha_contra_muestra?: string | null
   /** Si tiene valor, la orden está entregada: no cuenta como vencida ni alerta. */
   fecha_facturacion?: string | null
+  // ── Dinero (script 027). Todos POR PIEZA, tal como vienen del Excel ──
+  /** Lo que se le paga al maquilero por pieza. */
+  costo_maquila?: number | null
+  /** Lo que cobra la lavandería por pieza; se paga a un tercero. */
+  costo_lavanderia?: number | null
+  /** Precio de venta por pieza. Base del cálculo de penalizaciones. */
+  precio_venta?: number | null
+  /** Precio al público por pieza. Informativo. */
+  precio_publico?: number | null
 }
 
 /**
@@ -149,6 +158,86 @@ export type VwBonosCorte = {
   porcentaje_productividad_directa: number | null
 }
 
+/**
+ * Vista `vw_pago_maquilas` (script 028): el libro mayor de cuentas por
+ * pagar a maquileros, una fila por folio.
+ *
+ * Los importes se derivan del costo vigente de la orden; lo único guardado
+ * son los pagos. PostgREST devuelve `numeric` como número en JS, pero
+ * conviene pasarlo por `Number()` antes de operar.
+ */
+export type VwPagoMaquilas = {
+  id: number
+  idempresa: number
+  folio: string
+  modelo: string | null
+  familia: string | null
+  cliente: string | null
+  /** Texto tal como vino del Excel. */
+  maquilero_nombre: string | null
+  idmaquilero: number | null
+  /** Nombre del catálogo, null si el texto no resolvió. */
+  maquilero_catalogo: string | null
+  /** Catálogo si resolvió, si no el texto. Es la clave de agrupación. */
+  beneficiario: string | null
+  fase_actual: string | null
+  fecha_cancelacion: string | null
+  fecha_facturacion: string | null
+  fecha_pago_lavanderia: string | null
+  piezas_orden: number | null
+  costo_maquila: number | null
+  costo_lavanderia: number | null
+  precio_venta: number | null
+  precio_publico: number | null
+  piezas_recibidas: number
+  piezas_penalizadas: number
+  ultima_recepcion: string | null
+  ultimo_pago: string | null
+  valor_maquila: number
+  valor_penalizaciones: number
+  valor_lavanderia: number
+  valor_a_pagar: number
+  valor_pagado: number
+  saldo: number
+  /** false = la orden no tiene costo capturado; no es lo mismo que $0. */
+  costo_capturado: boolean
+  lavanderia_pagada: boolean
+  /** Señal de captura errónea: se penalizó más de lo que se recibió. */
+  penalizadas_exceden_recibidas: boolean
+  estado_pago:
+    | "Sin costo"
+    | "Sin recepción"
+    | "Sobrepagado"
+    | "Saldado"
+    | "Parcial"
+    | "Pendiente"
+}
+
+/** Movimiento hijo de un folio en Pago Maquilas. */
+export type MaquilaRecepcion = {
+  id: number
+  idempresa: number
+  folio: string
+  fecha: string
+  piezas: number
+  comentarios: string | null
+  capturado_por: string | null
+}
+
+export type MaquilaPenalizacion = MaquilaRecepcion & { motivo: string }
+
+export type MaquilaPago = {
+  id: number
+  idempresa: number
+  folio: string
+  fecha: string
+  monto: number
+  referencia: string | null
+  costo_maquila_aplicado: number | null
+  comentarios: string | null
+  capturado_por: string | null
+}
+
 export type SessionUser = {
   id: number
   nombre: string
@@ -175,7 +264,12 @@ export type ParsedRow = Pick<
   | "corte_origen"
   | "fase_actual"
   | "fecha_aprobacion_diseno"
+  | "costo_maquila"
+  | "costo_lavanderia"
+  | "precio_venta"
+  | "precio_publico"
 > & {
-  /** Raw maquilero name from the Excel; resolved to idmaquilero on upload. */
+  /** Nombre del maquilero tal como viene del Excel; el uploader lo escribe
+   *  en la columna de texto `maquilero`. */
   maquilero_nombre: string | null
 }

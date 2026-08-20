@@ -42,6 +42,17 @@ type UpdateDiff = {
   cambios: { campo: string; antes: string; despues: string }[]
 }
 
+/** Columnas de dinero del Excel, con su etiqueta para el diff. Todas por pieza. */
+const COLUMNAS_DINERO = [
+  ["costo_maquila", "costo maquila"],
+  ["costo_lavanderia", "costo lavandería"],
+  ["precio_venta", "precio venta"],
+  ["precio_publico", "precio público"],
+] as const satisfies readonly (readonly [keyof ParsedRow, string])[]
+
+const fmtMoneda = (n: number) =>
+  new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(n)
+
 /** Resultado del análisis previo (dry-run) — nada se ha escrito aún. */
 type PendingUpload = {
   fileName: string
@@ -112,6 +123,10 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             cliente: string | null
             modelo: string | null
             fecha_cancelacion: string | null
+            costo_maquila: number | null
+            costo_lavanderia: number | null
+            precio_venta: number | null
+            precio_publico: number | null
           }
         >()
         const FOLIO_BATCH = 500
@@ -120,7 +135,9 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           const slice = allFolios.slice(i, i + FOLIO_BATCH)
           const { data, error } = await supabase
             .from("ordenes_produccion")
-            .select("id, folio, maquilero, cliente, modelo, fecha_cancelacion")
+            .select(
+              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, costo_maquila, costo_lavanderia, precio_venta, precio_publico",
+            )
             .eq("idempresa", IDEMPRESA)
             .in("folio", slice)
 
@@ -136,6 +153,10 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             cliente: string | null
             modelo: string | null
             fecha_cancelacion: string | null
+            costo_maquila: number | null
+            costo_lavanderia: number | null
+            precio_venta: number | null
+            precio_publico: number | null
           }[]) {
             if (row?.folio) existingMap.set(row.folio, row)
           }
@@ -185,6 +206,23 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
               campo: "fecha entrega",
               antes: existing.fecha_cancelacion ?? "—",
               despues: r.fecha_cancelacion,
+            })
+          }
+
+          // Dinero: el archivo manda. Un costo actualizado mueve el valor a
+          // pagar del folio en Pago Maquilas, incluso si ya tiene pagos —
+          // decisión explícita del cliente. Por eso cada cambio se lista en
+          // la previsualización antes de aplicarse.
+          for (const [campo, etiqueta] of COLUMNAS_DINERO) {
+            const nuevo = r[campo]
+            if (nuevo == null) continue
+            const actual = existing[campo]
+            if (actual != null && Math.abs(Number(actual) - nuevo) < 0.00005) continue
+            payload[campo] = nuevo
+            cambios.push({
+              campo: etiqueta,
+              antes: actual != null ? fmtMoneda(Number(actual)) : "—",
+              despues: fmtMoneda(nuevo),
             })
           }
 

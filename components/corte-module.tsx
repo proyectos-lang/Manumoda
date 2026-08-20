@@ -24,6 +24,7 @@ import { esProximoAVencer } from "@/lib/risk"
 import { useReadOnly } from "@/lib/auth-context"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { cn } from "@/lib/utils"
+import { fmtCurrency } from "@/lib/format"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -81,11 +82,6 @@ const CUMPLIMIENTO_STYLES: Record<string, string> = {
 function fmtHrs(n: number | null | undefined) {
   if (n == null) return "—"
   return n.toFixed(2)
-}
-
-function fmtCurrency(n: number | null | undefined) {
-  if (n == null) return "—"
-  return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(n)
 }
 
 function fmtPct(n: number | null | undefined) {

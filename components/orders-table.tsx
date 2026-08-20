@@ -208,7 +208,15 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
     setDeleting(false)
     if (error) {
       console.error("delete folio error:", error)
-      toast.error("No se pudo eliminar el folio", { description: error.message })
+      // 23503: hay recepciones, penalizaciones o pagos colgando del folio
+      // (FK con ON DELETE RESTRICT, script 028). Borrarlo dejaría dinero
+      // registrado sin orden a la que pertenecer.
+      const esReferenciado = error.code === "23503"
+      toast.error("No se pudo eliminar el folio", {
+        description: esReferenciado
+          ? "Tiene movimientos de Pago Maquilas registrados. Elimínalos primero desde ese módulo."
+          : error.message,
+      })
     } else {
       setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id))
       toast.success(`Folio ${deleteTarget.folio} eliminado.`)

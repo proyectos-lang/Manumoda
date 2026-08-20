@@ -64,6 +64,45 @@ function toInt(value: unknown): number | null {
   return Number.isFinite(n) ? Math.trunc(n) : null
 }
 
+/**
+ * Número con decimales, para columnas de dinero.
+ *
+ * NO reutilizar `toInt` aquí: su `replace(/[^\d-]/g,"")` borra el separador
+ * decimal, así que "12.50" se convierte en 1250 y 12.5 se trunca a 12 —
+ * errores de 100× que no dejan rastro.
+ *
+ * Acepta los formatos que suelta Excel: número nativo, "1234.56",
+ * "1,234.56" (coma de millares) y "1.234,56" (formato europeo). Se
+ * distinguen por cuál separador aparece de último.
+ */
+function toDecimal(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+
+  let s = String(value).trim()
+  if (s === "") return null
+
+  // Quitar símbolo de moneda y espacios (incluido el no separable)
+  s = s.replace(/[$\s ]/g, "")
+
+  const ultimaComa = s.lastIndexOf(",")
+  const ultimoPunto = s.lastIndexOf(".")
+
+  if (ultimaComa > -1 && ultimoPunto > -1) {
+    // El separador decimal es el que aparece de último
+    s = ultimaComa > ultimoPunto
+      ? s.replace(/\./g, "").replace(",", ".")
+      : s.replace(/,/g, "")
+  } else if (ultimaComa > -1) {
+    // Solo comas: decimal si deja 1-2 dígitos detrás ("12,50"); si no, millares
+    s = /,\d{1,2}$/.test(s) ? s.replace(",", ".") : s.replace(/,/g, "")
+  }
+
+  if (!/^-?\d*\.?\d+$/.test(s)) return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : null
+}
+
 function toText(value: unknown): string | null {
   if (value === null || value === undefined) return null
   const s = String(value).trim()
@@ -135,6 +174,22 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
     if (seDescarto(normalized["PIEZAS"], piezas))
       issues.push({ fila, folio, problema: `PIEZAS no numérico: "${normalized["PIEZAS"]}"` })
 
+    // Dinero — todo por pieza. Un costo mal leído se propaga a los pagos,
+    // así que cada uno avisa si traía contenido y no se pudo interpretar.
+    const MONETARIAS = [
+      ["COSTO_MAQUILA", "costo_maquila"],
+      ["COSTO_LAVANDERIA", "costo_lavanderia"],
+      ["PRECIO_VENTA", "precio_venta"],
+      ["PRECIO_PUBLICO", "precio_publico"],
+    ] as const
+    const dinero: Record<string, number | null> = {}
+    for (const [col, campo] of MONETARIAS) {
+      const v = toDecimal(normalized[col])
+      dinero[campo] = v
+      if (seDescarto(normalized[col], v))
+        issues.push({ fila, folio, problema: `${col} no numérico: "${normalized[col]}"` })
+    }
+
     const row: ParsedRow = {
       idempresa: 1,
       folio,
@@ -151,6 +206,10 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       fase_actual: "Por Programar",
       fecha_aprobacion_diseno,
       maquilero_nombre: toText(normalized["MAQUILERO"]),
+      costo_maquila: dinero.costo_maquila,
+      costo_lavanderia: dinero.costo_lavanderia,
+      precio_venta: dinero.precio_venta,
+      precio_publico: dinero.precio_publico,
     }
 
     // Dedupe intra-archivo: se conserva la ÚLTIMA aparición de cada folio

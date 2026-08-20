@@ -41,6 +41,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fmtCurrencyRedondo as fmtCurrency } from "@/lib/format"
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -91,15 +92,6 @@ function toISOOrNull(d: Date | null): string | null {
 function fmtDate(iso: string | null) {
   if (!iso) return "—"
   try { return format(parseISO(iso), "dd/MM/yyyy", { locale: es }) } catch { return iso }
-}
-
-function fmtCurrency(n: number | null) {
-  if (n == null) return "—"
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 0,
-  }).format(n)
 }
 
 // ── DatePicker (tema claro) ───────────────────────────────────────────────────

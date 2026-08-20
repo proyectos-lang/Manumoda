@@ -90,6 +90,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { esProximoAVencer } from "@/lib/risk"
 import { useReadOnly } from "@/lib/auth-context"
+import { fmtCurrencyRedondo as fmtCurrency } from "@/lib/format"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
@@ -3293,16 +3294,6 @@ function HojaImpresionTab({ configMissing }: { configMissing: boolean }) {
       )}
     </div>
   )
-}
-
-function fmtCurrency(n: number | null | undefined): string {
-  if (n == null) return "—"
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(n)
 }
 
 /** Chip removible de filtro activo. */
