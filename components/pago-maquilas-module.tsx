@@ -1,17 +1,18 @@
 "use client"
 
 /**
- * Pago Maquilas — cuentas por pagar a los maquileros.
+ * Pago Maquilas — cuentas por pagar al maquilero y a los servicios externos.
  *
- * El dinero se deriva, no se guarda: el costo unitario vive en la orden y
- * el total sale de multiplicarlo por las piezas recibidas (vista
- * `vw_pago_maquilas`, script 028). Lo único guardado son los pagos.
+ * FÓRMULA (script 032):
  *
- * Las cuatro pestañas responden a cuatro preguntas distintas:
- *   · Cuentas    — ¿cómo va cada folio?
- *   · Recepciones— ¿qué llegó hoy?           (la captura del día a día)
- *   · Maquileros — ¿a quién le debo y cuánto? (para decidir a quién pagar)
- *   · Lavandería — otro acreedor, otra decisión.
+ *   precio final   = piezas recibidas × costo unitario
+ *   − no entregadas × precio de venta
+ *   − demora        = precio final × 1.5% por semana de atraso
+ *   ─────────────────────────────────────────────────────────
+ *   = valor a pagar
+ *
+ * El dinero se deriva, no se guarda: solo los pagos son cifras guardadas.
+ * Así un costo corregido en el Excel se refleja sin reescribir históricos.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react"
@@ -20,14 +21,17 @@ import { es } from "date-fns/locale"
 import {
   AlertTriangle,
   Banknote,
+  Clock,
   Download,
+  History,
   Loader2,
   PackageCheck,
+  Pencil,
   RefreshCw,
   Search,
   Settings2,
   ShieldAlert,
-  Shirt,
+  Sparkles,
   Trash2,
   TriangleAlert,
   Wallet,
@@ -40,12 +44,16 @@ import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { useAuth, useReadOnly } from "@/lib/auth-context"
 import { fmtCurrency } from "@/lib/format"
 import { parseLocalDate } from "@/lib/risk"
-import type {
-  LavanderiaPago,
-  MaquilaPago,
-  MaquilaPenalizacion,
-  MaquilaRecepcion,
-  VwPagoMaquilas,
+import {
+  SERVICIOS_EXTERNOS,
+  type HistorialPago,
+  type MaquilaPago,
+  type MaquilaPenalizacion,
+  type MaquilaRecepcion,
+  type ServicioExterno,
+  type ServicioPago,
+  type VwPagoMaquilas,
+  type VwServicioPago,
 } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -84,8 +92,13 @@ import {
 /** Tolerancia de centavo: nunca comparar saldos contra 0 exacto. */
 const CENTAVO = 0.005
 
-const ESTADO_STYLE: Record<VwPagoMaquilas["estado_pago"], string> = {
+/** Descuento por cada semana completa de atraso sobre la fecha de entrega. */
+const DEMORA_SEMANAL_PCT = 1.5
+
+const ESTADO_STYLE: Record<string, string> = {
+  Anticipo: "border-indigo-300 bg-indigo-50 text-indigo-700",
   "Sin costo": "border-amber-300 bg-amber-50 text-amber-700",
+  "Sin valor": "border-amber-300 bg-amber-50 text-amber-700",
   "Sin recepción": "border-slate-200 bg-slate-100 text-slate-600",
   Sobrepagado: "border-rose-300 bg-rose-50 text-rose-700",
   Saldado: "border-emerald-300 bg-emerald-50 text-emerald-700",
@@ -102,22 +115,50 @@ function fmtFecha(iso: string | null | undefined) {
 
 const num = (v: unknown) => Number(v ?? 0)
 
+function EstadoPill({ estado }: { estado: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
+        ESTADO_STYLE[estado] ?? "border-slate-200 bg-slate-100 text-slate-600",
+      )}
+    >
+      {estado}
+    </span>
+  )
+}
+
 /**
- * Importe de la etapa. Muestra "Sin costo" en vez de "$0.00" cuando la orden
- * no tiene costo capturado: un cero y un dato faltante no son lo mismo, y
- * confundirlos hace que un maquilero al que se le debe parezca saldado.
+ * Valor por pieza tal como viene del Excel.
+ *
+ * Distingue el dato faltante del cero: un folio sin costo capturado no es un
+ * folio que valga cero. Si se pintaran igual, un maquilero al que se le debe
+ * parecería saldado.
  */
-function Importe({ valor, capturado }: { valor: number; capturado: boolean }) {
-  if (!capturado) {
-    return <span className="text-xs font-medium text-amber-600">Sin costo</span>
+function ValorUnitario({ valor }: { valor: number | null }) {
+  if (valor == null) {
+    return (
+      <span
+        className="inline-flex whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+        title="La columna correspondiente del Excel viene vacía para este folio"
+      >
+        Sin valor
+      </span>
+    )
   }
-  return <span className="tabular-nums">{fmtCurrency(valor)}</span>
+  return (
+    <span className="whitespace-nowrap tabular-nums font-medium">
+      {fmtCurrency(Number(valor))}
+      <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">/pz</span>
+    </span>
+  )
 }
 
 // ─── Módulo ──────────────────────────────────────────────────────────────────
 
 export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }) {
   const [rows, setRows] = useState<VwPagoMaquilas[]>([])
+  const [servicios, setServicios] = useState<VwServicioPago[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -128,26 +169,29 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
     setLoading(true)
     setError(null)
 
-    const { data, error: e } = await supabase
-      .from("vw_pago_maquilas")
-      .select("*")
-      .eq("idempresa", IDEMPRESA)
-      .not("maquilero_nombre", "is", null)
-      .order("folio")
+    const [maq, serv] = await Promise.all([
+      supabase
+        .from("vw_pago_maquilas")
+        .select("*")
+        .eq("idempresa", IDEMPRESA)
+        .not("maquilero_nombre", "is", null)
+        .order("folio"),
+      supabase.from("vw_servicios_pago").select("*").eq("idempresa", IDEMPRESA).order("folio"),
+    ])
 
     setLoading(false)
-    if (e) {
-      setError(e.message)
+    if (maq.error) {
+      setError(maq.error.message)
       return
     }
-    setRows((data as VwPagoMaquilas[]) ?? [])
+    setRows((maq.data as VwPagoMaquilas[]) ?? [])
+    if (!serv.error) setServicios((serv.data as VwServicioPago[]) ?? [])
   }, [configMissing])
 
   useEffect(() => {
     fetchRows()
   }, [fetchRows])
 
-  /** Maquileros de las órdenes que no están en el catálogo. */
   const huerfanos = useMemo(
     () =>
       Array.from(
@@ -169,7 +213,7 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
         <div>
           <h2 className="text-base font-semibold text-foreground">Pago Maquilas</h2>
           <p className="text-xs text-muted-foreground">
-            Recepciones, penalizaciones y pagos por folio ·{" "}
+            Recepciones, no entregadas, demora y pagos ·{" "}
             <code className="font-mono">vw_pago_maquilas</code>
           </p>
         </div>
@@ -192,9 +236,9 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
                 : `${huerfanos.length} maquileros de las órdenes no están en el catálogo`}
               :
             </span>{" "}
-            {huerfanos.join(", ")}. Sus folios se agrupan por el nombre del archivo, así
-            que una variante de escritura los partiría en dos. Agrégalos en Configuración
-            → Maquileros.
+            {huerfanos.join(", ")}. Sus folios se agrupan por el nombre del archivo, así que
+            una variante de escritura los partiría en dos. Agrégalos en Configuración →
+            Maquileros.
           </p>
         </div>
       )}
@@ -204,38 +248,54 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
           <TabsTrigger value="cuentas">Cuentas por Pagar</TabsTrigger>
           <TabsTrigger value="recepciones">Recepciones</TabsTrigger>
           <TabsTrigger value="maquileros">Por Maquilero</TabsTrigger>
-          <TabsTrigger value="lavanderia">Lavandería</TabsTrigger>
+          <TabsTrigger value="servicios">Servicios</TabsTrigger>
+          <TabsTrigger value="historial">Historial de Pagos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="cuentas" className="mt-5">
-          <CuentasTab rows={rows} loading={loading} onRefresh={fetchRows} />
+          <CuentasTab
+            rows={rows}
+            servicios={servicios}
+            loading={loading}
+            onRefresh={fetchRows}
+          />
         </TabsContent>
 
         <TabsContent value="recepciones" className="mt-5">
-          <RecepcionesTab rows={rows} loading={loading} onRefresh={fetchRows} />
+          <RecepcionesTab
+            rows={rows}
+            servicios={servicios}
+            loading={loading}
+            onRefresh={fetchRows}
+          />
         </TabsContent>
 
         <TabsContent value="maquileros" className="mt-5">
           <MaquilerosTab rows={rows} loading={loading} />
         </TabsContent>
 
-        <TabsContent value="lavanderia" className="mt-5">
-          <LavanderiaTab rows={rows} loading={loading} onRefresh={fetchRows} />
+        <TabsContent value="servicios" className="mt-5">
+          <ServiciosTab servicios={servicios} loading={loading} onRefresh={fetchRows} />
+        </TabsContent>
+
+        <TabsContent value="historial" className="mt-5">
+          <HistorialTab configMissing={configMissing} />
         </TabsContent>
       </Tabs>
     </section>
   )
 }
 
-// ─── Pestaña 1: Cuentas por Pagar ────────────────────────────────────────────
-
 type TabProps = {
   rows: VwPagoMaquilas[]
+  servicios: VwServicioPago[]
   loading: boolean
   onRefresh: () => void
 }
 
-function CuentasTab({ rows, loading, onRefresh }: TabProps) {
+// ─── Pestaña 1: Cuentas por Pagar ────────────────────────────────────────────
+
+function CuentasTab({ rows, servicios, loading, onRefresh }: TabProps) {
   const readOnly = useReadOnly()
   const [search, setSearch] = useState("")
   const [filtroMaquilero, setFiltroMaquilero] = useState("__all__")
@@ -254,8 +314,8 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
       if (filtroMaquilero !== "__all__" && r.beneficiario !== filtroMaquilero) return false
       if (filtroEstado !== "__all__" && r.estado_pago !== filtroEstado) return false
       if (q) {
-        const heno = `${r.folio} ${r.modelo ?? ""} ${r.cliente ?? ""}`.toLowerCase()
-        if (!heno.includes(q)) return false
+        const heno = `${r.folio} ${r.modelo ?? ""} ${r.cliente ?? ""} ${r.familia ?? ""}`
+        if (!heno.toLowerCase().includes(q)) return false
       }
       return true
     })
@@ -264,8 +324,8 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
   const kpis = useMemo(() => {
     let aPagar = 0
     let pagado = 0
+    let demora = 0
     let sinCosto = 0
-    let sobrepagos = 0
     for (const r of filtradas) {
       if (!r.costo_capturado) {
         sinCosto++
@@ -273,9 +333,9 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
       }
       aPagar += num(r.valor_a_pagar)
       pagado += num(r.valor_pagado)
-      if (num(r.saldo) < -CENTAVO) sobrepagos += Math.abs(num(r.saldo))
+      demora += num(r.valor_demora)
     }
-    return { aPagar, pagado, saldo: aPagar - pagado, sinCosto, sobrepagos }
+    return { aPagar, pagado, saldo: aPagar - pagado, demora, sinCosto }
   }, [filtradas])
 
   const exportar = () => {
@@ -285,15 +345,18 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
     }
     const datos = filtradas.map((r) => ({
       Folio: r.folio,
+      Familia: r.familia ?? "",
       Maquilero: r.beneficiario ?? "",
       Modelo: r.modelo ?? "",
       Cliente: r.cliente ?? "",
-      "Piezas orden": r.piezas_orden ?? "",
+      "Piezas cortadas": r.piezas_cortadas,
       Recibidas: r.piezas_recibidas,
-      Penalizadas: r.piezas_penalizadas,
-      "Costo maquila": r.costo_maquila ?? "",
-      "Valor maquila": num(r.valor_maquila),
-      Penalizaciones: num(r.valor_penalizaciones),
+      "Costo unitario": r.costo_maquila ?? "",
+      "Precio final": num(r.precio_final),
+      "Pzs no entregadas": r.piezas_no_entregadas,
+      "Desc. no entregadas": num(r.valor_no_entregadas),
+      "Semanas demora": r.semanas_demora,
+      "Desc. demora": num(r.valor_demora),
       "Valor a pagar": num(r.valor_a_pagar),
       Pagado: num(r.valor_pagado),
       Saldo: num(r.saldo),
@@ -337,13 +400,14 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
           valueColor={kpis.saldo > CENTAVO ? "text-sky-700" : "text-foreground"}
         />
         <KpiCard
-          label="Sobrepagos"
-          value={kpis.sobrepagos}
+          label="Descuento por demora"
+          value={kpis.demora}
           format={fmtCurrency}
-          icon={<TriangleAlert className="size-3.5" />}
+          icon={<Clock className="size-3.5" />}
           iconBg="bg-rose-100 ring-rose-200"
           iconColor="text-rose-600"
-          valueColor={kpis.sobrepagos > CENTAVO ? "text-rose-600" : "text-foreground"}
+          valueColor={kpis.demora > CENTAVO ? "text-rose-600" : "text-foreground"}
+          hint={`${DEMORA_SEMANAL_PCT}% por semana de atraso`}
         />
         <KpiCard
           label="Folios sin costo"
@@ -352,7 +416,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
           iconBg="bg-amber-100 ring-amber-200"
           iconColor="text-amber-600"
           valueColor={kpis.sinCosto > 0 ? "text-amber-600" : "text-foreground"}
-          hint="No se puede pagar sin costo capturado"
+          hint="No se puede pagar sin costo unitario"
         />
       </div>
 
@@ -362,8 +426,8 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Folio, modelo o cliente…"
-            className="h-9 w-60 pl-8"
+            placeholder="Folio, modelo, familia o cliente…"
+            className="h-9 w-64 pl-8"
           />
           {search && (
             <button
@@ -396,11 +460,13 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">Todos los estados</SelectItem>
-            {Object.keys(ESTADO_STYLE).map((e) => (
-              <SelectItem key={e} value={e}>
-                {e}
-              </SelectItem>
-            ))}
+            {["Anticipo", "Sin costo", "Sin recepción", "Pendiente", "Parcial", "Saldado", "Sobrepagado"].map(
+              (e) => (
+                <SelectItem key={e} value={e}>
+                  {e}
+                </SelectItem>
+              ),
+            )}
           </SelectContent>
         </Select>
 
@@ -440,12 +506,14 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               <TableHead className="font-semibold">Folio</TableHead>
+              <TableHead className="font-semibold">Familia</TableHead>
               <TableHead className="font-semibold">Maquilero</TableHead>
-              <TableHead className="font-semibold text-right">Orden</TableHead>
+              <TableHead className="font-semibold text-right">Piezas cortadas</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
-              <TableHead className="font-semibold text-right">Valor Maquila</TableHead>
-              <TableHead className="font-semibold text-right">Valor Lavandería</TableHead>
-              <TableHead className="font-semibold text-right">Penalizadas</TableHead>
+              <TableHead className="font-semibold text-right">Costo unitario</TableHead>
+              <TableHead className="font-semibold text-right">Costo lavandería</TableHead>
+              <TableHead className="font-semibold text-right">Pzs no entregadas</TableHead>
+              <TableHead className="font-semibold text-right">Demora</TableHead>
               <TableHead className="font-semibold text-right">Valor a pagar</TableHead>
               <TableHead className="font-semibold text-right">Pagado</TableHead>
               <TableHead className="font-semibold text-right">Saldo</TableHead>
@@ -457,7 +525,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 12 }).map((__, j) => (
+                  {Array.from({ length: 14 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -466,7 +534,7 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
               ))
             ) : filtradas.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={14} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0
                     ? "Sin órdenes con maquilero asignado."
                     : "Sin folios para los filtros aplicados."}
@@ -488,7 +556,8 @@ function CuentasTab({ rows, loading, onRefresh }: TabProps) {
 
       {gestionando && (
         <GestionFolioDialog
-          row={filtradas.find((r) => r.folio === gestionando) ?? rows.find((r) => r.folio === gestionando)!}
+          row={rows.find((r) => r.folio === gestionando)!}
+          servicios={servicios.filter((s) => s.folio === gestionando)}
           onClose={() => setGestionando(null)}
           onSaved={onRefresh}
           readOnly={readOnly}
@@ -518,44 +587,71 @@ function FolioRow({
         <FolioLink folio={row.folio} className="text-xs" />
         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{row.modelo ?? "—"}</p>
       </TableCell>
+      <TableCell className="text-sm text-muted-foreground">{row.familia ?? "—"}</TableCell>
       <TableCell className="text-sm">{row.beneficiario ?? "—"}</TableCell>
       <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
-        {row.piezas_orden?.toLocaleString("es-MX") ?? "—"}
+        {row.piezas_cortadas > 0 ? (
+          row.piezas_cortadas.toLocaleString("es-MX")
+        ) : (
+          <span
+            className="text-muted-foreground/40"
+            title="No hay registros de corte para este folio"
+          >
+            —
+          </span>
+        )}
       </TableCell>
       <TableCell className="text-right tabular-nums text-sm">
         {row.piezas_recibidas.toLocaleString("es-MX")}
       </TableCell>
-
-      {/* Valores por pieza tal como vienen del Excel. Poder verlos de un
-          vistazo es la pregunta que el usuario necesita responder. */}
       <TableCell className="text-right text-sm">
         <ValorUnitario valor={row.costo_maquila} />
       </TableCell>
       <TableCell className="text-right text-sm">
-        <ValorUnitario valor={row.costo_lavanderia} etiquetaVacia="Sin valor" />
+        <ValorUnitario valor={row.costo_lavanderia} />
       </TableCell>
-
       <TableCell className="text-right tabular-nums text-sm">
-        {row.piezas_penalizadas > 0 ? (
+        {row.piezas_no_entregadas > 0 ? (
           <span
             className={cn(
-              row.penalizadas_exceden_recibidas ? "font-semibold text-rose-600" : "text-rose-600",
+              row.no_entregadas_exceden_recibidas
+                ? "font-semibold text-rose-600"
+                : "text-rose-600",
             )}
             title={
-              row.penalizadas_exceden_recibidas
-                ? "Se penalizaron más piezas de las recibidas — probable error de captura"
-                : undefined
+              row.no_entregadas_exceden_recibidas
+                ? "Hay más piezas no entregadas que recibidas — probable error de captura"
+                : `Descuenta ${fmtCurrency(num(row.valor_no_entregadas))}`
             }
           >
-            {row.piezas_penalizadas.toLocaleString("es-MX")}
-            {row.penalizadas_exceden_recibidas && " ⚠"}
+            {row.piezas_no_entregadas.toLocaleString("es-MX")}
+            {row.no_entregadas_exceden_recibidas && " ⚠"}
+          </span>
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right text-sm">
+        {row.semanas_demora > 0 ? (
+          <span
+            className="whitespace-nowrap text-rose-600"
+            title={`${row.semanas_demora} semanas × ${DEMORA_SEMANAL_PCT}% = ${fmtCurrency(num(row.valor_demora))}`}
+          >
+            <span className="tabular-nums font-medium">−{num(row.demora_pct).toFixed(1)}%</span>
+            <span className="ml-1 text-[10px] text-muted-foreground">
+              {row.semanas_demora} sem
+            </span>
           </span>
         ) : (
           <span className="text-muted-foreground/50">—</span>
         )}
       </TableCell>
       <TableCell className="text-right text-sm font-medium">
-        <Importe valor={num(row.valor_a_pagar)} capturado={row.costo_capturado} />
+        {row.costo_capturado ? (
+          <span className="tabular-nums">{fmtCurrency(num(row.valor_a_pagar))}</span>
+        ) : (
+          <span className="text-xs font-medium text-amber-600">Sin costo</span>
+        )}
       </TableCell>
       <TableCell className="text-right tabular-nums text-sm text-emerald-700">
         {num(row.valor_pagado) > 0 ? (
@@ -573,14 +669,7 @@ function FolioRow({
         {row.costo_capturado ? fmtCurrency(saldo) : "—"}
       </TableCell>
       <TableCell>
-        <span
-          className={cn(
-            "inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
-            ESTADO_STYLE[row.estado_pago],
-          )}
-        >
-          {row.estado_pago}
-        </span>
+        <EstadoPill estado={row.estado_pago} />
       </TableCell>
       <TableCell className="text-right">
         <Button size="sm" variant="outline" onClick={onGestionar} className="gap-1.5">
@@ -592,43 +681,11 @@ function FolioRow({
   )
 }
 
-/**
- * Valor por pieza tal como viene del Excel (Costo Maquila / Costo Lavandería).
- *
- * Distingue el dato faltante del cero: un folio sin valor capturado no es un
- * folio que valga cero. Si se pintaran igual, un maquilero al que se le debe
- * parecería saldado.
- */
-function ValorUnitario({
-  valor,
-  etiquetaVacia = "Sin valor",
-}: {
-  valor: number | null
-  etiquetaVacia?: string
-}) {
-  if (valor == null) {
-    return (
-      <span
-        className="inline-flex whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-        title="La columna correspondiente del Excel viene vacía para este folio"
-      >
-        {etiquetaVacia}
-      </span>
-    )
-  }
-  return (
-    <span className="whitespace-nowrap tabular-nums font-medium">
-      {fmtCurrency(Number(valor))}
-      <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">/pz</span>
-    </span>
-  )
-}
-
 // ─── Modal de gestión del folio ──────────────────────────────────────────────
 
 /**
- * Todo lo que se puede hacer con un folio, en un solo lugar: ver sus costos
- * unitarios, registrar recepciones, penalizaciones y pagos.
+ * Todo lo del folio en un solo lugar: el desglose del valor a pagar, el
+ * historial de entregas y de pagos, y los servicios externos.
  *
  * Los formularios de alta van EN LÍNEA, no en diálogos anidados: abrir un
  * modal dentro de otro pelea con el foco y obliga a cerrar dos cosas para
@@ -636,18 +693,20 @@ function ValorUnitario({
  */
 function GestionFolioDialog({
   row,
+  servicios,
   onClose,
   onSaved,
   readOnly,
 }: {
   row: VwPagoMaquilas
+  servicios: VwServicioPago[]
   onClose: () => void
   onSaved: () => void
   readOnly: boolean
 }) {
   const { user } = useAuth()
   const [recepciones, setRecepciones] = useState<MaquilaRecepcion[]>([])
-  const [penalizaciones, setPenalizaciones] = useState<MaquilaPenalizacion[]>([])
+  const [noEntregadas, setNoEntregadas] = useState<MaquilaPenalizacion[]>([])
   const [pagos, setPagos] = useState<MaquilaPago[]>([])
   const [cargando, setCargando] = useState(true)
 
@@ -663,7 +722,7 @@ function GestionFolioDialog({
       q("maquila_pagos"),
     ])
     setRecepciones((r.data as MaquilaRecepcion[]) ?? [])
-    setPenalizaciones((p.data as MaquilaPenalizacion[]) ?? [])
+    setNoEntregadas((p.data as MaquilaPenalizacion[]) ?? [])
     setPagos((g.data as MaquilaPago[]) ?? [])
     setCargando(false)
   }, [row.folio])
@@ -680,9 +739,12 @@ function GestionFolioDialog({
   const guardar = async (tabla: string, payload: Record<string, unknown>, etiqueta: string) => {
     const supabase = getSupabase()
     if (!supabase) return false
-    const { error } = await supabase
-      .from(tabla)
-      .insert({ idempresa: IDEMPRESA, folio: row.folio, capturado_por: user?.username ?? null, ...payload })
+    const { error } = await supabase.from(tabla).insert({
+      idempresa: IDEMPRESA,
+      folio: row.folio,
+      capturado_por: user?.username ?? null,
+      ...payload,
+    })
     if (error) {
       toast.error(`No se pudo registrar ${etiqueta}`, { description: error.message })
       return false
@@ -705,72 +767,49 @@ function GestionFolioDialog({
     refrescar()
   }
 
+  /** El costo unitario se puede corregir desde aquí. */
+  const guardarCosto = async (valor: number | null) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ costo_maquila: valor })
+      .eq("folio", row.folio)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudo cambiar el costo", { description: error.message })
+      return
+    }
+    toast.success("Costo de maquila actualizado")
+    refrescar()
+  }
+
   const saldoPendiente = Math.max(0, num(row.saldo))
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings2 className="size-4 text-emerald-600" />
             Folio {row.folio}
+            <EstadoPill estado={row.estado_pago} />
           </DialogTitle>
           <DialogDescription>
-            {row.beneficiario ?? "Sin maquilero"} · {row.modelo ?? "sin modelo"} ·{" "}
-            {row.cliente ?? "sin cliente"}
+            {row.beneficiario ?? "Sin maquilero"} · {row.familia ?? "sin familia"} ·{" "}
+            {row.modelo ?? "sin modelo"} · {row.cliente ?? "sin cliente"}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Costos unitarios del folio, tal como vinieron del Excel */}
-        <div className="grid grid-cols-2 gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:grid-cols-4">
-          <DatoUnitario label="Valor maquila" valor={row.costo_maquila} destacado />
-          <DatoUnitario label="Valor lavandería" valor={row.costo_lavanderia} />
-          <DatoUnitario label="Precio venta" valor={row.precio_venta} />
-          <DatoUnitario label="Precio público" valor={row.precio_publico} />
-        </div>
-
-        {!row.costo_capturado && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/80 px-3 py-2">
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
-            <p className="text-[11px] text-amber-900">
-              Sin <span className="font-semibold">costo de maquila</span>, la columna{" "}
-              <code className="font-mono">Costo Maquila</code> del Excel viene vacía para este
-              folio. Se pueden registrar recepciones, pero no pagos: no hay contra qué calcularlos.
-            </p>
-          </div>
-        )}
-
-        {/* Resumen del dinero */}
-        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3 sm:grid-cols-5">
-          <Resumen
-            label="Recibidas"
-            valor={`${row.piezas_recibidas.toLocaleString("es-MX")} / ${
-              row.piezas_orden?.toLocaleString("es-MX") ?? "—"
-            }`}
-          />
-          <Resumen
-            label="Lavandería"
-            valor={
-              row.piezas_lavanderia > 0
-                ? `${row.piezas_lavanderia.toLocaleString("es-MX")} pz · ${fmtCurrency(num(row.valor_lavanderia))}`
-                : "Sin unidades"
-            }
-          />
-          <Resumen label="Valor a pagar" valor={row.costo_capturado ? fmtCurrency(num(row.valor_a_pagar)) : "—"} />
-          <Resumen label="Pagado" valor={fmtCurrency(num(row.valor_pagado))} tono="text-emerald-700" />
-          <Resumen
-            label="Saldo"
-            valor={row.costo_capturado ? fmtCurrency(num(row.saldo)) : "—"}
-            tono={num(row.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground"}
-          />
-        </div>
+        {/* ── Desglose del valor a pagar ── */}
+        <DesgloseValor row={row} readOnly={readOnly} onCambiarCosto={guardarCosto} />
 
         {cargando ? (
           <div className="flex justify-center py-8">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
             <SeccionRecepciones
               filas={recepciones}
               row={row}
@@ -778,21 +817,33 @@ function GestionFolioDialog({
               onGuardar={guardar}
               onBorrar={borrar}
             />
-            <SeccionPenalizaciones
-              filas={penalizaciones}
+            <SeccionNoEntregadas
+              filas={noEntregadas}
               row={row}
               readOnly={readOnly}
               onGuardar={guardar}
               onBorrar={borrar}
             />
-            <SeccionPagos
-              filas={pagos}
-              row={row}
-              readOnly={readOnly}
-              saldoPendiente={saldoPendiente}
-              onGuardar={guardar}
-              onBorrar={borrar}
-            />
+            <div className="lg:col-span-2">
+              <SeccionPagos
+                filas={pagos}
+                row={row}
+                readOnly={readOnly}
+                saldoPendiente={saldoPendiente}
+                onGuardar={guardar}
+                onBorrar={borrar}
+              />
+            </div>
+            <div className="lg:col-span-2">
+              <SeccionServicios
+                folio={row.folio}
+                piezasOrden={row.piezas_orden}
+                piezasRecibidas={row.piezas_recibidas}
+                servicios={servicios}
+                readOnly={readOnly}
+                onSaved={refrescar}
+              />
+            </div>
           </div>
         )}
 
@@ -806,38 +857,225 @@ function GestionFolioDialog({
   )
 }
 
-function DatoUnitario({
-  label,
-  valor,
-  destacado,
+/**
+ * El cálculo, línea por línea.
+ *
+ * Se muestra desglosado y no solo el total porque cada resta viene de una
+ * fuente distinta —recepciones, no entregadas, fecha de entrega— y cuando
+ * una cifra no cuadra hay que poder ver de dónde salió.
+ */
+function DesgloseValor({
+  row,
+  readOnly,
+  onCambiarCosto,
 }: {
-  label: string
-  valor: number | null
-  destacado?: boolean
+  row: VwPagoMaquilas
+  readOnly: boolean
+  onCambiarCosto: (v: number | null) => void
 }) {
   return (
-    <div>
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      {valor == null ? (
-        <p className="text-sm font-medium text-amber-600">Sin dato</p>
-      ) : (
-        <p className={cn("text-sm font-semibold tabular-nums", destacado && "text-emerald-700")}>
-          {fmtCurrency(Number(valor))}
-          <span className="ml-1 text-[10px] font-normal text-muted-foreground">/pz</span>
+    <div className="rounded-lg border border-border bg-muted/20 p-4">
+      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <div className="space-y-1.5">
+          <Linea
+            etiqueta={
+              <>
+                Precio final
+                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                  {row.piezas_recibidas.toLocaleString("es-MX")} recibidas ×{" "}
+                  <CostoEditable
+                    valor={row.costo_maquila}
+                    disabled={readOnly}
+                    onSave={onCambiarCosto}
+                  />
+                </span>
+              </>
+            }
+            valor={row.costo_capturado ? fmtCurrency(num(row.precio_final)) : "Sin costo"}
+            tono={row.costo_capturado ? "text-foreground" : "text-amber-600"}
+          />
+          <Linea
+            etiqueta={
+              <>
+                Pzs no entregadas
+                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                  {row.piezas_no_entregadas} × {fmtCurrency(num(row.precio_venta))} de venta
+                </span>
+              </>
+            }
+            valor={
+              num(row.valor_no_entregadas) > 0
+                ? `− ${fmtCurrency(num(row.valor_no_entregadas))}`
+                : "—"
+            }
+            tono={num(row.valor_no_entregadas) > 0 ? "text-rose-600" : "text-muted-foreground/60"}
+          />
+          <Linea
+            etiqueta={
+              <>
+                Demora en entrega
+                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                  {row.semanas_demora > 0
+                    ? `${row.semanas_demora} sem × ${DEMORA_SEMANAL_PCT}% = ${num(row.demora_pct).toFixed(1)}%`
+                    : "sin atraso"}
+                </span>
+              </>
+            }
+            valor={num(row.valor_demora) > 0 ? `− ${fmtCurrency(num(row.valor_demora))}` : "—"}
+            tono={num(row.valor_demora) > 0 ? "text-rose-600" : "text-muted-foreground/60"}
+          />
+          <div className="mt-1 border-t border-border pt-1.5">
+            <Linea
+              etiqueta={<span className="font-semibold">Valor a pagar</span>}
+              valor={row.costo_capturado ? fmtCurrency(num(row.valor_a_pagar)) : "—"}
+              tono="text-foreground"
+              destacado
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+          <Linea
+            etiqueta="Piezas cortadas"
+            valor={row.piezas_cortadas > 0 ? row.piezas_cortadas.toLocaleString("es-MX") : "—"}
+            tono="text-muted-foreground"
+          />
+          <Linea
+            etiqueta="Fecha de entrega"
+            valor={fmtFecha(row.fecha_cancelacion)}
+            tono="text-muted-foreground"
+          />
+          <Linea
+            etiqueta="Última recepción"
+            valor={fmtFecha(row.ultima_recepcion)}
+            tono="text-muted-foreground"
+          />
+          <div className="mt-1 border-t border-border pt-1.5">
+            <Linea
+              etiqueta="Pagado"
+              valor={fmtCurrency(num(row.valor_pagado))}
+              tono="text-emerald-700"
+            />
+            <Linea
+              etiqueta={<span className="font-semibold">Saldo</span>}
+              valor={row.costo_capturado ? fmtCurrency(num(row.saldo)) : "—"}
+              tono={num(row.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground"}
+              destacado
+            />
+          </div>
+        </div>
+      </div>
+
+      {row.semanas_demora > 0 && (
+        <p className="mt-3 flex items-start gap-1.5 text-[11px] text-rose-700">
+          <Clock className="mt-0.5 size-3 shrink-0" />
+          {row.ultima_recepcion
+            ? `Se recibió ${row.semanas_demora} semanas después de la fecha de entrega.`
+            : `Han pasado ${row.semanas_demora} semanas de la fecha de entrega y no se ha recibido nada; el descuento sigue creciendo.`}
         </p>
       )}
     </div>
   )
 }
 
-function Resumen({ label, valor, tono }: { label: string; valor: string; tono?: string }) {
+function Linea({
+  etiqueta,
+  valor,
+  tono,
+  destacado,
+}: {
+  etiqueta: React.ReactNode
+  valor: string
+  tono?: string
+  destacado?: boolean
+}) {
   return (
-    <div>
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={cn("text-sm font-semibold tabular-nums", tono ?? "text-foreground")}>{valor}</p>
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-xs text-muted-foreground">{etiqueta}</span>
+      <span
+        className={cn(
+          "shrink-0 tabular-nums",
+          destacado ? "text-base font-bold" : "text-sm font-medium",
+          tono,
+        )}
+      >
+        {valor}
+      </span>
     </div>
   )
 }
+
+/** Costo unitario editable en línea, dentro del desglose. */
+function CostoEditable({
+  valor,
+  disabled,
+  onSave,
+}: {
+  valor: number | null
+  disabled: boolean
+  onSave: (v: number | null) => void
+}) {
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(valor != null ? String(valor) : "")
+
+  useEffect(() => {
+    if (!editando) setTexto(valor != null ? String(valor) : "")
+  }, [valor, editando])
+
+  const confirmar = () => {
+    setEditando(false)
+    const t = texto.trim()
+    const n = t === "" ? null : Number(t)
+    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+      setTexto(valor != null ? String(valor) : "")
+      return
+    }
+    if (n !== valor) onSave(n)
+  }
+
+  if (editando) {
+    return (
+      <Input
+        autoFocus
+        type="number"
+        step="0.01"
+        min="0"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") confirmar()
+          if (e.key === "Escape") {
+            setTexto(valor != null ? String(valor) : "")
+            setEditando(false)
+          }
+        }}
+        className="inline-block h-6 w-24 px-1.5 py-0 text-[11px]"
+      />
+    )
+  }
+
+  if (disabled) {
+    return <span className="font-medium">{valor != null ? fmtCurrency(valor) : "sin costo"}</span>
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditando(true)}
+      title="Clic para cambiar el costo de maquila"
+      className={cn(
+        "inline-flex items-center gap-1 rounded px-1 py-0.5 font-medium transition-colors hover:bg-muted",
+        valor == null && "text-amber-600",
+      )}
+    >
+      {valor != null ? fmtCurrency(valor) : "sin costo"}
+      <Pencil className="size-2.5 text-muted-foreground/60" />
+    </button>
+  )
+}
+
+// ─── Secciones del modal ─────────────────────────────────────────────────────
 
 type GuardarFn = (
   tabla: string,
@@ -846,7 +1084,6 @@ type GuardarFn = (
 ) => Promise<boolean>
 type BorrarFn = (tabla: string, id: number, etiqueta: string) => void
 
-/** Contenedor de una sección del modal: título, total y lista. */
 function Seccion({
   titulo,
   total,
@@ -864,7 +1101,7 @@ function Seccion({
         <p className="text-xs font-semibold text-foreground">{titulo}</p>
         <p className="text-xs font-medium tabular-nums text-muted-foreground">{total}</p>
       </div>
-      <div className="divide-y divide-border/60">{children}</div>
+      <div className="max-h-44 divide-y divide-border/60 overflow-y-auto">{children}</div>
       {formulario && <div className="border-t border-border bg-muted/20 p-2">{formulario}</div>}
     </div>
   )
@@ -904,7 +1141,47 @@ function Vacio({ texto }: { texto: string }) {
   return <p className="px-3 py-3 text-center text-[11px] text-muted-foreground/60">{texto}</p>
 }
 
-// ── Sección: recepciones ──
+function CampoMini({
+  label,
+  ancho,
+  children,
+}: {
+  label: string
+  ancho: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className={cn("space-y-1", ancho)}>
+      <label className="block text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+/** Interruptor de "pago adelantado", compartido por maquila y servicios. */
+function CheckAdelanto({
+  checked,
+  onChange,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-foreground">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="size-3.5 cursor-pointer rounded border-border accent-indigo-600"
+      />
+      Pago adelantado (sin recibir)
+    </label>
+  )
+}
+
+// ── Recepciones (histórico de entregas) ──
 
 function SeccionRecepciones({
   filas,
@@ -921,35 +1198,34 @@ function SeccionRecepciones({
 }) {
   const [fecha, setFecha] = useState(hoyISO())
   const [piezas, setPiezas] = useState("")
-  const [comentarios, setComentarios] = useState("")
   const [guardando, setGuardando] = useState(false)
 
   const n = Number(piezas)
   const valido = Number.isFinite(n) && n > 0
-  const excede = valido && row.piezas_orden != null && row.piezas_recibidas + n > row.piezas_orden
+  const base = row.piezas_cortadas || row.piezas_orden || 0
+  const excede = valido && base > 0 && row.piezas_recibidas + n > base
 
   const enviar = async () => {
     setGuardando(true)
     const ok = await onGuardar(
       "maquila_recepciones",
-      { fecha, piezas: Math.trunc(n), comentarios: comentarios.trim() || null },
+      { fecha, piezas: Math.trunc(n) },
       "La recepción",
     )
     setGuardando(false)
-    if (ok) {
-      setPiezas("")
-      setComentarios("")
-    }
+    if (ok) setPiezas("")
   }
 
   return (
     <Seccion
-      titulo="Recepciones"
-      total={`${row.piezas_recibidas.toLocaleString("es-MX")} pz recibidas`}
+      titulo="Entregas recibidas"
+      total={`${row.piezas_recibidas.toLocaleString("es-MX")} de ${
+        base > 0 ? base.toLocaleString("es-MX") : "?"
+      } pz`}
       formulario={
         readOnly ? undefined : (
           <div className="flex flex-wrap items-end gap-2">
-            <CampoMini label="Fecha" ancho="w-36">
+            <CampoMini label="Fecha" ancho="w-32">
               <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
             </CampoMini>
             <CampoMini label="Piezas" ancho="w-24">
@@ -961,26 +1237,22 @@ function SeccionRecepciones({
                 className="h-8"
               />
             </CampoMini>
-            <CampoMini label="Comentario" ancho="flex-1 min-w-40">
-              <Input
-                value={comentarios}
-                onChange={(e) => setComentarios(e.target.value)}
-                className="h-8"
-              />
-            </CampoMini>
             <Button
               size="sm"
               onClick={enviar}
               disabled={!valido || guardando}
               className="h-8 gap-1.5 bg-sky-600 text-white hover:bg-sky-700"
             >
-              {guardando ? <Loader2 className="size-3.5 animate-spin" /> : <PackageCheck className="size-3.5" />}
+              {guardando ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <PackageCheck className="size-3.5" />
+              )}
               Recibir
             </Button>
             {excede && (
               <p className="w-full text-[11px] font-medium text-amber-600">
-                Con esta recepción se supera la cantidad de la orden (
-                {row.piezas_orden?.toLocaleString("es-MX")} pz).
+                Se supera lo cortado ({base.toLocaleString("es-MX")} pz).
               </p>
             )}
           </div>
@@ -988,7 +1260,7 @@ function SeccionRecepciones({
       }
     >
       {filas.length === 0 ? (
-        <Vacio texto="Sin recepciones registradas" />
+        <Vacio texto="Sin entregas registradas" />
       ) : (
         filas.map((r) => (
           <FilaMovimiento
@@ -996,7 +1268,9 @@ function SeccionRecepciones({
             fecha={r.fecha}
             principal={`${r.piezas.toLocaleString("es-MX")} pz`}
             detalle={r.comentarios}
-            onBorrar={readOnly ? undefined : () => onBorrar("maquila_recepciones", r.id, "La recepción")}
+            onBorrar={
+              readOnly ? undefined : () => onBorrar("maquila_recepciones", r.id, "La recepción")
+            }
           />
         ))
       )}
@@ -1004,9 +1278,9 @@ function SeccionRecepciones({
   )
 }
 
-// ── Sección: penalizaciones ──
+// ── Piezas no entregadas ──
 
-function SeccionPenalizaciones({
+function SeccionNoEntregadas({
   filas,
   row,
   readOnly,
@@ -1027,14 +1301,13 @@ function SeccionPenalizaciones({
   const n = Number(piezas)
   const valido = Number.isFinite(n) && n > 0 && motivo.trim() !== ""
   const importe = valido ? n * num(row.precio_venta) : 0
-  const excede = valido && n > row.piezas_recibidas
 
   const enviar = async () => {
     setGuardando(true)
     const ok = await onGuardar(
       "maquila_penalizaciones",
       { fecha, piezas: Math.trunc(n), motivo: motivo.trim() },
-      "La penalización",
+      "Las piezas no entregadas",
     )
     setGuardando(false)
     if (ok) {
@@ -1045,19 +1318,19 @@ function SeccionPenalizaciones({
 
   return (
     <Seccion
-      titulo="Penalizaciones"
+      titulo="Piezas no entregadas"
       total={
         row.precio_venta == null
           ? "Sin precio de venta"
-          : `${row.piezas_penalizadas} pz · ${fmtCurrency(num(row.valor_penalizaciones))}`
+          : `${row.piezas_no_entregadas} pz · ${fmtCurrency(num(row.valor_no_entregadas))}`
       }
       formulario={
         readOnly ? undefined : (
           <div className="flex flex-wrap items-end gap-2">
-            <CampoMini label="Fecha" ancho="w-36">
+            <CampoMini label="Fecha" ancho="w-32">
               <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
             </CampoMini>
-            <CampoMini label="Piezas malas" ancho="w-28">
+            <CampoMini label="Piezas" ancho="w-20">
               <Input
                 type="number"
                 min="1"
@@ -1066,11 +1339,11 @@ function SeccionPenalizaciones({
                 className="h-8"
               />
             </CampoMini>
-            <CampoMini label="Motivo" ancho="flex-1 min-w-40">
+            <CampoMini label="Motivo" ancho="flex-1 min-w-32">
               <Input
                 value={motivo}
                 onChange={(e) => setMotivo(e.target.value)}
-                placeholder="Costura abierta, manchas…"
+                placeholder="Faltante, defecto…"
                 className="h-8"
               />
             </CampoMini>
@@ -1081,25 +1354,16 @@ function SeccionPenalizaciones({
               className="h-8 gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
             >
               {guardando && <Loader2 className="size-3.5 animate-spin" />}
-              Penalizar
+              Registrar
             </Button>
             {valido && (
               <p className="w-full text-[11px] text-muted-foreground">
                 {row.precio_venta == null ? (
                   <span className="font-medium text-amber-600">
-                    Este folio no tiene precio de venta: la penalización se registrará pero
-                    descontará $0.
+                    Sin precio de venta: se registra pero descuenta $0.
                   </span>
                 ) : (
-                  <>
-                    Descuenta {fmtCurrency(importe)} ({n} × {fmtCurrency(num(row.precio_venta))} de
-                    precio de venta)
-                  </>
-                )}
-                {excede && (
-                  <span className="block font-medium text-rose-600">
-                    Son más piezas de las recibidas ({row.piezas_recibidas}).
-                  </span>
+                  <>Descuenta {fmtCurrency(importe)}</>
                 )}
               </p>
             )}
@@ -1108,7 +1372,7 @@ function SeccionPenalizaciones({
       }
     >
       {filas.length === 0 ? (
-        <Vacio texto="Sin penalizaciones" />
+        <Vacio texto="Sin piezas no entregadas" />
       ) : (
         filas.map((p) => (
           <FilaMovimiento
@@ -1117,7 +1381,9 @@ function SeccionPenalizaciones({
             principal={`${p.piezas} pz · ${fmtCurrency(p.piezas * num(row.precio_venta))}`}
             detalle={p.motivo}
             onBorrar={
-              readOnly ? undefined : () => onBorrar("maquila_penalizaciones", p.id, "La penalización")
+              readOnly
+                ? undefined
+                : () => onBorrar("maquila_penalizaciones", p.id, "El registro")
             }
           />
         ))
@@ -1126,7 +1392,7 @@ function SeccionPenalizaciones({
   )
 }
 
-// ── Sección: pagos ──
+// ── Pagos al maquilero (histórico de pagos) ──
 
 function SeccionPagos({
   filas,
@@ -1144,14 +1410,14 @@ function SeccionPagos({
   onBorrar: BorrarFn
 }) {
   const [fecha, setFecha] = useState(hoyISO())
-  // Pre-llenar el saldo exacto es la medida anti-sobrepago más efectiva
   const [monto, setMonto] = useState(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : "")
   const [referencia, setReferencia] = useState("")
+  const [adelanto, setAdelanto] = useState(row.piezas_recibidas === 0)
   const [guardando, setGuardando] = useState(false)
 
   const n = Number(monto)
   const valido = Number.isFinite(n) && n > 0
-  const excede = valido && n > saldoPendiente + CENTAVO
+  const excede = valido && !adelanto && n > saldoPendiente + CENTAVO
 
   const enviar = async () => {
     setGuardando(true)
@@ -1161,10 +1427,10 @@ function SeccionPagos({
         fecha,
         monto: Number(n.toFixed(2)),
         referencia: referencia.trim() || null,
-        // Deja rastro de con qué costo se calculó, por si el Excel lo cambia
+        es_adelanto: adelanto,
         costo_maquila_aplicado: row.costo_maquila,
       },
-      "El pago",
+      adelanto ? "El adelanto" : "El pago",
     )
     setGuardando(false)
     if (ok) {
@@ -1175,16 +1441,28 @@ function SeccionPagos({
 
   return (
     <Seccion
-      titulo="Pagos"
-      total={`${fmtCurrency(num(row.valor_pagado))} pagados`}
+      titulo="Historial de pagos"
+      total={`${fmtCurrency(num(row.valor_pagado))} pagados${
+        num(row.valor_adelantos) > 0
+          ? ` · ${fmtCurrency(num(row.valor_adelantos))} en adelantos`
+          : ""
+      }`}
       formulario={
-        readOnly ? undefined : !row.costo_capturado ? (
+        readOnly ? undefined : !row.costo_capturado && !adelanto ? (
           <p className="text-[11px] text-muted-foreground">
-            No se pueden registrar pagos sin costo de maquila capturado.
+            Sin costo unitario no hay contra qué calcular un pago. Puedes registrar un{" "}
+            <button
+              type="button"
+              onClick={() => setAdelanto(true)}
+              className="font-medium text-indigo-600 underline"
+            >
+              adelanto
+            </button>
+            , que no depende del costo.
           </p>
         ) : (
           <div className="flex flex-wrap items-end gap-2">
-            <CampoMini label="Fecha" ancho="w-36">
+            <CampoMini label="Fecha" ancho="w-32">
               <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
             </CampoMini>
             <CampoMini label="Monto" ancho="w-32">
@@ -1211,20 +1489,34 @@ function SeccionPagos({
               disabled={!valido || guardando}
               className={cn(
                 "h-8 gap-1.5 text-white",
-                excede ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700",
+                excede
+                  ? "bg-rose-600 hover:bg-rose-700"
+                  : adelanto
+                    ? "bg-indigo-600 hover:bg-indigo-700"
+                    : "bg-emerald-600 hover:bg-emerald-700",
               )}
             >
-              {guardando ? <Loader2 className="size-3.5 animate-spin" /> : <Wallet className="size-3.5" />}
-              {excede ? "Pagar de más" : "Pagar"}
-            </Button>
-            <p className="w-full text-[11px] text-muted-foreground">
-              Saldo pendiente: {fmtCurrency(saldoPendiente)}
-              {excede && (
-                <span className="ml-2 font-medium text-rose-600">
-                  Excede en {fmtCurrency(n - saldoPendiente)}: el folio quedará sobrepagado.
-                </span>
+              {guardando ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Wallet className="size-3.5" />
               )}
-            </p>
+              {excede ? "Pagar de más" : adelanto ? "Adelantar" : "Pagar"}
+            </Button>
+            <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1">
+              <CheckAdelanto checked={adelanto} onChange={setAdelanto} />
+              <p className="text-[11px] text-muted-foreground">
+                {adelanto
+                  ? "Pago sin recibir: queda registrado como anticipo."
+                  : `Saldo pendiente: ${fmtCurrency(saldoPendiente)}`}
+                {excede && (
+                  <span className="ml-2 font-medium text-rose-600">
+                    Excede en {fmtCurrency(n - saldoPendiente)}. Márcalo como adelanto si es
+                    deliberado.
+                  </span>
+                )}
+              </p>
+            </div>
           </div>
         )
       }
@@ -1237,7 +1529,7 @@ function SeccionPagos({
             key={g.id}
             fecha={g.fecha}
             principal={fmtCurrency(num(g.monto))}
-            detalle={g.referencia}
+            detalle={(g.es_adelanto ? "Adelanto · " : "") + (g.referencia ?? "")}
             onBorrar={readOnly ? undefined : () => onBorrar("maquila_pagos", g.id, "El pago")}
           />
         ))
@@ -1246,572 +1538,194 @@ function SeccionPagos({
   )
 }
 
-function CampoMini({
-  label,
-  ancho,
-  children,
-}: {
-  label: string
-  ancho: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className={cn("space-y-1", ancho)}>
-      <label className="block text-[10px] uppercase tracking-wide text-muted-foreground">
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
-
-// ─── Pestaña 2: Recepciones ──────────────────────────────────────────────────
-
-function RecepcionesTab({ rows, loading, onRefresh }: TabProps) {
-  const readOnly = useReadOnly()
-  const [search, setSearch] = useState("")
-  const [objetivo, setObjetivo] = useState<VwPagoMaquilas | null>(null)
-
-  const candidatos = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return rows.filter((r) => r.piezas_recibidas < (r.piezas_orden ?? 0)).slice(0, 40)
-    return rows
-      .filter((r) => `${r.folio} ${r.modelo ?? ""} ${r.beneficiario ?? ""}`.toLowerCase().includes(q))
-      .slice(0, 40)
-  }, [rows, search])
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-4 py-2.5">
-        <PackageCheck className="mt-0.5 size-4 shrink-0 text-sky-600" />
-        <p className="text-xs text-sky-900">
-          Busca el folio que llegó y registra las piezas. Sin búsqueda se listan los folios que
-          todavía no completan la orden.
-        </p>
-      </div>
-
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar folio, modelo o maquilero…"
-          className="h-10 pl-8"
-        />
-      </div>
-
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50 hover:bg-muted/50">
-              <TableHead className="font-semibold">Folio</TableHead>
-              <TableHead className="font-semibold">Maquilero</TableHead>
-              <TableHead className="font-semibold text-right">Recibidas / Orden</TableHead>
-              <TableHead className="font-semibold">Última recepción</TableHead>
-              <TableHead className="font-semibold text-right">Acción</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 5 }).map((__, j) => (
-                    <TableCell key={j}>
-                      <Skeleton className="h-4 w-full" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : candidatos.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
-                  Sin coincidencias.
-                </TableCell>
-              </TableRow>
-            ) : (
-              candidatos.map((r) => {
-                const orden = r.piezas_orden ?? 0
-                const completo = orden > 0 && r.piezas_recibidas >= orden
-                return (
-                  <TableRow key={r.folio} className="hover:bg-muted/30">
-                    <TableCell>
-                      <FolioLink folio={r.folio} className="text-xs" />
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                        {r.modelo ?? "—"}
-                      </p>
-                    </TableCell>
-                    <TableCell className="text-sm">{r.beneficiario ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
-                      <span className={cn(completo ? "text-emerald-600" : "text-foreground")}>
-                        {r.piezas_recibidas.toLocaleString("es-MX")}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {" / "}
-                        {orden > 0 ? orden.toLocaleString("es-MX") : "—"}
-                      </span>
-                      {orden > 0 && r.piezas_recibidas > orden && (
-                        <span className="ml-1 text-rose-600" title="Se recibió más de lo pedido">
-                          ⚠
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {fmtFecha(r.ultima_recepcion)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={readOnly}
-                        onClick={() => setObjetivo(r)}
-                        className="gap-1.5"
-                      >
-                        <PackageCheck className="size-3.5" />
-                        Recibir
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
-
-      {objetivo && (
-        <GestionFolioDialog
-          row={objetivo}
-          onClose={() => setObjetivo(null)}
-          onSaved={onRefresh}
-          readOnly={readOnly}
-        />
-      )}
-    </div>
-  )
-}
-
-// ─── Pestaña 3: Por Maquilero ────────────────────────────────────────────────
-
-function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boolean }) {
-  const resumen = useMemo(() => {
-    const mapa = new Map<
-      string,
-      { folios: number; aPagar: number; pagado: number; abiertos: number; sinCosto: number }
-    >()
-    for (const r of rows) {
-      const k = r.beneficiario ?? "Sin asignar"
-      const a = mapa.get(k) ?? { folios: 0, aPagar: 0, pagado: 0, abiertos: 0, sinCosto: 0 }
-      a.folios++
-      if (!r.costo_capturado) {
-        a.sinCosto++
-      } else {
-        a.aPagar += num(r.valor_a_pagar)
-        a.pagado += num(r.valor_pagado)
-        if (num(r.saldo) > CENTAVO) a.abiertos++
-      }
-      mapa.set(k, a)
-    }
-    return Array.from(mapa.entries())
-      .map(([nombre, v]) => ({ nombre, ...v, saldo: v.aPagar - v.pagado }))
-      .sort((a, b) => b.saldo - a.saldo)
-  }, [rows])
-
-  return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/50 hover:bg-muted/50">
-            <TableHead className="font-semibold">Maquilero</TableHead>
-            <TableHead className="font-semibold text-right">Folios</TableHead>
-            <TableHead className="font-semibold text-right">Con saldo</TableHead>
-            <TableHead className="font-semibold text-right">Sin costo</TableHead>
-            <TableHead className="font-semibold text-right">Valor a pagar</TableHead>
-            <TableHead className="font-semibold text-right">Pagado</TableHead>
-            <TableHead className="font-semibold text-right">Saldo</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {loading ? (
-            Array.from({ length: 5 }).map((_, i) => (
-              <TableRow key={i}>
-                {Array.from({ length: 7 }).map((__, j) => (
-                  <TableCell key={j}>
-                    <Skeleton className="h-4 w-full" />
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))
-          ) : resumen.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
-                Sin maquileros con órdenes.
-              </TableCell>
-            </TableRow>
-          ) : (
-            resumen.map((m) => (
-              <TableRow key={m.nombre} className="hover:bg-muted/30">
-                <TableCell className="font-medium text-foreground">{m.nombre}</TableCell>
-                <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
-                  {m.folios}
-                </TableCell>
-                <TableCell className="text-right tabular-nums text-sm">
-                  {m.abiertos > 0 ? m.abiertos : <span className="text-muted-foreground/50">—</span>}
-                </TableCell>
-                <TableCell className="text-right tabular-nums text-sm">
-                  {m.sinCosto > 0 ? (
-                    <span className="text-amber-600">{m.sinCosto}</span>
-                  ) : (
-                    <span className="text-muted-foreground/50">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-right tabular-nums text-sm">
-                  {fmtCurrency(m.aPagar)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums text-sm text-emerald-700">
-                  {fmtCurrency(m.pagado)}
-                </TableCell>
-                <TableCell
-                  className={cn(
-                    "text-right tabular-nums text-sm font-semibold",
-                    m.saldo < -CENTAVO ? "text-rose-600" : "text-foreground",
-                  )}
-                >
-                  {fmtCurrency(m.saldo)}
-                </TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
-    </div>
-  )
-}
-// ─── Pestaña 4: Lavandería ───────────────────────────────────────────────────
+// ─── Servicios externos ──────────────────────────────────────────────────────
 
 /**
- * La lavandería es un acreedor aparte del maquilero, con su propio ciclo:
- * se le envían unidades, devuelve otras (la diferencia es merma), y se le
- * paga por lo que devolvió, con abonos parciales si hace falta.
+ * Los cinco servicios de un folio, dentro del modal.
  *
- * Por eso tiene su propia tabla de pagos y su propio saldo, en vez de una
- * simple marca de pagado.
+ * Cada uno es un acreedor distinto con su propio saldo: se le paga por las
+ * piezas que devolvió, no por las que se le mandaron.
  */
-function LavanderiaTab({ rows, loading, onRefresh }: TabProps) {
-  const readOnly = useReadOnly()
-  const { user } = useAuth()
-  const [filtro, setFiltro] = useState<"pendientes" | "todas">("pendientes")
-  const [search, setSearch] = useState("")
-  const [guardando, setGuardando] = useState<string | null>(null)
-  const [gestionando, setGestionando] = useState<string | null>(null)
+function SeccionServicios({
+  folio,
+  piezasOrden,
+  piezasRecibidas,
+  servicios,
+  readOnly,
+  onSaved,
+}: {
+  folio: string
+  piezasOrden: number | null
+  piezasRecibidas: number
+  servicios: VwServicioPago[]
+  readOnly: boolean
+  onSaved: () => void
+}) {
+  const [pagando, setPagando] = useState<ServicioExterno | null>(null)
 
-  const conLavanderia = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return rows.filter((r) => {
-      if (r.costo_lavanderia == null) return false
-      if (filtro === "pendientes" && r.estado_lavanderia === "Saldado") return false
-      if (q && !`${r.folio} ${r.cliente ?? ""}`.toLowerCase().includes(q)) return false
-      return true
-    })
-  }, [rows, filtro, search])
-
-  const kpis = useMemo(() => {
-    let valor = 0
-    let pagado = 0
-    let sinRecibir = 0
-    for (const r of conLavanderia) {
-      valor += num(r.valor_lavanderia)
-      pagado += num(r.lavanderia_pagado)
-      if (r.piezas_lavanderia_recibidas === 0) sinRecibir++
-    }
-    return { valor, pagado, saldo: valor - pagado, sinRecibir }
-  }, [conLavanderia])
-
-  /** Guarda enviadas o recibidas en la orden. */
   const guardarPiezas = async (
-    folio: string,
-    campo: "piezas_lavanderia" | "piezas_lavanderia_recibidas",
+    servicio: ServicioExterno,
+    campo: "piezas_enviadas" | "piezas_recibidas",
     piezas: number | null,
   ) => {
     const supabase = getSupabase()
     if (!supabase) return
-    setGuardando(folio)
+    // upsert: la fila (folio, servicio) puede no existir todavía
     const { error } = await supabase
-      .from("ordenes_produccion")
-      .update({ [campo]: piezas })
-      .eq("folio", folio)
-      .eq("idempresa", IDEMPRESA)
-    setGuardando(null)
+      .from("servicio_unidades")
+      .upsert(
+        { idempresa: IDEMPRESA, folio, servicio, [campo]: piezas },
+        { onConflict: "idempresa,folio,servicio" },
+      )
     if (error) {
       toast.error("No se pudieron guardar las unidades", { description: error.message })
       return
     }
-    onRefresh()
+    onSaved()
   }
 
-  /** Atajo: liquida el saldo pendiente de un folio en un solo movimiento. */
-  const marcarPagada = async (row: VwPagoMaquilas) => {
-    const supabase = getSupabase()
-    if (!supabase) return
-    const saldo = num(row.saldo_lavanderia)
-    if (saldo <= CENTAVO) {
-      toast.warning("Este folio no tiene saldo pendiente con la lavandería.")
-      return
-    }
-    setGuardando(row.folio)
-    const { error } = await supabase.from("lavanderia_pagos").insert({
-      idempresa: IDEMPRESA,
-      folio: row.folio,
-      fecha: hoyISO(),
-      monto: Number(saldo.toFixed(2)),
-      capturado_por: user?.username ?? null,
-      comentarios: "Pago total desde la pestaña de Lavandería",
-    })
-    setGuardando(null)
-    if (error) {
-      toast.error("No se pudo registrar el pago", { description: error.message })
-      return
-    }
-    toast.success(`Lavandería de ${row.folio} pagada · ${fmtCurrency(saldo)}`)
-    onRefresh()
+  if (servicios.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-border p-4 text-center">
+        <p className="text-xs text-muted-foreground">
+          Este folio no tiene costos de servicios externos capturados en el Excel
+          (lavandería, estampado, bordado, corte externo u otro).
+        </p>
+      </div>
+    )
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard
-          label="Valor lavandería"
-          value={kpis.valor}
-          format={fmtCurrency}
-          icon={<Shirt className="size-3.5" />}
-          iconBg="bg-cyan-100 ring-cyan-200"
-          iconColor="text-cyan-600"
-          valueColor="text-cyan-700"
-        />
-        <KpiCard
-          label="Pagado"
-          value={kpis.pagado}
-          format={fmtCurrency}
-          icon={<Wallet className="size-3.5" />}
-          iconBg="bg-emerald-100 ring-emerald-200"
-          iconColor="text-emerald-600"
-          valueColor="text-emerald-700"
-        />
-        <KpiCard
-          label="Saldo pendiente"
-          value={kpis.saldo}
-          format={fmtCurrency}
-          icon={<Banknote className="size-3.5" />}
-          iconBg="bg-sky-100 ring-sky-200"
-          iconColor="text-sky-600"
-          valueColor={kpis.saldo > CENTAVO ? "text-sky-700" : "text-foreground"}
-        />
-        <KpiCard
-          label="Sin recibir"
-          value={kpis.sinRecibir}
-          icon={<AlertTriangle className="size-3.5" />}
-          iconBg="bg-amber-100 ring-amber-200"
-          iconColor="text-amber-600"
-          valueColor={kpis.sinRecibir > 0 ? "text-amber-600" : "text-foreground"}
-          hint="Falta marcar las unidades que regresaron"
-        />
+    <div className="rounded-lg border border-border">
+      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
+        <p className="text-xs font-semibold text-foreground">Servicios externos</p>
+        <p className="text-xs text-muted-foreground">
+          Se paga por las piezas que devolvieron
+        </p>
       </div>
+      <div className="divide-y divide-border/60">
+        {servicios.map((s) => (
+          <div key={s.servicio} className="space-y-2 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="w-28 shrink-0">
+                <p className="text-xs font-semibold text-foreground">{s.servicio}</p>
+                <EstadoPill estado={s.estado} />
+              </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Folio o cliente…"
-            className="h-9 w-56 pl-8"
-          />
-        </div>
-        <Button
-          size="sm"
-          variant={filtro === "pendientes" ? "default" : "outline"}
-          onClick={() => setFiltro(filtro === "pendientes" ? "todas" : "pendientes")}
-          className="h-9"
-        >
-          {filtro === "pendientes" ? "Solo pendientes" : "Todas"}
-        </Button>
-        <span className="ml-auto text-xs text-muted-foreground">
-          {conLavanderia.length} folios
-        </span>
-      </div>
+              <div className="flex items-end gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Costo
+                  </p>
+                  <p className="text-xs font-medium tabular-nums">
+                    {s.costo_unitario != null ? (
+                      <>
+                        {fmtCurrency(num(s.costo_unitario))}
+                        <span className="text-[10px] font-normal text-muted-foreground">/pz</span>
+                      </>
+                    ) : (
+                      <span className="text-amber-600">sin valor</span>
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Enviadas
+                  </p>
+                  <PiezasEditable
+                    valor={s.piezas_enviadas}
+                    sugerido={piezasRecibidas || piezasOrden || 0}
+                    etiquetaSugerido="Usar las piezas recibidas del maquilero"
+                    disabled={readOnly}
+                    onSave={(v) => guardarPiezas(s.servicio, "piezas_enviadas", v)}
+                  />
+                </div>
+                <div>
+                  <p className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Recibidas
+                  </p>
+                  <PiezasEditable
+                    valor={s.piezas_recibidas}
+                    sugerido={s.piezas_enviadas || piezasRecibidas || 0}
+                    etiquetaSugerido="Usar las piezas enviadas"
+                    disabled={readOnly}
+                    onSave={(v) => guardarPiezas(s.servicio, "piezas_recibidas", v)}
+                  />
+                </div>
+                {s.merma > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Merma
+                    </p>
+                    <p className="text-xs font-medium tabular-nums text-amber-600">
+                      {s.merma.toLocaleString("es-MX")}
+                    </p>
+                  </div>
+                )}
+              </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50 hover:bg-muted/50">
-              <TableHead className="font-semibold">Folio</TableHead>
-              <TableHead className="font-semibold">Cliente</TableHead>
-              <TableHead className="font-semibold text-right">Enviadas</TableHead>
-              <TableHead className="font-semibold text-right">Recibidas</TableHead>
-              <TableHead className="font-semibold text-right">Merma</TableHead>
-              <TableHead className="font-semibold text-right">Valor Lavandería</TableHead>
-              <TableHead className="font-semibold text-right">Total</TableHead>
-              <TableHead className="font-semibold text-right">Pagado</TableHead>
-              <TableHead className="font-semibold text-right">Saldo</TableHead>
-              <TableHead className="font-semibold">Estado</TableHead>
-              <TableHead className="font-semibold text-right">Acción</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 11 }).map((__, j) => (
-                    <TableCell key={j}>
-                      <Skeleton className="h-4 w-full" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : conLavanderia.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={11} className="h-24 text-center text-sm text-muted-foreground">
-                  {filtro === "pendientes"
-                    ? "No hay lavandería pendiente de pago."
-                    : "Ningún folio tiene valor de lavandería capturado."}
-                </TableCell>
-              </TableRow>
-            ) : (
-              conLavanderia.map((r) => {
-                const saldo = num(r.saldo_lavanderia)
-                return (
-                  <TableRow key={r.folio} className="hover:bg-muted/30">
-                    <TableCell>
-                      <FolioLink folio={r.folio} className="text-xs" />
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{r.cliente ?? "—"}</TableCell>
-                    <TableCell className="text-right">
-                      <PiezasEditable
-                        valor={r.piezas_lavanderia}
-                        sugerido={r.piezas_recibidas}
-                        etiquetaSugerido="usar recibidas del maquilero"
-                        disabled={readOnly || guardando === r.folio}
-                        onSave={(v) => guardarPiezas(r.folio, "piezas_lavanderia", v)}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <PiezasEditable
-                        valor={r.piezas_lavanderia_recibidas}
-                        sugerido={r.piezas_lavanderia}
-                        etiquetaSugerido="usar enviadas"
-                        disabled={readOnly || guardando === r.folio}
-                        onSave={(v) => guardarPiezas(r.folio, "piezas_lavanderia_recibidas", v)}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
-                      {r.merma_lavanderia > 0 ? (
-                        <span className="text-amber-600" title="Enviadas menos recibidas">
-                          {r.merma_lavanderia.toLocaleString("es-MX")}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right text-sm">
-                      <ValorUnitario valor={r.costo_lavanderia} />
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm font-medium">
-                      {fmtCurrency(num(r.valor_lavanderia))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm text-emerald-700">
-                      {num(r.lavanderia_pagado) > 0 ? (
-                        fmtCurrency(num(r.lavanderia_pagado))
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        "text-right tabular-nums text-sm font-semibold",
-                        saldo < -CENTAVO ? "text-rose-600" : "text-foreground",
-                      )}
-                    >
-                      {fmtCurrency(saldo)}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={cn(
-                          "inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
-                          ESTADO_STYLE[
-                            (r.estado_lavanderia === "Sin valor"
-                              ? "Sin costo"
-                              : r.estado_lavanderia) as VwPagoMaquilas["estado_pago"]
-                          ],
-                        )}
-                      >
-                        {r.estado_lavanderia}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {!readOnly && saldo > CENTAVO && (
-                          <Button
-                            size="sm"
-                            onClick={() => marcarPagada(r)}
-                            disabled={guardando === r.folio}
-                            className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
-                            title={`Registra un pago por el saldo completo (${fmtCurrency(saldo)})`}
-                          >
-                            {guardando === r.folio && <Loader2 className="size-3.5 animate-spin" />}
-                            Marcar pagada
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setGestionando(r.folio)}
-                          className="gap-1.5"
-                        >
-                          <Settings2 className="size-3.5" />
-                          {readOnly ? "Ver" : "Gestionar"}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
+              <div className="ml-auto flex items-end gap-3">
+                <div className="text-right">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Valor
+                  </p>
+                  <p className="text-xs font-semibold tabular-nums">{fmtCurrency(num(s.valor))}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Saldo
+                  </p>
+                  <p
+                    className={cn(
+                      "text-xs font-semibold tabular-nums",
+                      num(s.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground",
+                    )}
+                  >
+                    {fmtCurrency(num(s.saldo))}
+                  </p>
+                </div>
+                {!readOnly && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPagando(pagando === s.servicio ? null : s.servicio)}
+                    className="h-7 gap-1 text-xs"
+                  >
+                    <Wallet className="size-3" />
+                    Pagos
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {pagando === s.servicio && (
+              <PagosServicio servicio={s} onSaved={onSaved} readOnly={readOnly} />
             )}
-          </TableBody>
-        </Table>
+          </div>
+        ))}
       </div>
-
-      {gestionando && (
-        <GestionLavanderiaDialog
-          row={conLavanderia.find((r) => r.folio === gestionando)!}
-          onClose={() => setGestionando(null)}
-          onSaved={onRefresh}
-          readOnly={readOnly}
-        />
-      )}
     </div>
   )
 }
 
-// ─── Modal de gestión de lavandería ──────────────────────────────────────────
-
-function GestionLavanderiaDialog({
-  row,
-  onClose,
+/** Historial y alta de pagos de un servicio, desplegable dentro de su fila. */
+function PagosServicio({
+  servicio,
   onSaved,
   readOnly,
 }: {
-  row: VwPagoMaquilas
-  onClose: () => void
+  servicio: VwServicioPago
   onSaved: () => void
   readOnly: boolean
 }) {
   const { user } = useAuth()
-  const [pagos, setPagos] = useState<LavanderiaPago[]>([])
+  const [pagos, setPagos] = useState<ServicioPago[]>([])
   const [cargando, setCargando] = useState(true)
-
-  const saldoPendiente = Math.max(0, num(row.saldo_lavanderia))
+  const saldoPendiente = Math.max(0, num(servicio.saldo))
   const [fecha, setFecha] = useState(hoyISO())
   const [monto, setMonto] = useState(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : "")
   const [referencia, setReferencia] = useState("")
+  const [adelanto, setAdelanto] = useState(servicio.piezas_recibidas === 0)
   const [guardando, setGuardando] = useState(false)
 
   const cargar = useCallback(async () => {
@@ -1819,38 +1733,36 @@ function GestionLavanderiaDialog({
     if (!supabase) return
     setCargando(true)
     const { data } = await supabase
-      .from("lavanderia_pagos")
+      .from("servicio_pagos")
       .select("*")
       .eq("idempresa", IDEMPRESA)
-      .eq("folio", row.folio)
+      .eq("folio", servicio.folio)
+      .eq("servicio", servicio.servicio)
       .order("fecha")
-    setPagos((data as LavanderiaPago[]) ?? [])
+    setPagos((data as ServicioPago[]) ?? [])
     setCargando(false)
-  }, [row.folio])
+  }, [servicio.folio, servicio.servicio])
 
   useEffect(() => {
     cargar()
   }, [cargar])
 
-  const refrescar = () => {
-    cargar()
-    onSaved()
-  }
-
   const n = Number(monto)
   const valido = Number.isFinite(n) && n > 0
-  const excede = valido && n > saldoPendiente + CENTAVO
+  const excede = valido && !adelanto && n > saldoPendiente + CENTAVO
 
   const pagar = async () => {
     const supabase = getSupabase()
     if (!supabase) return
     setGuardando(true)
-    const { error } = await supabase.from("lavanderia_pagos").insert({
+    const { error } = await supabase.from("servicio_pagos").insert({
       idempresa: IDEMPRESA,
-      folio: row.folio,
+      folio: servicio.folio,
+      servicio: servicio.servicio,
       fecha,
       monto: Number(n.toFixed(2)),
       referencia: referencia.trim() || null,
+      es_adelanto: adelanto,
       capturado_por: user?.username ?? null,
     })
     setGuardando(false)
@@ -1858,17 +1770,18 @@ function GestionLavanderiaDialog({
       toast.error("No se pudo registrar el pago", { description: error.message })
       return
     }
-    toast.success(`Pago a lavandería registrado en ${row.folio}`)
+    toast.success(`Pago a ${servicio.servicio} registrado`)
     setMonto("")
     setReferencia("")
-    refrescar()
+    cargar()
+    onSaved()
   }
 
   const borrar = async (id: number) => {
     const supabase = getSupabase()
     if (!supabase) return
     const { error } = await supabase
-      .from("lavanderia_pagos")
+      .from("servicio_pagos")
       .delete()
       .eq("id", id)
       .eq("idempresa", IDEMPRESA)
@@ -1877,154 +1790,92 @@ function GestionLavanderiaDialog({
       return
     }
     toast.success("Pago eliminado")
-    refrescar()
+    cargar()
+    onSaved()
   }
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Shirt className="size-4 text-cyan-600" />
-            Lavandería · Folio {row.folio}
-          </DialogTitle>
-          <DialogDescription>
-            {row.cliente ?? "sin cliente"} · {row.modelo ?? "sin modelo"}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3 sm:grid-cols-5">
-          <Resumen
-            label="Enviadas"
-            valor={row.piezas_lavanderia > 0 ? row.piezas_lavanderia.toLocaleString("es-MX") : "—"}
-          />
-          <Resumen
-            label="Recibidas"
-            valor={
-              row.piezas_lavanderia_recibidas > 0
-                ? row.piezas_lavanderia_recibidas.toLocaleString("es-MX")
-                : "—"
-            }
-          />
-          <Resumen
-            label="Valor"
-            valor={`${fmtCurrency(num(row.costo_lavanderia))}/pz`}
-          />
-          <Resumen label="Total" valor={fmtCurrency(num(row.valor_lavanderia))} />
-          <Resumen
-            label="Saldo"
-            valor={fmtCurrency(num(row.saldo_lavanderia))}
-            tono={num(row.saldo_lavanderia) < -CENTAVO ? "text-rose-600" : "text-foreground"}
-          />
+    <div className="rounded-md border border-border bg-muted/20 p-2">
+      {cargando ? (
+        <div className="flex justify-center py-3">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
         </div>
-
-        {row.piezas_lavanderia_recibidas === 0 && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/80 px-3 py-2">
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
-            <p className="text-[11px] text-amber-900">
-              Falta marcar las <span className="font-semibold">unidades recibidas</span> de
-              lavandería. Se le paga por lo que devolvió, así que sin ese dato el total es $0.
-              Se captura en la columna Recibidas de la tabla.
-            </p>
-          </div>
-        )}
-
-        {cargando ? (
-          <div className="flex justify-center py-6">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <Seccion
-            titulo="Pagos a lavandería"
-            total={`${fmtCurrency(num(row.lavanderia_pagado))} pagados`}
-            formulario={
-              readOnly ? undefined : (
-                <div className="flex flex-wrap items-end gap-2">
-                  <CampoMini label="Fecha" ancho="w-36">
-                    <Input
-                      type="date"
-                      value={fecha}
-                      onChange={(e) => setFecha(e.target.value)}
-                      className="h-8"
-                    />
-                  </CampoMini>
-                  <CampoMini label="Monto" ancho="w-32">
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={monto}
-                      onChange={(e) => setMonto(e.target.value)}
-                      className="h-8"
-                    />
-                  </CampoMini>
-                  <CampoMini label="Referencia" ancho="flex-1 min-w-40">
-                    <Input
-                      value={referencia}
-                      onChange={(e) => setReferencia(e.target.value)}
-                      placeholder="Transferencia, cheque…"
-                      className="h-8"
-                    />
-                  </CampoMini>
-                  <Button
-                    size="sm"
-                    onClick={pagar}
-                    disabled={!valido || guardando}
-                    className={cn(
-                      "h-8 gap-1.5 text-white",
-                      excede ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700",
-                    )}
-                  >
-                    {guardando ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Wallet className="size-3.5" />
-                    )}
-                    {excede ? "Pagar de más" : "Pagar"}
-                  </Button>
-                  <p className="w-full text-[11px] text-muted-foreground">
-                    Saldo pendiente: {fmtCurrency(saldoPendiente)}
-                    {excede && (
-                      <span className="ml-2 font-medium text-rose-600">
-                        Excede en {fmtCurrency(n - saldoPendiente)}.
-                      </span>
-                    )}
-                  </p>
-                </div>
-              )
-            }
-          >
-            {pagos.length === 0 ? (
-              <Vacio texto="Sin pagos registrados" />
-            ) : (
-              pagos.map((g) => (
+      ) : (
+        <>
+          {pagos.length === 0 ? (
+            <Vacio texto={`Sin pagos a ${servicio.servicio}`} />
+          ) : (
+            <div className="mb-2 divide-y divide-border/60">
+              {pagos.map((g) => (
                 <FilaMovimiento
                   key={g.id}
                   fecha={g.fecha}
                   principal={fmtCurrency(num(g.monto))}
-                  detalle={g.referencia ?? g.comentarios}
+                  detalle={(g.es_adelanto ? "Adelanto · " : "") + (g.referencia ?? "")}
                   onBorrar={readOnly ? undefined : () => borrar(g.id)}
                 />
-              ))
-            )}
-          </Seccion>
-        )}
+              ))}
+            </div>
+          )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cerrar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          {!readOnly && (
+            <div className="flex flex-wrap items-end gap-2 border-t border-border pt-2">
+              <CampoMini label="Fecha" ancho="w-32">
+                <Input
+                  type="date"
+                  value={fecha}
+                  onChange={(e) => setFecha(e.target.value)}
+                  className="h-8"
+                />
+              </CampoMini>
+              <CampoMini label="Monto" ancho="w-28">
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                  className="h-8"
+                />
+              </CampoMini>
+              <CampoMini label="Referencia" ancho="flex-1 min-w-32">
+                <Input
+                  value={referencia}
+                  onChange={(e) => setReferencia(e.target.value)}
+                  className="h-8"
+                />
+              </CampoMini>
+              <Button
+                size="sm"
+                onClick={pagar}
+                disabled={!valido || guardando}
+                className={cn(
+                  "h-8 gap-1.5 text-white",
+                  excede
+                    ? "bg-rose-600 hover:bg-rose-700"
+                    : adelanto
+                      ? "bg-indigo-600 hover:bg-indigo-700"
+                      : "bg-emerald-600 hover:bg-emerald-700",
+                )}
+              >
+                {guardando && <Loader2 className="size-3.5 animate-spin" />}
+                {excede ? "Pagar de más" : adelanto ? "Adelantar" : "Pagar"}
+              </Button>
+              <div className="flex w-full items-center gap-3">
+                <CheckAdelanto checked={adelanto} onChange={setAdelanto} />
+                <p className="text-[11px] text-muted-foreground">
+                  Saldo: {fmtCurrency(saldoPendiente)}
+                </p>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
-/**
- * Cantidad de piezas editable en línea, con atajo para copiar un valor
- * sugerido. Se usa para las unidades enviadas y recibidas de lavandería:
- * son campos propios del folio, no se derivan de nada.
- */
+/** Cantidad de piezas editable en línea, con atajo para copiar un sugerido. */
 function PiezasEditable({
   valor,
   sugerido,
@@ -2084,33 +1935,897 @@ function PiezasEditable({
             setEditando(false)
           }
         }}
-        className="ml-auto h-7 w-24 text-right"
+        className="h-7 w-24 text-right"
       />
     )
   }
 
-  return (
-    <div className="flex items-center justify-end gap-1.5">
-      {valor === 0 && sugerido > 0 && (
+  // Sin cantidad todavía: la celda tiene que verse capturable. Un guion
+  // suelto se lee como "no hay nada que hacer aquí" y el dato nunca se captura.
+  if (valor === 0) {
+    return (
+      <div className="flex items-center gap-1">
+        {sugerido > 0 && (
+          <button
+            type="button"
+            onClick={() => onSave(sugerido)}
+            title={etiquetaSugerido}
+            className="rounded-md border border-sky-200 bg-sky-50 px-1.5 py-1 text-[10px] font-medium text-sky-700 transition-colors hover:border-sky-400 hover:bg-sky-100"
+          >
+            {sugerido.toLocaleString("es-MX")}
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => onSave(sugerido)}
-          title={etiquetaSugerido}
-          className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-sky-300 hover:text-sky-700"
+          onClick={() => setEditando(true)}
+          title="Capturar cantidad"
+          className="flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-sky-400 hover:bg-sky-50 hover:text-sky-700"
         >
-          usar {sugerido.toLocaleString("es-MX")}
+          <Pencil className="size-3" />
+          Capturar
         </button>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditando(true)}
+      title="Clic para editar"
+      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium tabular-nums text-foreground transition-colors hover:bg-muted"
+    >
+      {valor.toLocaleString("es-MX")}
+      <Pencil className="size-3 text-muted-foreground/50" />
+    </button>
+  )
+}
+
+// ─── Pestaña 2: Recepciones ──────────────────────────────────────────────────
+
+function RecepcionesTab({ rows, servicios, loading, onRefresh }: TabProps) {
+  const readOnly = useReadOnly()
+  const [search, setSearch] = useState("")
+  const [objetivo, setObjetivo] = useState<string | null>(null)
+
+  const candidatos = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) {
+      // Sin búsqueda: lo que falta por recibir, primero lo más atrasado
+      return rows
+        .filter((r) => {
+          const base = r.piezas_cortadas || r.piezas_orden || 0
+          return base === 0 || r.piezas_recibidas < base
+        })
+        .sort((a, b) => b.semanas_demora - a.semanas_demora)
+        .slice(0, 40)
+    }
+    return rows
+      .filter((r) =>
+        `${r.folio} ${r.modelo ?? ""} ${r.beneficiario ?? ""} ${r.familia ?? ""}`
+          .toLowerCase()
+          .includes(q),
+      )
+      .slice(0, 40)
+  }, [rows, search])
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-4 py-2.5">
+        <PackageCheck className="mt-0.5 size-4 shrink-0 text-sky-600" />
+        <p className="text-xs text-sky-900">
+          Busca el folio que llegó y registra las piezas. Sin búsqueda se listan los que
+          faltan por completar, empezando por los más atrasados.
+        </p>
+      </div>
+
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar folio, modelo, familia o maquilero…"
+          className="h-10 pl-8"
+        />
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead className="font-semibold">Folio</TableHead>
+              <TableHead className="font-semibold">Maquilero</TableHead>
+              <TableHead className="font-semibold text-right">Recibidas / Cortadas</TableHead>
+              <TableHead className="font-semibold">Última entrega</TableHead>
+              <TableHead className="font-semibold text-right">Demora</TableHead>
+              <TableHead className="font-semibold text-right">Acción</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 6 }).map((__, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : candidatos.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
+                  Sin coincidencias.
+                </TableCell>
+              </TableRow>
+            ) : (
+              candidatos.map((r) => {
+                const base = r.piezas_cortadas || r.piezas_orden || 0
+                const completo = base > 0 && r.piezas_recibidas >= base
+                return (
+                  <TableRow key={r.folio} className="hover:bg-muted/30">
+                    <TableCell>
+                      <FolioLink folio={r.folio} className="text-xs" />
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        {r.modelo ?? "—"}
+                      </p>
+                    </TableCell>
+                    <TableCell className="text-sm">{r.beneficiario ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">
+                      <span className={cn(completo ? "text-emerald-600" : "text-foreground")}>
+                        {r.piezas_recibidas.toLocaleString("es-MX")}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {" / "}
+                        {base > 0 ? base.toLocaleString("es-MX") : "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {fmtFecha(r.ultima_recepcion)}
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      {r.semanas_demora > 0 ? (
+                        <span className="whitespace-nowrap text-rose-600">
+                          {r.semanas_demora} sem
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/50">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={readOnly}
+                        onClick={() => setObjetivo(r.folio)}
+                        className="gap-1.5"
+                      >
+                        <PackageCheck className="size-3.5" />
+                        Recibir
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {objetivo && (
+        <GestionFolioDialog
+          row={rows.find((r) => r.folio === objetivo)!}
+          servicios={servicios.filter((s) => s.folio === objetivo)}
+          onClose={() => setObjetivo(null)}
+          onSaved={onRefresh}
+          readOnly={readOnly}
+        />
       )}
-      <button
-        type="button"
-        onClick={() => setEditando(true)}
-        className={cn(
-          "rounded px-1.5 py-0.5 text-sm tabular-nums transition-colors hover:bg-muted",
-          valor > 0 ? "font-medium text-foreground" : "text-muted-foreground/60",
-        )}
-      >
-        {valor > 0 ? valor.toLocaleString("es-MX") : "—"}
-      </button>
+    </div>
+  )
+}
+
+// ─── Pestaña 3: Por Maquilero ────────────────────────────────────────────────
+
+function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boolean }) {
+  const resumen = useMemo(() => {
+    const mapa = new Map<
+      string,
+      { folios: number; aPagar: number; pagado: number; demora: number; abiertos: number; sinCosto: number }
+    >()
+    for (const r of rows) {
+      const k = r.beneficiario ?? "Sin asignar"
+      const a =
+        mapa.get(k) ?? { folios: 0, aPagar: 0, pagado: 0, demora: 0, abiertos: 0, sinCosto: 0 }
+      a.folios++
+      if (!r.costo_capturado) {
+        a.sinCosto++
+      } else {
+        a.aPagar += num(r.valor_a_pagar)
+        a.pagado += num(r.valor_pagado)
+        a.demora += num(r.valor_demora)
+        if (num(r.saldo) > CENTAVO) a.abiertos++
+      }
+      mapa.set(k, a)
+    }
+    return Array.from(mapa.entries())
+      .map(([nombre, v]) => ({ nombre, ...v, saldo: v.aPagar - v.pagado }))
+      .sort((a, b) => b.saldo - a.saldo)
+  }, [rows])
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-muted/50 hover:bg-muted/50">
+            <TableHead className="font-semibold">Maquilero</TableHead>
+            <TableHead className="font-semibold text-right">Folios</TableHead>
+            <TableHead className="font-semibold text-right">Con saldo</TableHead>
+            <TableHead className="font-semibold text-right">Sin costo</TableHead>
+            <TableHead className="font-semibold text-right">Desc. demora</TableHead>
+            <TableHead className="font-semibold text-right">Valor a pagar</TableHead>
+            <TableHead className="font-semibold text-right">Pagado</TableHead>
+            <TableHead className="font-semibold text-right">Saldo</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <TableRow key={i}>
+                {Array.from({ length: 8 }).map((__, j) => (
+                  <TableCell key={j}>
+                    <Skeleton className="h-4 w-full" />
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          ) : resumen.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={8} className="h-24 text-center text-sm text-muted-foreground">
+                Sin maquileros con órdenes.
+              </TableCell>
+            </TableRow>
+          ) : (
+            resumen.map((m) => (
+              <TableRow key={m.nombre} className="hover:bg-muted/30">
+                <TableCell className="font-medium text-foreground">{m.nombre}</TableCell>
+                <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
+                  {m.folios}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm">
+                  {m.abiertos > 0 ? m.abiertos : <span className="text-muted-foreground/50">—</span>}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm">
+                  {m.sinCosto > 0 ? (
+                    <span className="text-amber-600">{m.sinCosto}</span>
+                  ) : (
+                    <span className="text-muted-foreground/50">—</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm text-rose-600">
+                  {m.demora > CENTAVO ? (
+                    fmtCurrency(m.demora)
+                  ) : (
+                    <span className="text-muted-foreground/50">—</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm">
+                  {fmtCurrency(m.aPagar)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm text-emerald-700">
+                  {fmtCurrency(m.pagado)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "text-right tabular-nums text-sm font-semibold",
+                    m.saldo < -CENTAVO ? "text-rose-600" : "text-foreground",
+                  )}
+                >
+                  {fmtCurrency(m.saldo)}
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+// ─── Pestaña 4: Servicios ────────────────────────────────────────────────────
+
+function ServiciosTab({
+  servicios,
+  loading,
+  onRefresh,
+}: {
+  servicios: VwServicioPago[]
+  loading: boolean
+  onRefresh: () => void
+}) {
+  const readOnly = useReadOnly()
+  const [filtroServicio, setFiltroServicio] = useState("__all__")
+  const [soloPendientes, setSoloPendientes] = useState(true)
+  const [search, setSearch] = useState("")
+
+  const filtrados = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return servicios.filter((s) => {
+      if (filtroServicio !== "__all__" && s.servicio !== filtroServicio) return false
+      if (soloPendientes && s.estado === "Saldado") return false
+      if (q && !`${s.folio} ${s.cliente ?? ""} ${s.familia ?? ""}`.toLowerCase().includes(q))
+        return false
+      return true
+    })
+  }, [servicios, filtroServicio, soloPendientes, search])
+
+  const kpis = useMemo(() => {
+    let valor = 0
+    let pagado = 0
+    let sinRecibir = 0
+    for (const s of filtrados) {
+      valor += num(s.valor)
+      pagado += num(s.pagado)
+      if (s.piezas_recibidas === 0) sinRecibir++
+    }
+    return { valor, pagado, saldo: valor - pagado, sinRecibir }
+  }, [filtrados])
+
+  /** Totales por servicio: a quién se le debe más. */
+  const porServicio = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const s of filtrados) m.set(s.servicio, (m.get(s.servicio) ?? 0) + num(s.saldo))
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1])
+  }, [filtrados])
+
+  const guardarPiezas = async (
+    folio: string,
+    servicio: ServicioExterno,
+    campo: "piezas_enviadas" | "piezas_recibidas",
+    piezas: number | null,
+  ) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("servicio_unidades")
+      .upsert(
+        { idempresa: IDEMPRESA, folio, servicio, [campo]: piezas },
+        { onConflict: "idempresa,folio,servicio" },
+      )
+    if (error) {
+      toast.error("No se pudieron guardar las unidades", { description: error.message })
+      return
+    }
+    onRefresh()
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard
+          label="Valor servicios"
+          value={kpis.valor}
+          format={fmtCurrency}
+          icon={<Sparkles className="size-3.5" />}
+          iconBg="bg-cyan-100 ring-cyan-200"
+          iconColor="text-cyan-600"
+          valueColor="text-cyan-700"
+        />
+        <KpiCard
+          label="Pagado"
+          value={kpis.pagado}
+          format={fmtCurrency}
+          icon={<Wallet className="size-3.5" />}
+          iconBg="bg-emerald-100 ring-emerald-200"
+          iconColor="text-emerald-600"
+          valueColor="text-emerald-700"
+        />
+        <KpiCard
+          label="Saldo pendiente"
+          value={kpis.saldo}
+          format={fmtCurrency}
+          icon={<Banknote className="size-3.5" />}
+          iconBg="bg-sky-100 ring-sky-200"
+          iconColor="text-sky-600"
+          valueColor={kpis.saldo > CENTAVO ? "text-sky-700" : "text-foreground"}
+        />
+        <KpiCard
+          label="Sin recibir"
+          value={kpis.sinRecibir}
+          icon={<AlertTriangle className="size-3.5" />}
+          iconBg="bg-amber-100 ring-amber-200"
+          iconColor="text-amber-600"
+          valueColor={kpis.sinRecibir > 0 ? "text-amber-600" : "text-foreground"}
+          hint="Falta marcar lo que regresó"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Folio, familia o cliente…"
+            className="h-9 w-56 pl-8"
+          />
+        </div>
+        <Select value={filtroServicio} onValueChange={setFiltroServicio}>
+          <SelectTrigger className="h-9 w-44 bg-transparent">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Todos los servicios</SelectItem>
+            {SERVICIOS_EXTERNOS.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          size="sm"
+          variant={soloPendientes ? "default" : "outline"}
+          onClick={() => setSoloPendientes(!soloPendientes)}
+          className="h-9"
+        >
+          {soloPendientes ? "Solo pendientes" : "Todos"}
+        </Button>
+        <span className="ml-auto text-xs text-muted-foreground">{filtrados.length} registros</span>
+      </div>
+
+      {porServicio.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {porServicio.map(([nombre, saldo]) => (
+            <button
+              key={nombre}
+              type="button"
+              onClick={() => setFiltroServicio(nombre)}
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-left transition-colors hover:border-cyan-300"
+            >
+              <p className="text-[11px] text-muted-foreground">{nombre}</p>
+              <p className="text-sm font-semibold tabular-nums text-foreground">
+                {fmtCurrency(saldo)}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead className="font-semibold">Folio</TableHead>
+              <TableHead className="font-semibold">Servicio</TableHead>
+              <TableHead className="font-semibold">Cliente</TableHead>
+              <TableHead className="font-semibold text-right">Costo</TableHead>
+              <TableHead className="font-semibold text-right">Enviadas</TableHead>
+              <TableHead className="font-semibold text-right">Recibidas</TableHead>
+              <TableHead className="font-semibold text-right">Merma</TableHead>
+              <TableHead className="font-semibold text-right">Valor</TableHead>
+              <TableHead className="font-semibold text-right">Pagado</TableHead>
+              <TableHead className="font-semibold text-right">Saldo</TableHead>
+              <TableHead className="font-semibold">Estado</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 11 }).map((__, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : filtrados.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={11} className="h-24 text-center text-sm text-muted-foreground">
+                  {servicios.length === 0
+                    ? "Ningún folio tiene costos de servicios capturados en el Excel."
+                    : "Sin registros para los filtros aplicados."}
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtrados.map((s) => (
+                <TableRow key={`${s.folio}-${s.servicio}`} className="hover:bg-muted/30">
+                  <TableCell>
+                    <FolioLink folio={s.folio} className="text-xs" />
+                  </TableCell>
+                  <TableCell className="text-sm font-medium">{s.servicio}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{s.cliente ?? "—"}</TableCell>
+                  <TableCell className="text-right text-sm">
+                    <ValorUnitario valor={s.costo_unitario} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <PiezasEditable
+                      valor={s.piezas_enviadas}
+                      sugerido={s.piezas_orden ?? 0}
+                      etiquetaSugerido="Usar las piezas de la orden"
+                      disabled={readOnly}
+                      onSave={(v) => guardarPiezas(s.folio, s.servicio, "piezas_enviadas", v)}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <PiezasEditable
+                      valor={s.piezas_recibidas}
+                      sugerido={s.piezas_enviadas}
+                      etiquetaSugerido="Usar las piezas enviadas"
+                      disabled={readOnly}
+                      onSave={(v) => guardarPiezas(s.folio, s.servicio, "piezas_recibidas", v)}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">
+                    {s.merma > 0 ? (
+                      <span className="text-amber-600">{s.merma.toLocaleString("es-MX")}</span>
+                    ) : (
+                      <span className="text-muted-foreground/50">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm font-medium">
+                    {fmtCurrency(num(s.valor))}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm text-emerald-700">
+                    {num(s.pagado) > 0 ? (
+                      fmtCurrency(num(s.pagado))
+                    ) : (
+                      <span className="text-muted-foreground/50">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-right tabular-nums text-sm font-semibold",
+                      num(s.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground",
+                    )}
+                  >
+                    {fmtCurrency(num(s.saldo))}
+                  </TableCell>
+                  <TableCell>
+                    <EstadoPill estado={s.estado} />
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        Los pagos de cada servicio se registran desde el botón <strong>Gestionar</strong> del
+        folio, en la pestaña de Cuentas por Pagar.
+      </p>
+    </div>
+  )
+}
+
+// ─── Pestaña 5: Historial de pagos ───────────────────────────────────────────
+
+/**
+ * Todo lo pagado en una sola línea de tiempo, de maquila y de servicios.
+ *
+ * El libro mayor responde "¿cómo va este folio?"; esta pestaña responde
+ * "¿qué le he pagado a esta persona y cuándo?", que es la pregunta que se
+ * hace al cuadrar cuentas con un maquilero.
+ */
+function HistorialTab({ configMissing }: { configMissing: boolean }) {
+  const [pagos, setPagos] = useState<HistorialPago[]>([])
+  const [loading, setLoading] = useState(false)
+  const [beneficiario, setBeneficiario] = useState("__all__")
+  const [tipo, setTipo] = useState("__all__")
+  const [desde, setDesde] = useState("")
+  const [hasta, setHasta] = useState("")
+  const [search, setSearch] = useState("")
+
+  const fetchPagos = useCallback(async () => {
+    if (configMissing) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    setLoading(true)
+    const { data, error } = await supabase
+      .from("vw_historial_pagos")
+      .select("*")
+      .eq("idempresa", IDEMPRESA)
+      .order("fecha", { ascending: false })
+    setLoading(false)
+    if (error) {
+      toast.error("No se pudo cargar el historial", { description: error.message })
+      return
+    }
+    setPagos((data as HistorialPago[]) ?? [])
+  }, [configMissing])
+
+  useEffect(() => {
+    fetchPagos()
+  }, [fetchPagos])
+
+  const beneficiarios = useMemo(
+    () => Array.from(new Set(pagos.map((p) => p.beneficiario).filter(Boolean) as string[])).sort(),
+    [pagos],
+  )
+  const tipos = useMemo(
+    () => Array.from(new Set(pagos.map((p) => p.tipo))).sort(),
+    [pagos],
+  )
+
+  const filtrados = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return pagos.filter((p) => {
+      if (beneficiario !== "__all__" && p.beneficiario !== beneficiario) return false
+      if (tipo !== "__all__" && p.tipo !== tipo) return false
+      if (desde && p.fecha < desde) return false
+      if (hasta && p.fecha > hasta) return false
+      if (q && !`${p.folio} ${p.referencia ?? ""} ${p.cliente ?? ""}`.toLowerCase().includes(q))
+        return false
+      return true
+    })
+  }, [pagos, beneficiario, tipo, desde, hasta, search])
+
+  const kpis = useMemo(() => {
+    let total = 0
+    let adelantos = 0
+    for (const p of filtrados) {
+      total += num(p.monto)
+      if (p.es_adelanto) adelantos += num(p.monto)
+    }
+    return { total, adelantos, movimientos: filtrados.length }
+  }, [filtrados])
+
+  const porBeneficiario = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of filtrados) {
+      const k = p.beneficiario ?? "—"
+      m.set(k, (m.get(k) ?? 0) + num(p.monto))
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1])
+  }, [filtrados])
+
+  const exportar = () => {
+    if (filtrados.length === 0) {
+      toast.warning("Sin pagos para exportar con los filtros aplicados.")
+      return
+    }
+    const datos = filtrados.map((p) => ({
+      Fecha: p.fecha,
+      Tipo: p.tipo,
+      Beneficiario: p.beneficiario ?? "",
+      Folio: p.folio,
+      Modelo: p.modelo ?? "",
+      Cliente: p.cliente ?? "",
+      Monto: num(p.monto),
+      Adelanto: p.es_adelanto ? "Sí" : "No",
+      Referencia: p.referencia ?? "",
+      "Capturado por": p.capturado_por ?? "",
+    }))
+    const ws = XLSX.utils.json_to_sheet(datos)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Historial de pagos")
+    XLSX.writeFile(wb, `historial_pagos_${hoyISO()}.xlsx`)
+    toast.success(`${datos.length} pagos exportados`)
+  }
+
+  const limpiar = () => {
+    setBeneficiario("__all__")
+    setTipo("__all__")
+    setDesde("")
+    setHasta("")
+    setSearch("")
+  }
+
+  const hayFiltros =
+    beneficiario !== "__all__" || tipo !== "__all__" || desde !== "" || hasta !== "" || search !== ""
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard
+          label="Total pagado"
+          value={kpis.total}
+          format={fmtCurrency}
+          icon={<Wallet className="size-3.5" />}
+          iconBg="bg-emerald-100 ring-emerald-200"
+          iconColor="text-emerald-600"
+          valueColor="text-emerald-700"
+        />
+        <KpiCard
+          label="En adelantos"
+          value={kpis.adelantos}
+          format={fmtCurrency}
+          icon={<Banknote className="size-3.5" />}
+          iconBg="bg-indigo-100 ring-indigo-200"
+          iconColor="text-indigo-600"
+          valueColor={kpis.adelantos > 0 ? "text-indigo-700" : "text-foreground"}
+          hint="Pagos hechos antes de recibir"
+        />
+        <KpiCard
+          label="Movimientos"
+          value={kpis.movimientos}
+          icon={<History className="size-3.5" />}
+          iconBg="bg-slate-100 ring-slate-200"
+          iconColor="text-slate-600"
+          valueColor="text-foreground"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2">
+        <CampoMini label="Beneficiario" ancho="w-52">
+          <Select value={beneficiario} onValueChange={setBeneficiario}>
+            <SelectTrigger className="h-9 bg-transparent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Todos</SelectItem>
+              {beneficiarios.map((b) => (
+                <SelectItem key={b} value={b}>
+                  {b}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CampoMini>
+        <CampoMini label="Tipo" ancho="w-40">
+          <Select value={tipo} onValueChange={setTipo}>
+            <SelectTrigger className="h-9 bg-transparent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Todos</SelectItem>
+              {tipos.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CampoMini>
+        <CampoMini label="Desde" ancho="w-36">
+          <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="h-9" />
+        </CampoMini>
+        <CampoMini label="Hasta" ancho="w-36">
+          <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="h-9" />
+        </CampoMini>
+        <CampoMini label="Buscar" ancho="w-52">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Folio o referencia…"
+            className="h-9"
+          />
+        </CampoMini>
+
+        <div className="ml-auto flex items-center gap-2">
+          {hayFiltros && (
+            <button
+              type="button"
+              onClick={limpiar}
+              className="text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              Limpiar
+            </button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportar}
+            disabled={filtrados.length === 0}
+            className="h-9 gap-1.5 bg-transparent"
+          >
+            <Download className="size-3.5" />
+            Exportar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchPagos}
+            disabled={loading}
+            className="h-9 gap-1.5 bg-transparent"
+          >
+            {loading ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Actualizar
+          </Button>
+        </div>
+      </div>
+
+      {porBeneficiario.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {porBeneficiario.map(([nombre, total]) => (
+            <button
+              key={nombre}
+              type="button"
+              onClick={() => setBeneficiario(nombre)}
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-left transition-colors hover:border-emerald-300"
+            >
+              <p className="text-[11px] text-muted-foreground">{nombre}</p>
+              <p className="text-sm font-semibold tabular-nums text-foreground">
+                {fmtCurrency(total)}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead className="font-semibold">Fecha</TableHead>
+              <TableHead className="font-semibold">Tipo</TableHead>
+              <TableHead className="font-semibold">Beneficiario</TableHead>
+              <TableHead className="font-semibold">Folio</TableHead>
+              <TableHead className="font-semibold">Cliente</TableHead>
+              <TableHead className="font-semibold text-right">Monto</TableHead>
+              <TableHead className="font-semibold">Referencia</TableHead>
+              <TableHead className="font-semibold">Capturó</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 8 }).map((__, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : filtrados.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="h-28 text-center text-sm text-muted-foreground">
+                  {pagos.length === 0
+                    ? "Todavía no se ha registrado ningún pago."
+                    : "Sin pagos para los filtros aplicados."}
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtrados.map((p) => (
+                <TableRow key={p.clave} className="hover:bg-muted/30">
+                  <TableCell className="whitespace-nowrap text-sm">{fmtFecha(p.fecha)}</TableCell>
+                  <TableCell>
+                    <span
+                      className={cn(
+                        "inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                        p.tipo === "Maquila"
+                          ? "border-violet-300 bg-violet-50 text-violet-700"
+                          : "border-cyan-300 bg-cyan-50 text-cyan-700",
+                      )}
+                    >
+                      {p.tipo}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-sm">{p.beneficiario ?? "—"}</TableCell>
+                  <TableCell>
+                    <FolioLink folio={p.folio} className="text-xs" />
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{p.cliente ?? "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right text-sm">
+                    <span className="font-semibold tabular-nums">{fmtCurrency(num(p.monto))}</span>
+                    {p.es_adelanto && (
+                      <span
+                        className="ml-1.5 rounded-full border border-indigo-300 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700"
+                        title="Pago hecho antes de recibir la mercancía"
+                      >
+                        adelanto
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {p.referencia ?? p.comentarios ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {p.capturado_por ?? "—"}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }

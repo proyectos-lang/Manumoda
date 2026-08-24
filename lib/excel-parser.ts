@@ -179,6 +179,10 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
     const MONETARIAS = [
       ["COSTO_MAQUILA", "costo_maquila"],
       ["COSTO_LAVANDERIA", "costo_lavanderia"],
+      ["COSTO_ESTAMPADO", "costo_estampado"],
+      ["COSTO_BORDADO", "costo_bordado"],
+      ["COSTO_CORTE_EXTERNO", "costo_corte_externo"],
+      ["COSTO_OTRO", "costo_otro"],
       ["PRECIO_VENTA", "precio_venta"],
       ["PRECIO_PUBLICO", "precio_publico"],
     ] as const

@@ -203,11 +203,13 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
             key={col}
             className="flex h-[min(70vh,640px)] min-h-[320px] flex-col rounded-xl border border-border bg-white/70"
           >
-            <div className="flex shrink-0 items-center justify-between rounded-t-xl border-b border-border bg-white/80 px-2.5 py-2">
-              <span className="text-xs font-semibold text-foreground">{col}</span>
+            <div className="flex shrink-0 items-center justify-between gap-1 rounded-t-xl border-b border-border bg-white/80 px-2.5 py-2">
+              <span className="truncate text-xs font-semibold text-foreground" title={col}>
+                {col}
+              </span>
               <span
                 className={cn(
-                  "rounded-full border px-1.5 text-[10px] font-semibold tabular-nums",
+                  "shrink-0 rounded-full border px-1.5 text-[10px] font-semibold tabular-nums",
                   KANBAN_COL_CLASS[col],
                 )}
               >
@@ -223,10 +225,12 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
                 items.map((o) => (
                   <div
                     key={String(o.id)}
-                    className="rounded-lg border border-border bg-white p-2.5 shadow-none transition-colors hover:border-violet-300"
+                    className="overflow-hidden rounded-lg border border-border bg-white p-2.5 shadow-none transition-colors hover:border-violet-300"
                   >
                     <div className="flex items-start justify-between gap-1">
-                      <FolioLink folio={o.folio} className="text-[11px]" />
+                      <span className="min-w-0 truncate">
+                        <FolioLink folio={o.folio} className="text-[11px]" />
+                      </span>
                       <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                         {o.piezas ?? 0} pz
                       </span>

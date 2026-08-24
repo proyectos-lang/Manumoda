@@ -44,10 +44,18 @@ export function RiskBadge({
   }
   const c = config[risk]
   const Icon = c.icon
+  // `max-w-full` + truncado: la insignia base trae `w-fit whitespace-nowrap`,
+  // así que en contenedores angostos —las tarjetas del Kanban, con diez
+  // columnas— crecía más que su tarjeta y el texto se desbordaba. El título
+  // conserva la etiqueta completa para cuando se recorta.
   return (
-    <Badge variant="outline" className={cn("gap-1.5 font-medium", c.className, className)}>
-      <Icon className="size-3" />
-      {c.label}
+    <Badge
+      variant="outline"
+      title={c.label}
+      className={cn("max-w-full gap-1.5 font-medium", c.className, className)}
+    >
+      <Icon className="size-3 shrink-0" />
+      <span className="truncate">{c.label}</span>
     </Badge>
   )
 }

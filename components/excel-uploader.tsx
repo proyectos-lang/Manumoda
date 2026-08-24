@@ -46,6 +46,10 @@ type UpdateDiff = {
 const COLUMNAS_DINERO = [
   ["costo_maquila", "costo maquila"],
   ["costo_lavanderia", "costo lavandería"],
+  ["costo_estampado", "costo estampado"],
+  ["costo_bordado", "costo bordado"],
+  ["costo_corte_externo", "costo corte externo"],
+  ["costo_otro", "costo otro"],
   ["precio_venta", "precio venta"],
   ["precio_publico", "precio público"],
 ] as const satisfies readonly (readonly [keyof ParsedRow, string])[]
@@ -125,6 +129,10 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             fecha_cancelacion: string | null
             costo_maquila: number | null
             costo_lavanderia: number | null
+            costo_estampado: number | null
+            costo_bordado: number | null
+            costo_corte_externo: number | null
+            costo_otro: number | null
             precio_venta: number | null
             precio_publico: number | null
           }
@@ -136,7 +144,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           const { data, error } = await supabase
             .from("ordenes_produccion")
             .select(
-              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, costo_maquila, costo_lavanderia, precio_venta, precio_publico",
+              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, costo_maquila, costo_lavanderia, costo_estampado, costo_bordado, costo_corte_externo, costo_otro, precio_venta, precio_publico",
             )
             .eq("idempresa", IDEMPRESA)
             .in("folio", slice)
@@ -155,6 +163,10 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             fecha_cancelacion: string | null
             costo_maquila: number | null
             costo_lavanderia: number | null
+            costo_estampado: number | null
+            costo_bordado: number | null
+            costo_corte_externo: number | null
+            costo_otro: number | null
             precio_venta: number | null
             precio_publico: number | null
           }[]) {
