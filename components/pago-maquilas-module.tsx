@@ -864,7 +864,7 @@ function DesgloseValor({
             etiqueta={
               <>
                 Costo final
-                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                <span className="ml-1.5 text-[13px] font-normal text-muted-foreground">
                   {row.piezas_recibidas.toLocaleString("es-MX")} recibidas ×{" "}
                   <CostoEditable
                     valor={row.costo_maquila}
@@ -881,7 +881,7 @@ function DesgloseValor({
             etiqueta={
               <>
                 Pzs no entregadas
-                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                <span className="ml-1.5 text-[13px] font-normal text-muted-foreground">
                   {row.piezas_no_entregadas} × {fmtCurrency(num(row.precio_venta))} de venta
                 </span>
               </>
@@ -897,7 +897,7 @@ function DesgloseValor({
             etiqueta={
               <>
                 Demora en entrega
-                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                <span className="ml-1.5 text-[13px] font-normal text-muted-foreground">
                   {row.semanas_demora > 0
                     ? `${row.semanas_demora} sem × ${DEMORA_SEMANAL_PCT}% = ${num(row.demora_pct).toFixed(1)}%`
                     : "sin atraso"}
@@ -950,7 +950,7 @@ function DesgloseValor({
       </div>
 
       {row.semanas_demora > 0 && (
-        <p className="mt-3 flex items-start gap-1.5 text-[11px] text-rose-700">
+        <p className="mt-3 flex items-start gap-1.5 text-[13px] text-rose-700">
           <Clock className="mt-0.5 size-3 shrink-0" />
           {row.ultima_recepcion
             ? `Se recibió ${row.semanas_demora} semanas después de la fecha de entrega.`
@@ -974,11 +974,11 @@ function Linea({
 }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-xs text-muted-foreground">{etiqueta}</span>
+      <span className="text-sm text-muted-foreground">{etiqueta}</span>
       <span
         className={cn(
           "shrink-0 tabular-nums",
-          destacado ? "text-base font-bold" : "text-sm font-medium",
+          destacado ? "text-lg font-bold" : "text-base font-medium",
           tono,
         )}
       >
@@ -1033,7 +1033,7 @@ function CostoEditable({
             setEditando(false)
           }
         }}
-        className="inline-block h-6 w-24 px-1.5 py-0 text-[11px]"
+        className="inline-block h-6 w-24 px-1.5 py-0 text-[13px]"
       />
     )
   }
@@ -1081,10 +1081,10 @@ function Seccion({
   return (
     <div className="rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
-        <p className="text-xs font-semibold text-foreground">{titulo}</p>
-        <p className="text-xs font-medium tabular-nums text-muted-foreground">{total}</p>
+        <p className="text-sm font-semibold text-foreground">{titulo}</p>
+        <p className="text-sm font-medium tabular-nums text-muted-foreground">{total}</p>
       </div>
-      <div className="max-h-44 divide-y divide-border/60 overflow-y-auto">{children}</div>
+      <div className="max-h-60 divide-y divide-border/60 overflow-y-auto">{children}</div>
       {formulario && <div className="border-t border-border bg-muted/20 p-2">{formulario}</div>}
     </div>
   )
@@ -1102,9 +1102,9 @@ function FilaMovimiento({
   onBorrar?: () => void
 }) {
   return (
-    <div className="flex items-center gap-3 px-3 py-1.5 text-xs">
+    <div className="flex items-center gap-3 px-3 py-1.5 text-sm">
       <span className="w-16 shrink-0 text-muted-foreground">{fmtFecha(fecha)}</span>
-      <span className="w-28 shrink-0 font-medium tabular-nums text-foreground">{principal}</span>
+      <span className="w-36 shrink-0 font-medium tabular-nums text-foreground">{principal}</span>
       <span className="truncate text-muted-foreground">{detalle ?? ""}</span>
       {onBorrar && (
         <button
@@ -1121,7 +1121,7 @@ function FilaMovimiento({
 }
 
 function Vacio({ texto }: { texto: string }) {
-  return <p className="px-3 py-3 text-center text-[11px] text-muted-foreground/60">{texto}</p>
+  return <p className="px-3 py-3 text-center text-[13px] text-muted-foreground/60">{texto}</p>
 }
 
 function CampoMini({
@@ -1135,7 +1135,7 @@ function CampoMini({
 }) {
   return (
     <div className={cn("space-y-1", ancho)}>
-      <label className="block text-[10px] uppercase tracking-wide text-muted-foreground">
+      <label className="block text-xs uppercase tracking-wide text-muted-foreground">
         {label}
       </label>
       {children}
@@ -1152,7 +1152,7 @@ function CheckAdelanto({
   onChange: (v: boolean) => void
 }) {
   return (
-    <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-foreground">
+    <label className="flex cursor-pointer items-center gap-1.5 text-[13px] font-medium text-foreground">
       <input
         type="checkbox"
         checked={checked}
@@ -1208,23 +1208,23 @@ function SeccionRecepciones({
       formulario={
         readOnly ? undefined : (
           <div className="flex flex-wrap items-end gap-2">
-            <CampoMini label="Fecha" ancho="w-32">
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
+            <CampoMini label="Fecha" ancho="w-36">
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-9" />
             </CampoMini>
-            <CampoMini label="Piezas" ancho="w-24">
+            <CampoMini label="Piezas" ancho="w-28">
               <Input
                 type="number"
                 min="1"
                 value={piezas}
                 onChange={(e) => setPiezas(e.target.value)}
-                className="h-8"
+                className="h-9"
               />
             </CampoMini>
             <Button
               size="sm"
               onClick={enviar}
               disabled={!valido || guardando}
-              className="h-8 gap-1.5 bg-sky-600 text-white hover:bg-sky-700"
+              className="h-9 gap-1.5 bg-sky-600 text-white hover:bg-sky-700"
             >
               {guardando ? (
                 <Loader2 className="size-3.5 animate-spin" />
@@ -1234,7 +1234,7 @@ function SeccionRecepciones({
               Recibir
             </Button>
             {excede && (
-              <p className="w-full text-[11px] font-medium text-amber-600">
+              <p className="w-full text-[13px] font-medium text-amber-600">
                 Se supera lo cortado ({base.toLocaleString("es-MX")} pz).
               </p>
             )}
@@ -1276,26 +1276,26 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
   return (
     <div className="rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
-        <p className="text-xs font-semibold text-foreground">Piezas no entregadas</p>
-        <p className="text-xs font-medium tabular-nums text-muted-foreground">
+        <p className="text-sm font-semibold text-foreground">Piezas no entregadas</p>
+        <p className="text-sm font-medium tabular-nums text-muted-foreground">
           {sinPrecio ? "Sin precio de venta" : fmtCurrency(num(row.valor_no_entregadas))}
         </p>
       </div>
 
       <div className="space-y-2 p-3">
-        <div className="flex items-center justify-between gap-3 text-xs">
+        <div className="flex items-center justify-between gap-3 text-sm">
           <span className="text-muted-foreground">Piezas de la orden</span>
           <span className="tabular-nums font-medium">
             {orden > 0 ? orden.toLocaleString("es-MX") : "—"}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-3 text-xs">
+        <div className="flex items-center justify-between gap-3 text-sm">
           <span className="text-muted-foreground">− Recibidas</span>
           <span className="tabular-nums font-medium">
             {row.piezas_recibidas.toLocaleString("es-MX")}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-3 border-t border-border pt-2 text-xs">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-2 text-sm">
           <span className="font-semibold text-foreground">No entregadas</span>
           <span
             className={cn(
@@ -1308,7 +1308,7 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
         </div>
 
         {row.piezas_no_entregadas > 0 && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             {sinPrecio ? (
               <span className="font-medium text-amber-600">
                 Este folio no tiene precio de venta, así que no descuenta nada.
@@ -1325,7 +1325,7 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
           </p>
         )}
 
-        <p className="border-t border-border pt-2 text-[11px] text-muted-foreground/80">
+        <p className="border-t border-border pt-2 text-[13px] text-muted-foreground/80">
           Se calcula solo. Para corregirlo hay que registrar las entregas que falten en el
           panel de la izquierda.
         </p>
@@ -1391,7 +1391,7 @@ function SeccionPagos({
       }`}
       formulario={
         readOnly ? undefined : !row.costo_capturado && !adelanto ? (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             Sin costo unitario no hay contra qué calcular un pago. Puedes registrar un{" "}
             <button
               type="button"
@@ -1404,17 +1404,17 @@ function SeccionPagos({
           </p>
         ) : (
           <div className="flex flex-wrap items-end gap-2">
-            <CampoMini label="Fecha" ancho="w-32">
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
+            <CampoMini label="Fecha" ancho="w-36">
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-9" />
             </CampoMini>
-            <CampoMini label="Monto" ancho="w-32">
+            <CampoMini label="Monto" ancho="w-36">
               <Input
                 type="number"
                 step="0.01"
                 min="0"
                 value={monto}
                 onChange={(e) => setMonto(e.target.value)}
-                className="h-8"
+                className="h-9"
               />
             </CampoMini>
             <CampoMini label="Referencia" ancho="flex-1 min-w-40">
@@ -1422,7 +1422,7 @@ function SeccionPagos({
                 value={referencia}
                 onChange={(e) => setReferencia(e.target.value)}
                 placeholder="Transferencia, cheque…"
-                className="h-8"
+                className="h-9"
               />
             </CampoMini>
             <Button
@@ -1447,7 +1447,7 @@ function SeccionPagos({
             </Button>
             <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1">
               <CheckAdelanto checked={adelanto} onChange={setAdelanto} />
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 {adelanto
                   ? "Pago sin recibir: queda registrado como anticipo."
                   : `Saldo pendiente: ${fmtCurrency(saldoPendiente)}`}
@@ -1529,7 +1529,7 @@ function SeccionServicios({
   if (servicios.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border p-4 text-center">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Este folio no tiene costos de servicios externos capturados en el Excel
           (lavandería, estampado, bordado, corte externo u otro).
         </p>
@@ -1540,8 +1540,8 @@ function SeccionServicios({
   return (
     <div className="rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
-        <p className="text-xs font-semibold text-foreground">Servicios externos</p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm font-semibold text-foreground">Servicios externos</p>
+        <p className="text-sm text-muted-foreground">
           Se paga por las piezas que devolvieron
         </p>
       </div>
@@ -1550,20 +1550,20 @@ function SeccionServicios({
           <div key={s.servicio} className="space-y-2 px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <div className="w-28 shrink-0">
-                <p className="text-xs font-semibold text-foreground">{s.servicio}</p>
+                <p className="text-sm font-semibold text-foreground">{s.servicio}</p>
                 <EstadoPill estado={s.estado} />
               </div>
 
               <div className="flex items-end gap-3">
                 <div>
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
                     Costo
                   </p>
-                  <p className="text-xs font-medium tabular-nums">
+                  <p className="text-sm font-medium tabular-nums">
                     {s.costo_unitario != null ? (
                       <>
                         {fmtCurrency(num(s.costo_unitario))}
-                        <span className="text-[10px] font-normal text-muted-foreground">/pz</span>
+                        <span className="text-xs font-normal text-muted-foreground">/pz</span>
                       </>
                     ) : (
                       <span className="text-amber-600">sin valor</span>
@@ -1571,7 +1571,7 @@ function SeccionServicios({
                   </p>
                 </div>
                 <div>
-                  <p className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <p className="mb-0.5 text-xs uppercase tracking-wide text-muted-foreground">
                     Enviadas
                   </p>
                   <PiezasEditable
@@ -1583,7 +1583,7 @@ function SeccionServicios({
                   />
                 </div>
                 <div>
-                  <p className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <p className="mb-0.5 text-xs uppercase tracking-wide text-muted-foreground">
                     Recibidas
                   </p>
                   <PiezasEditable
@@ -1596,10 +1596,10 @@ function SeccionServicios({
                 </div>
                 {s.merma > 0 && (
                   <div>
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
                       Merma
                     </p>
-                    <p className="text-xs font-medium tabular-nums text-amber-600">
+                    <p className="text-sm font-medium tabular-nums text-amber-600">
                       {s.merma.toLocaleString("es-MX")}
                     </p>
                   </div>
@@ -1608,18 +1608,18 @@ function SeccionServicios({
 
               <div className="ml-auto flex items-end gap-3">
                 <div className="text-right">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
                     Valor
                   </p>
-                  <p className="text-xs font-semibold tabular-nums">{fmtCurrency(num(s.valor))}</p>
+                  <p className="text-sm font-semibold tabular-nums">{fmtCurrency(num(s.valor))}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
                     Saldo
                   </p>
                   <p
                     className={cn(
-                      "text-xs font-semibold tabular-nums",
+                      "text-sm font-semibold tabular-nums",
                       num(s.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground",
                     )}
                   >
@@ -1631,7 +1631,7 @@ function SeccionServicios({
                     size="sm"
                     variant="outline"
                     onClick={() => setPagando(pagando === s.servicio ? null : s.servicio)}
-                    className="h-7 gap-1 text-xs"
+                    className="h-7 gap-1 text-sm"
                   >
                     <Wallet className="size-3" />
                     Pagos
@@ -1762,29 +1762,29 @@ function PagosServicio({
 
           {!readOnly && (
             <div className="flex flex-wrap items-end gap-2 border-t border-border pt-2">
-              <CampoMini label="Fecha" ancho="w-32">
+              <CampoMini label="Fecha" ancho="w-36">
                 <Input
                   type="date"
                   value={fecha}
                   onChange={(e) => setFecha(e.target.value)}
-                  className="h-8"
+                  className="h-9"
                 />
               </CampoMini>
-              <CampoMini label="Monto" ancho="w-28">
+              <CampoMini label="Monto" ancho="w-32">
                 <Input
                   type="number"
                   step="0.01"
                   min="0"
                   value={monto}
                   onChange={(e) => setMonto(e.target.value)}
-                  className="h-8"
+                  className="h-9"
                 />
               </CampoMini>
               <CampoMini label="Referencia" ancho="flex-1 min-w-32">
                 <Input
                   value={referencia}
                   onChange={(e) => setReferencia(e.target.value)}
-                  className="h-8"
+                  className="h-9"
                 />
               </CampoMini>
               <Button
@@ -1805,7 +1805,7 @@ function PagosServicio({
               </Button>
               <div className="flex w-full items-center gap-3">
                 <CheckAdelanto checked={adelanto} onChange={setAdelanto} />
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-[13px] text-muted-foreground">
                   Saldo: {fmtCurrency(saldoPendiente)}
                 </p>
               </div>
@@ -1851,7 +1851,7 @@ function PiezasEditable({
 
   if (disabled) {
     return (
-      <span className="tabular-nums text-sm">
+      <span className="tabular-nums text-base">
         {valor > 0 ? (
           valor.toLocaleString("es-MX")
         ) : (
@@ -1877,7 +1877,7 @@ function PiezasEditable({
             setEditando(false)
           }
         }}
-        className="h-7 w-24 text-right"
+        className="h-9 w-28 text-right"
       />
     )
   }
@@ -1892,7 +1892,7 @@ function PiezasEditable({
             type="button"
             onClick={() => onSave(sugerido)}
             title={etiquetaSugerido}
-            className="rounded-md border border-sky-200 bg-sky-50 px-1.5 py-1 text-[10px] font-medium text-sky-700 transition-colors hover:border-sky-400 hover:bg-sky-100"
+            className="rounded-md border border-sky-200 bg-sky-50 px-1.5 py-1 text-xs font-medium text-sky-700 transition-colors hover:border-sky-400 hover:bg-sky-100"
           >
             {sugerido.toLocaleString("es-MX")}
           </button>
@@ -1901,7 +1901,7 @@ function PiezasEditable({
           type="button"
           onClick={() => setEditando(true)}
           title="Capturar cantidad"
-          className="flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-sky-400 hover:bg-sky-50 hover:text-sky-700"
+          className="flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-1 text-[13px] text-muted-foreground transition-colors hover:border-sky-400 hover:bg-sky-50 hover:text-sky-700"
         >
           <Pencil className="size-3" />
           Capturar
@@ -1915,7 +1915,7 @@ function PiezasEditable({
       type="button"
       onClick={() => setEditando(true)}
       title="Clic para editar"
-      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium tabular-nums text-foreground transition-colors hover:bg-muted"
+      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-base font-medium tabular-nums text-foreground transition-colors hover:bg-muted"
     >
       {valor.toLocaleString("es-MX")}
       <Pencil className="size-3 text-muted-foreground/50" />
