@@ -166,6 +166,7 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
     const fecha_cancelacion = excelDateToISO(normalized["FECHA_CANCEL"])
     const fecha_aprobacion_diseno = excelDateToISO(normalized["FECHA_STATUS2"])
     const piezas = toInt(normalized["PIEZAS"])
+    const piezas_cortadas = toInt(normalized["PIEZAS_CORTADAS"])
 
     if (seDescarto(normalized["FECHA"], fecha_pedido))
       issues.push({ fila, folio, problema: `FECHA ilegible: "${normalized["FECHA"]}"` })
@@ -173,6 +174,12 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       issues.push({ fila, folio, problema: `FECHA_CANCEL ilegible: "${normalized["FECHA_CANCEL"]}"` })
     if (seDescarto(normalized["PIEZAS"], piezas))
       issues.push({ fila, folio, problema: `PIEZAS no numérico: "${normalized["PIEZAS"]}"` })
+    if (seDescarto(normalized["PIEZAS_CORTADAS"], piezas_cortadas))
+      issues.push({
+        fila,
+        folio,
+        problema: `PIEZAS_CORTADAS no numérico: "${normalized["PIEZAS_CORTADAS"]}"`,
+      })
 
     // Dinero — todo por pieza. Un costo mal leído se propaga a los pagos,
     // así que cada uno avisa si traía contenido y no se pudo interpretar.
@@ -206,6 +213,7 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       fecha_cancelacion,
       tipo_pedido: toText(normalized["TIPO_PEDIDO"]),
       piezas,
+      piezas_cortadas,
       corte_origen: toText(normalized["CORTE"]),
       fase_actual: "Por Programar",
       fecha_aprobacion_diseno,

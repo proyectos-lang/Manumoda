@@ -5,9 +5,9 @@
  *
  * FÓRMULA (script 032):
  *
- *   precio final   = piezas recibidas × costo unitario
- *   − no entregadas × precio de venta
- *   − demora        = precio final × 1.5% por semana de atraso
+ *   costo final    = piezas recibidas × costo unitario
+ *   − no entregadas × precio de venta   (orden − recibidas, automático)
+ *   − demora        = costo final × 1.5% por semana de atraso
  *   ─────────────────────────────────────────────────────────
  *   = valor a pagar
  *
@@ -48,7 +48,6 @@ import {
   SERVICIOS_EXTERNOS,
   type HistorialPago,
   type MaquilaPago,
-  type MaquilaPenalizacion,
   type MaquilaRecepcion,
   type ServicioExterno,
   type ServicioPago,
@@ -352,7 +351,8 @@ function CuentasTab({ rows, servicios, loading, onRefresh }: TabProps) {
       "Piezas cortadas": r.piezas_cortadas,
       Recibidas: r.piezas_recibidas,
       "Costo unitario": r.costo_maquila ?? "",
-      "Precio final": num(r.precio_final),
+      "Precio venta": r.precio_venta ?? "",
+      "Costo final": num(r.costo_final),
       "Pzs no entregadas": r.piezas_no_entregadas,
       "Desc. no entregadas": num(r.valor_no_entregadas),
       "Semanas demora": r.semanas_demora,
@@ -511,6 +511,7 @@ function CuentasTab({ rows, servicios, loading, onRefresh }: TabProps) {
               <TableHead className="font-semibold text-right">Piezas cortadas</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
               <TableHead className="font-semibold text-right">Costo unitario</TableHead>
+              <TableHead className="font-semibold text-right">Precio venta</TableHead>
               <TableHead className="font-semibold text-right">Costo lavandería</TableHead>
               <TableHead className="font-semibold text-right">Pzs no entregadas</TableHead>
               <TableHead className="font-semibold text-right">Demora</TableHead>
@@ -525,7 +526,7 @@ function CuentasTab({ rows, servicios, loading, onRefresh }: TabProps) {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 14 }).map((__, j) => (
+                  {Array.from({ length: 15 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -534,7 +535,7 @@ function CuentasTab({ rows, servicios, loading, onRefresh }: TabProps) {
               ))
             ) : filtradas.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={14} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={15} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0
                     ? "Sin órdenes con maquilero asignado."
                     : "Sin folios para los filtros aplicados."}
@@ -608,24 +609,18 @@ function FolioRow({
         <ValorUnitario valor={row.costo_maquila} />
       </TableCell>
       <TableCell className="text-right text-sm">
+        <ValorUnitario valor={row.precio_venta} />
+      </TableCell>
+      <TableCell className="text-right text-sm">
         <ValorUnitario valor={row.costo_lavanderia} />
       </TableCell>
       <TableCell className="text-right tabular-nums text-sm">
         {row.piezas_no_entregadas > 0 ? (
           <span
-            className={cn(
-              row.no_entregadas_exceden_recibidas
-                ? "font-semibold text-rose-600"
-                : "text-rose-600",
-            )}
-            title={
-              row.no_entregadas_exceden_recibidas
-                ? "Hay más piezas no entregadas que recibidas — probable error de captura"
-                : `Descuenta ${fmtCurrency(num(row.valor_no_entregadas))}`
-            }
+            className="text-rose-600"
+            title={`${row.piezas_orden ?? 0} de la orden − ${row.piezas_recibidas} recibidas · descuenta ${fmtCurrency(num(row.valor_no_entregadas))}`}
           >
             {row.piezas_no_entregadas.toLocaleString("es-MX")}
-            {row.no_entregadas_exceden_recibidas && " ⚠"}
           </span>
         ) : (
           <span className="text-muted-foreground/50">—</span>
@@ -706,7 +701,6 @@ function GestionFolioDialog({
 }) {
   const { user } = useAuth()
   const [recepciones, setRecepciones] = useState<MaquilaRecepcion[]>([])
-  const [noEntregadas, setNoEntregadas] = useState<MaquilaPenalizacion[]>([])
   const [pagos, setPagos] = useState<MaquilaPago[]>([])
   const [cargando, setCargando] = useState(true)
 
@@ -716,13 +710,8 @@ function GestionFolioDialog({
     setCargando(true)
     const q = (t: string) =>
       supabase.from(t).select("*").eq("idempresa", IDEMPRESA).eq("folio", row.folio).order("fecha")
-    const [r, p, g] = await Promise.all([
-      q("maquila_recepciones"),
-      q("maquila_penalizaciones"),
-      q("maquila_pagos"),
-    ])
+    const [r, g] = await Promise.all([q("maquila_recepciones"), q("maquila_pagos")])
     setRecepciones((r.data as MaquilaRecepcion[]) ?? [])
-    setNoEntregadas((p.data as MaquilaPenalizacion[]) ?? [])
     setPagos((g.data as MaquilaPago[]) ?? [])
     setCargando(false)
   }, [row.folio])
@@ -788,7 +777,7 @@ function GestionFolioDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] w-[96vw] max-w-[1600px] overflow-y-auto sm:max-w-[96vw]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings2 className="size-4 text-emerald-600" />
@@ -817,13 +806,7 @@ function GestionFolioDialog({
               onGuardar={guardar}
               onBorrar={borrar}
             />
-            <SeccionNoEntregadas
-              filas={noEntregadas}
-              row={row}
-              readOnly={readOnly}
-              onGuardar={guardar}
-              onBorrar={borrar}
-            />
+            <PanelNoEntregadas row={row} />
             <div className="lg:col-span-2">
               <SeccionPagos
                 filas={pagos}
@@ -880,7 +863,7 @@ function DesgloseValor({
           <Linea
             etiqueta={
               <>
-                Precio final
+                Costo final
                 <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
                   {row.piezas_recibidas.toLocaleString("es-MX")} recibidas ×{" "}
                   <CostoEditable
@@ -891,7 +874,7 @@ function DesgloseValor({
                 </span>
               </>
             }
-            valor={row.costo_capturado ? fmtCurrency(num(row.precio_final)) : "Sin costo"}
+            valor={row.costo_capturado ? fmtCurrency(num(row.costo_final)) : "Sin costo"}
             tono={row.costo_capturado ? "text-foreground" : "text-amber-600"}
           />
           <Linea
@@ -1278,117 +1261,76 @@ function SeccionRecepciones({
   )
 }
 
-// ── Piezas no entregadas ──
+// ── Piezas no entregadas (automáticas) ──
 
-function SeccionNoEntregadas({
-  filas,
-  row,
-  readOnly,
-  onGuardar,
-  onBorrar,
-}: {
-  filas: MaquilaPenalizacion[]
-  row: VwPagoMaquilas
-  readOnly: boolean
-  onGuardar: GuardarFn
-  onBorrar: BorrarFn
-}) {
-  const [fecha, setFecha] = useState(hoyISO())
-  const [piezas, setPiezas] = useState("")
-  const [motivo, setMotivo] = useState("")
-  const [guardando, setGuardando] = useState(false)
-
-  const n = Number(piezas)
-  const valido = Number.isFinite(n) && n > 0 && motivo.trim() !== ""
-  const importe = valido ? n * num(row.precio_venta) : 0
-
-  const enviar = async () => {
-    setGuardando(true)
-    const ok = await onGuardar(
-      "maquila_penalizaciones",
-      { fecha, piezas: Math.trunc(n), motivo: motivo.trim() },
-      "Las piezas no entregadas",
-    )
-    setGuardando(false)
-    if (ok) {
-      setPiezas("")
-      setMotivo("")
-    }
-  }
+/**
+ * Ya no se capturan: se derivan de `piezas de la orden − recibidas`.
+ *
+ * El panel es de solo lectura a propósito. Si se pudiera capturar además a
+ * mano, esas piezas se descontarían dos veces contra el cálculo automático.
+ */
+function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
+  const orden = row.piezas_orden ?? 0
+  const sinPrecio = row.precio_venta == null
 
   return (
-    <Seccion
-      titulo="Piezas no entregadas"
-      total={
-        row.precio_venta == null
-          ? "Sin precio de venta"
-          : `${row.piezas_no_entregadas} pz · ${fmtCurrency(num(row.valor_no_entregadas))}`
-      }
-      formulario={
-        readOnly ? undefined : (
-          <div className="flex flex-wrap items-end gap-2">
-            <CampoMini label="Fecha" ancho="w-32">
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8" />
-            </CampoMini>
-            <CampoMini label="Piezas" ancho="w-20">
-              <Input
-                type="number"
-                min="1"
-                value={piezas}
-                onChange={(e) => setPiezas(e.target.value)}
-                className="h-8"
-              />
-            </CampoMini>
-            <CampoMini label="Motivo" ancho="flex-1 min-w-32">
-              <Input
-                value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
-                placeholder="Faltante, defecto…"
-                className="h-8"
-              />
-            </CampoMini>
-            <Button
-              size="sm"
-              onClick={enviar}
-              disabled={!valido || guardando}
-              className="h-8 gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
-            >
-              {guardando && <Loader2 className="size-3.5 animate-spin" />}
-              Registrar
-            </Button>
-            {valido && (
-              <p className="w-full text-[11px] text-muted-foreground">
-                {row.precio_venta == null ? (
-                  <span className="font-medium text-amber-600">
-                    Sin precio de venta: se registra pero descuenta $0.
-                  </span>
-                ) : (
-                  <>Descuenta {fmtCurrency(importe)}</>
-                )}
-              </p>
+    <div className="rounded-lg border border-border">
+      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
+        <p className="text-xs font-semibold text-foreground">Piezas no entregadas</p>
+        <p className="text-xs font-medium tabular-nums text-muted-foreground">
+          {sinPrecio ? "Sin precio de venta" : fmtCurrency(num(row.valor_no_entregadas))}
+        </p>
+      </div>
+
+      <div className="space-y-2 p-3">
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">Piezas de la orden</span>
+          <span className="tabular-nums font-medium">
+            {orden > 0 ? orden.toLocaleString("es-MX") : "—"}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">− Recibidas</span>
+          <span className="tabular-nums font-medium">
+            {row.piezas_recibidas.toLocaleString("es-MX")}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-2 text-xs">
+          <span className="font-semibold text-foreground">No entregadas</span>
+          <span
+            className={cn(
+              "tabular-nums font-bold",
+              row.piezas_no_entregadas > 0 ? "text-rose-600" : "text-foreground",
             )}
-          </div>
-        )
-      }
-    >
-      {filas.length === 0 ? (
-        <Vacio texto="Sin piezas no entregadas" />
-      ) : (
-        filas.map((p) => (
-          <FilaMovimiento
-            key={p.id}
-            fecha={p.fecha}
-            principal={`${p.piezas} pz · ${fmtCurrency(p.piezas * num(row.precio_venta))}`}
-            detalle={p.motivo}
-            onBorrar={
-              readOnly
-                ? undefined
-                : () => onBorrar("maquila_penalizaciones", p.id, "El registro")
-            }
-          />
-        ))
-      )}
-    </Seccion>
+          >
+            {row.piezas_no_entregadas.toLocaleString("es-MX")}
+          </span>
+        </div>
+
+        {row.piezas_no_entregadas > 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            {sinPrecio ? (
+              <span className="font-medium text-amber-600">
+                Este folio no tiene precio de venta, así que no descuenta nada.
+              </span>
+            ) : (
+              <>
+                Descuenta {row.piezas_no_entregadas.toLocaleString("es-MX")} ×{" "}
+                {fmtCurrency(num(row.precio_venta))} ={" "}
+                <span className="font-medium text-rose-600">
+                  {fmtCurrency(num(row.valor_no_entregadas))}
+                </span>
+              </>
+            )}
+          </p>
+        )}
+
+        <p className="border-t border-border pt-2 text-[11px] text-muted-foreground/80">
+          Se calcula solo. Para corregirlo hay que registrar las entregas que falten en el
+          panel de la izquierda.
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -2400,6 +2342,7 @@ function ServiciosTab({
               <TableHead className="font-semibold">Servicio</TableHead>
               <TableHead className="font-semibold">Cliente</TableHead>
               <TableHead className="font-semibold text-right">Costo</TableHead>
+              <TableHead className="font-semibold text-right">Precio venta</TableHead>
               <TableHead className="font-semibold text-right">Enviadas</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
               <TableHead className="font-semibold text-right">Merma</TableHead>
@@ -2413,7 +2356,7 @@ function ServiciosTab({
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 11 }).map((__, j) => (
+                  {Array.from({ length: 12 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -2422,7 +2365,7 @@ function ServiciosTab({
               ))
             ) : filtrados.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={12} className="h-24 text-center text-sm text-muted-foreground">
                   {servicios.length === 0
                     ? "Ningún folio tiene costos de servicios capturados en el Excel."
                     : "Sin registros para los filtros aplicados."}
@@ -2438,6 +2381,9 @@ function ServiciosTab({
                   <TableCell className="text-sm text-muted-foreground">{s.cliente ?? "—"}</TableCell>
                   <TableCell className="text-right text-sm">
                     <ValorUnitario valor={s.costo_unitario} />
+                  </TableCell>
+                  <TableCell className="text-right text-sm">
+                    <ValorUnitario valor={s.precio_venta} />
                   </TableCell>
                   <TableCell className="text-right">
                     <PiezasEditable

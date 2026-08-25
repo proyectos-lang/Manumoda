@@ -12,6 +12,8 @@ export type OrdenProduccion = {
   fecha_cancelacion: string | null
   tipo_pedido: string | null
   piezas: number | null
+  /** Piezas cortadas según el Excel (columna PIEZAS_CORTADAS). */
+  piezas_cortadas?: number | null
   corte_origen: string | null
   fase_actual: string
   idmaquilero?: number | null
@@ -202,11 +204,11 @@ export type VwPagoMaquilas = {
   costo_otro: number | null
   piezas_recibidas: number
   ultima_recepcion: string | null
-  /** Piezas que el maquilero no devolvió. Se descuentan a precio de venta. */
+  /** Automático: piezas de la orden − recibidas. Se descuentan a precio de venta. */
   piezas_no_entregadas: number
   valor_no_entregadas: number
   /** Piezas recibidas × costo unitario: la base del cálculo. */
-  precio_final: number
+  costo_final: number
   /** Semanas completas de atraso sobre la fecha de entrega. */
   semanas_demora: number
   /** 1.5% por semana, sin tope. */
@@ -221,8 +223,6 @@ export type VwPagoMaquilas = {
   saldo: number
   /** false = la orden no tiene costo capturado; no es lo mismo que $0. */
   costo_capturado: boolean
-  /** Señal de captura errónea. */
-  no_entregadas_exceden_recibidas: boolean
   estado_pago:
     | "Anticipo"
     | "Sin costo"
@@ -260,6 +260,8 @@ export type VwServicioPago = {
   piezas_orden: number | null
   servicio: ServicioExterno
   costo_unitario: number | null
+  /** Precio de venta del folio, informativo. */
+  precio_venta: number | null
   piezas_enviadas: number
   piezas_recibidas: number
   merma: number
@@ -361,6 +363,7 @@ export type ParsedRow = Pick<
   | "fecha_cancelacion"
   | "tipo_pedido"
   | "piezas"
+  | "piezas_cortadas"
   | "corte_origen"
   | "fase_actual"
   | "fecha_aprobacion_diseno"

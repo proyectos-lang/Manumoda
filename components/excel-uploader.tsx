@@ -127,6 +127,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             cliente: string | null
             modelo: string | null
             fecha_cancelacion: string | null
+            piezas_cortadas: number | null
             costo_maquila: number | null
             costo_lavanderia: number | null
             costo_estampado: number | null
@@ -144,7 +145,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           const { data, error } = await supabase
             .from("ordenes_produccion")
             .select(
-              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, costo_maquila, costo_lavanderia, costo_estampado, costo_bordado, costo_corte_externo, costo_otro, precio_venta, precio_publico",
+              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, piezas_cortadas, costo_maquila, costo_lavanderia, costo_estampado, costo_bordado, costo_corte_externo, costo_otro, precio_venta, precio_publico",
             )
             .eq("idempresa", IDEMPRESA)
             .in("folio", slice)
@@ -161,6 +162,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             cliente: string | null
             modelo: string | null
             fecha_cancelacion: string | null
+            piezas_cortadas: number | null
             costo_maquila: number | null
             costo_lavanderia: number | null
             costo_estampado: number | null
@@ -235,6 +237,20 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
               campo: etiqueta,
               antes: actual != null ? fmtMoneda(Number(actual)) : "—",
               despues: fmtMoneda(nuevo),
+            })
+          }
+
+          // Piezas cortadas: es la referencia de lo que se le entregó al
+          // maquilero, así que el archivo también manda sobre ella.
+          if (
+            r.piezas_cortadas != null &&
+            r.piezas_cortadas !== existing.piezas_cortadas
+          ) {
+            payload.piezas_cortadas = r.piezas_cortadas
+            cambios.push({
+              campo: "piezas cortadas",
+              antes: existing.piezas_cortadas?.toLocaleString("es-MX") ?? "—",
+              despues: r.piezas_cortadas.toLocaleString("es-MX"),
             })
           }
 
