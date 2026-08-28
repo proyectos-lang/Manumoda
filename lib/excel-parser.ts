@@ -165,6 +165,8 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
     const fecha_pedido = excelDateToISO(normalized["FECHA"])
     const fecha_cancelacion = excelDateToISO(normalized["FECHA_CANCEL"])
     const fecha_aprobacion_diseno = excelDateToISO(normalized["FECHA_STATUS2"])
+    // FECHA_STATUS5 es la entrega del maquilero; alimenta la demora de pago
+    const fecha_s5 = excelDateToISO(normalized["FECHA_STATUS5"])
     const piezas = toInt(normalized["PIEZAS"])
     const piezas_cortadas = toInt(normalized["PIEZAS_CORTADAS"])
 
@@ -217,6 +219,7 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       corte_origen: toText(normalized["CORTE"]),
       fase_actual: "Por Programar",
       fecha_aprobacion_diseno,
+      fecha_s5,
       maquilero_nombre: toText(normalized["MAQUILERO"]),
       costo_maquila: dinero.costo_maquila,
       costo_lavanderia: dinero.costo_lavanderia,

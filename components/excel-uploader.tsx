@@ -127,6 +127,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             cliente: string | null
             modelo: string | null
             fecha_cancelacion: string | null
+            fecha_s5: string | null
             piezas_cortadas: number | null
             costo_maquila: number | null
             costo_lavanderia: number | null
@@ -145,7 +146,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           const { data, error } = await supabase
             .from("ordenes_produccion")
             .select(
-              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, piezas_cortadas, costo_maquila, costo_lavanderia, costo_estampado, costo_bordado, costo_corte_externo, costo_otro, precio_venta, precio_publico",
+              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, fecha_s5, piezas_cortadas, costo_maquila, costo_lavanderia, costo_estampado, costo_bordado, costo_corte_externo, costo_otro, precio_venta, precio_publico",
             )
             .eq("idempresa", IDEMPRESA)
             .in("folio", slice)
@@ -162,6 +163,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             cliente: string | null
             modelo: string | null
             fecha_cancelacion: string | null
+            fecha_s5: string | null
             piezas_cortadas: number | null
             costo_maquila: number | null
             costo_lavanderia: number | null
@@ -237,6 +239,19 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
               campo: etiqueta,
               antes: actual != null ? fmtMoneda(Number(actual)) : "—",
               despues: fmtMoneda(nuevo),
+            })
+          }
+
+          // Entrega del maquilero (FECHA_STATUS5). Solo se escribe si está
+          // vacía: 101 órdenes ya la tienen capturada desde Seguimiento de
+          // Maquila, donde además determina la fase del pedido, y pisarlas
+          // movería fases que alguien registró a mano.
+          if (r.fecha_s5 != null && !existing.fecha_s5) {
+            payload.fecha_s5 = r.fecha_s5
+            cambios.push({
+              campo: "entrega maquilero (S5)",
+              antes: "—",
+              despues: r.fecha_s5,
             })
           }
 

@@ -45,10 +45,12 @@ import { useAuth, useReadOnly } from "@/lib/auth-context"
 import { fmtCurrency } from "@/lib/format"
 import { parseLocalDate } from "@/lib/risk"
 import {
+  PROCESOS_LAVANDERIA,
   SERVICIOS_EXTERNOS,
   type HistorialPago,
   type MaquilaPago,
   type MaquilaRecepcion,
+  type ProcesoLavanderia,
   type ServicioExterno,
   type ServicioPago,
   type VwPagoMaquilas,
@@ -793,6 +795,8 @@ function GestionFolioDialog({
         {/* ── Desglose del valor a pagar ── */}
         <DesgloseValor row={row} readOnly={readOnly} onCambiarCosto={guardarCosto} />
 
+        <HojaCostos row={row} servicios={servicios} />
+
         {cargando ? (
           <div className="flex justify-center py-8">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -847,6 +851,118 @@ function GestionFolioDialog({
  * fuente distinta —recepciones, no entregadas, fecha de entrega— y cuando
  * una cifra no cuadra hay que poder ver de dónde salió.
  */
+/**
+ * Hoja de costos del folio: lo que cuesta cada proceso y el total.
+ *
+ * Maquila sale de las piezas recibidas; cada servicio externo de las que le
+ * devolvieron. Los procesos sin costo capturado se listan igual, en ámbar,
+ * porque un renglón faltante en una hoja de costos es información: dice que
+ * ese proceso todavía no se puede costear.
+ */
+function HojaCostos({
+  row,
+  servicios,
+}: {
+  row: VwPagoMaquilas
+  servicios: VwServicioPago[]
+}) {
+  const renglones = [
+    {
+      proceso: "Maquila",
+      detalle: row.beneficiario ?? null,
+      unitario: row.costo_maquila,
+      piezas: row.piezas_recibidas,
+      total: num(row.costo_final),
+    },
+    ...servicios.map((s) => ({
+      proceso: s.servicio,
+      detalle: s.proceso,
+      unitario: s.costo_unitario,
+      piezas: s.piezas_recibidas,
+      total: num(s.valor),
+    })),
+  ]
+
+  const total = renglones.reduce((a, r) => a + r.total, 0)
+  const sinCosto = renglones.filter((r) => r.unitario == null).length
+  // Cuánto cuesta producir una pieza, con todos los procesos encima
+  const unitarioTotal = renglones.reduce((a, r) => a + num(r.unitario), 0)
+
+  return (
+    <div className="rounded-lg border border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-2">
+        <p className="text-sm font-semibold text-foreground">Hoja de costos</p>
+        <p className="text-sm text-muted-foreground">
+          Costo por pieza con todos los procesos:{" "}
+          <span className="font-semibold text-foreground">{fmtCurrency(unitarioTotal)}</span>
+          {row.precio_venta != null && (
+            <>
+              {" · venta "}
+              <span className="font-semibold text-foreground">
+                {fmtCurrency(num(row.precio_venta))}
+              </span>
+            </>
+          )}
+        </p>
+      </div>
+
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="h-9 text-sm font-semibold">Proceso</TableHead>
+            <TableHead className="h-9 text-right text-sm font-semibold">Costo unitario</TableHead>
+            <TableHead className="h-9 text-right text-sm font-semibold">Piezas</TableHead>
+            <TableHead className="h-9 text-right text-sm font-semibold">Costo total</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {renglones.map((r) => (
+            <TableRow key={r.proceso} className="hover:bg-muted/20">
+              <TableCell className="py-1.5 text-sm font-medium">
+                {r.proceso}
+                {r.detalle && (
+                  <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                    {r.detalle}
+                  </span>
+                )}
+              </TableCell>
+              <TableCell className="py-1.5 text-right text-sm">
+                {r.unitario != null ? (
+                  <span className="tabular-nums">{fmtCurrency(Number(r.unitario))}</span>
+                ) : (
+                  <span className="text-xs font-medium text-amber-600">sin costo</span>
+                )}
+              </TableCell>
+              <TableCell className="py-1.5 text-right text-sm tabular-nums text-muted-foreground">
+                {r.piezas > 0 ? r.piezas.toLocaleString("es-MX") : "—"}
+              </TableCell>
+              <TableCell className="py-1.5 text-right text-sm font-medium tabular-nums">
+                {fmtCurrency(r.total)}
+              </TableCell>
+            </TableRow>
+          ))}
+          <TableRow className="border-t-2 border-border hover:bg-transparent">
+            <TableCell colSpan={3} className="py-2 text-sm font-semibold">
+              Costo total del folio
+            </TableCell>
+            <TableCell className="py-2 text-right text-base font-bold tabular-nums">
+              {fmtCurrency(total)}
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+
+      {sinCosto > 0 && (
+        <p className="border-t border-border px-3 py-2 text-xs text-amber-700">
+          {sinCosto === 1
+            ? "Un proceso no tiene costo capturado en el Excel, así que no suma al total."
+            : `${sinCosto} procesos no tienen costo capturado en el Excel, así que no suman al total.`}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function DesgloseValor({
   row,
   readOnly,
@@ -929,6 +1045,11 @@ function DesgloseValor({
             tono="text-muted-foreground"
           />
           <Linea
+            etiqueta="Entrega del maquilero"
+            valor={fmtFecha(row.fecha_entrega_maquilero)}
+            tono="text-muted-foreground"
+          />
+          <Linea
             etiqueta="Última recepción"
             valor={fmtFecha(row.ultima_recepcion)}
             tono="text-muted-foreground"
@@ -952,9 +1073,9 @@ function DesgloseValor({
       {row.semanas_demora > 0 && (
         <p className="mt-3 flex items-start gap-1.5 text-[13px] text-rose-700">
           <Clock className="mt-0.5 size-3 shrink-0" />
-          {row.ultima_recepcion
-            ? `Se recibió ${row.semanas_demora} semanas después de la fecha de entrega.`
-            : `Han pasado ${row.semanas_demora} semanas de la fecha de entrega y no se ha recibido nada; el descuento sigue creciendo.`}
+          {row.fecha_entrega_maquilero
+            ? `El maquilero entregó ${row.semanas_demora} semanas después de la fecha comprometida.`
+            : `Han pasado ${row.semanas_demora} semanas de la fecha comprometida y el Excel no registra la entrega (FECHA_STATUS5); el descuento sigue creciendo.`}
         </p>
       )}
     </div>
@@ -2241,6 +2362,26 @@ function ServiciosTab({
     onRefresh()
   }
 
+  const guardarProceso = async (
+    folio: string,
+    servicio: ServicioExterno,
+    proceso: ProcesoLavanderia | null,
+  ) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("servicio_unidades")
+      .upsert(
+        { idempresa: IDEMPRESA, folio, servicio, proceso },
+        { onConflict: "idempresa,folio,servicio" },
+      )
+    if (error) {
+      toast.error("No se pudo guardar el proceso", { description: error.message })
+      return
+    }
+    onRefresh()
+  }
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -2339,14 +2480,15 @@ function ServiciosTab({
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               <TableHead className="font-semibold">Folio</TableHead>
-              <TableHead className="font-semibold">Servicio</TableHead>
               <TableHead className="font-semibold">Cliente</TableHead>
-              <TableHead className="font-semibold text-right">Costo</TableHead>
-              <TableHead className="font-semibold text-right">Precio venta</TableHead>
+              <TableHead className="font-semibold">Familia</TableHead>
+              <TableHead className="font-semibold">Servicio</TableHead>
+              <TableHead className="font-semibold">Proceso</TableHead>
+              <TableHead className="font-semibold text-right">Piezas cortadas</TableHead>
+              <TableHead className="font-semibold text-right">Costo unitario</TableHead>
               <TableHead className="font-semibold text-right">Enviadas</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
-              <TableHead className="font-semibold text-right">Merma</TableHead>
-              <TableHead className="font-semibold text-right">Valor</TableHead>
+              <TableHead className="font-semibold text-right">Costo total</TableHead>
               <TableHead className="font-semibold text-right">Pagado</TableHead>
               <TableHead className="font-semibold text-right">Saldo</TableHead>
               <TableHead className="font-semibold">Estado</TableHead>
@@ -2356,7 +2498,7 @@ function ServiciosTab({
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 12 }).map((__, j) => (
+                  {Array.from({ length: 13 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -2365,7 +2507,7 @@ function ServiciosTab({
               ))
             ) : filtrados.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={13} className="h-24 text-center text-sm text-muted-foreground">
                   {servicios.length === 0
                     ? "Ningún folio tiene costos de servicios capturados en el Excel."
                     : "Sin registros para los filtros aplicados."}
@@ -2377,19 +2519,28 @@ function ServiciosTab({
                   <TableCell>
                     <FolioLink folio={s.folio} className="text-xs" />
                   </TableCell>
-                  <TableCell className="text-sm font-medium">{s.servicio}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{s.cliente ?? "—"}</TableCell>
-                  <TableCell className="text-right text-sm">
-                    <ValorUnitario valor={s.costo_unitario} />
+                  <TableCell className="text-sm text-muted-foreground">{s.familia ?? "—"}</TableCell>
+                  <TableCell className="text-sm font-medium">{s.servicio}</TableCell>
+                  <TableCell>
+                    <ProcesoSelect
+                      servicio={s.servicio}
+                      valor={s.proceso}
+                      disabled={readOnly}
+                      onSave={(v) => guardarProceso(s.folio, s.servicio, v)}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
+                    {s.piezas_cortadas > 0 ? s.piezas_cortadas.toLocaleString("es-MX") : "—"}
                   </TableCell>
                   <TableCell className="text-right text-sm">
-                    <ValorUnitario valor={s.precio_venta} />
+                    <ValorUnitario valor={s.costo_unitario} />
                   </TableCell>
                   <TableCell className="text-right">
                     <PiezasEditable
                       valor={s.piezas_enviadas}
-                      sugerido={s.piezas_orden ?? 0}
-                      etiquetaSugerido="Usar las piezas de la orden"
+                      sugerido={s.piezas_cortadas || s.piezas_orden || 0}
+                      etiquetaSugerido="Usar las piezas cortadas"
                       disabled={readOnly}
                       onSave={(v) => guardarPiezas(s.folio, s.servicio, "piezas_enviadas", v)}
                     />
@@ -2402,13 +2553,6 @@ function ServiciosTab({
                       disabled={readOnly}
                       onSave={(v) => guardarPiezas(s.folio, s.servicio, "piezas_recibidas", v)}
                     />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">
-                    {s.merma > 0 ? (
-                      <span className="text-amber-600">{s.merma.toLocaleString("es-MX")}</span>
-                    ) : (
-                      <span className="text-muted-foreground/50">—</span>
-                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-sm font-medium">
                     {fmtCurrency(num(s.valor))}
@@ -2773,5 +2917,59 @@ function HistorialTab({ configMissing }: { configMissing: boolean }) {
         </Table>
       </div>
     </div>
+  )
+}
+
+/**
+ * Tipo de lavado del folio.
+ *
+ * Solo aplica a Lavandería; en los demás servicios la celda queda vacía en
+ * vez de ofrecer un desplegable que no significa nada ahí.
+ */
+function ProcesoSelect({
+  servicio,
+  valor,
+  disabled,
+  onSave,
+}: {
+  servicio: ServicioExterno
+  valor: ProcesoLavanderia | null
+  disabled: boolean
+  onSave: (v: ProcesoLavanderia | null) => void
+}) {
+  if (servicio !== "Lavandería") {
+    return <span className="text-sm text-muted-foreground/40">—</span>
+  }
+
+  if (disabled) {
+    return (
+      <span className="text-sm">
+        {valor ?? <span className="text-muted-foreground/50">—</span>}
+      </span>
+    )
+  }
+
+  return (
+    <Select
+      value={valor ?? "__none__"}
+      onValueChange={(v) => onSave(v === "__none__" ? null : (v as ProcesoLavanderia))}
+    >
+      <SelectTrigger
+        className={cn(
+          "h-8 w-36 bg-transparent text-sm",
+          !valor && "border-dashed text-muted-foreground",
+        )}
+      >
+        <SelectValue placeholder="Elegir…" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">Sin proceso</SelectItem>
+        {PROCESOS_LAVANDERIA.map((p) => (
+          <SelectItem key={p} value={p}>
+            {p}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

@@ -190,8 +190,10 @@ export type VwPagoMaquilas = {
   fase_actual: string | null
   fecha_cancelacion: string | null
   fecha_facturacion: string | null
+  /** FECHA_STATUS5 del Excel: la entrega del maquilero. Base de la demora. */
+  fecha_entrega_maquilero: string | null
   piezas_orden: number | null
-  /** Suma de lo cortado: lo que se le entregó al maquilero. */
+  /** Lo que se le entregó al maquilero para confeccionar. */
   piezas_cortadas: number
   costo_maquila: number | null
   precio_venta: number | null
@@ -241,6 +243,22 @@ export type ServicioExterno =
   | "Corte Externo"
   | "Otro"
 
+/** Tipos de lavado. Solo aplican al servicio Lavandería. */
+export type ProcesoLavanderia =
+  | "Blinch"
+  | "Acid wash"
+  | "Stone"
+  | "Stone medio"
+  | "Stone alto"
+
+export const PROCESOS_LAVANDERIA: ProcesoLavanderia[] = [
+  "Blinch",
+  "Acid wash",
+  "Stone",
+  "Stone medio",
+  "Stone alto",
+]
+
 export const SERVICIOS_EXTERNOS: ServicioExterno[] = [
   "Lavandería",
   "Estampado",
@@ -258,10 +276,14 @@ export type VwServicioPago = {
   cliente: string | null
   maquilero_nombre: string | null
   piezas_orden: number | null
-  servicio: ServicioExterno
-  costo_unitario: number | null
+  /** Lo que se le entregó al maquilero, de referencia. */
+  piezas_cortadas: number
   /** Precio de venta del folio, informativo. */
   precio_venta: number | null
+  servicio: ServicioExterno
+  costo_unitario: number | null
+  /** Tipo de lavado. Solo se usa cuando servicio = Lavandería. */
+  proceso: ProcesoLavanderia | null
   piezas_enviadas: number
   piezas_recibidas: number
   merma: number
@@ -367,6 +389,7 @@ export type ParsedRow = Pick<
   | "corte_origen"
   | "fase_actual"
   | "fecha_aprobacion_diseno"
+  | "fecha_s5"
   | "costo_maquila"
   | "costo_lavanderia"
   | "costo_estampado"

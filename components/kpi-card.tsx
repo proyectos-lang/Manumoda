@@ -31,6 +31,8 @@ export function KpiCard({
   /** Línea secundaria opcional bajo el valor. */
   hint?: string
 }) {
+  const texto = format(value)
+
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-sm space-y-3">
       <div className="flex items-center justify-between gap-2">
@@ -46,9 +48,29 @@ export function KpiCard({
         </div>
       </div>
       <div>
-        <p className={cn("text-2xl font-bold tabular-nums", valueColor)}>{format(value)}</p>
+        <p
+          title={texto}
+          className={cn("font-bold tabular-nums leading-tight", tamanoValor(texto), valueColor)}
+        >
+          {texto}
+        </p>
         {hint && <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>}
       </div>
     </div>
   )
+}
+
+/**
+ * Escala el número según lo que ocupe.
+ *
+ * Las tarjetas van en rejillas de hasta cinco columnas, así que un importe
+ * como "$13,499,041.00" se desbordaba del contenedor a tamaño fijo. En vez
+ * de recortar el número —que en dinero es peor que verlo chico— se reduce
+ * el tipo por tramos.
+ */
+function tamanoValor(texto: string): string {
+  if (texto.length <= 8) return "text-2xl"
+  if (texto.length <= 11) return "text-xl"
+  if (texto.length <= 15) return "text-lg"
+  return "text-base"
 }
