@@ -314,8 +314,12 @@ export type VwServicioPago = {
   costo_unitario: number | null
   /** Tipo de lavado. Solo se usa cuando servicio = Lavandería. */
   proceso: ProcesoLavanderia | null
-  /** Las del maquilero: todo se mide sobre las mismas piezas. */
+  /** Las que devolvió el maquilero. */
   piezas_recibidas: number
+  /** Las que este proceso trabajó. Base de su costo. */
+  piezas_procesadas: number
+  /** true = las procesadas se capturaron a mano; false = se asumen las recibidas. */
+  procesadas_capturadas: boolean
   valor: number
 }
 

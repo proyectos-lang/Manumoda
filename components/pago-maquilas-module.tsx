@@ -272,7 +272,7 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
           <TabsTrigger value="cuentas">Cuentas por Pagar</TabsTrigger>
           <TabsTrigger value="recepciones">Recepciones</TabsTrigger>
           <TabsTrigger value="maquileros">Por Maquilero</TabsTrigger>
-          <TabsTrigger value="servicios">Servicios</TabsTrigger>
+          <TabsTrigger value="servicios">Lavandería</TabsTrigger>
           <TabsTrigger value="historial">Historial de Pagos</TabsTrigger>
         </TabsList>
 
@@ -299,7 +299,12 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
         </TabsContent>
 
         <TabsContent value="servicios" className="mt-5">
-          <ServiciosTab servicios={servicios} loading={loading} onRefresh={fetchRows} />
+          <LavanderiaTab
+            rows={rows}
+            servicios={servicios}
+            loading={loading}
+            onRefresh={fetchRows}
+          />
         </TabsContent>
 
         <TabsContent value="historial" className="mt-5">
@@ -840,6 +845,30 @@ function GestionFolioDialog({
     refrescar()
   }
 
+  /** Las piezas que trabajó un proceso. Vacío = seguir a las recibidas. */
+  const guardarProcesadas = async (servicio: ServicioExterno, valor: number | null) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("servicio_unidades")
+      .upsert(
+        { idempresa: IDEMPRESA, folio: row.folio, servicio, piezas_procesadas: valor },
+        { onConflict: "idempresa,folio,servicio" },
+      )
+    if (error) {
+      toast.error("No se pudieron guardar las piezas procesadas", {
+        description: error.message,
+      })
+      return
+    }
+    toast.success(
+      valor == null
+        ? `${servicio} vuelve a seguir las piezas recibidas`
+        : `Piezas procesadas de ${servicio} guardadas`,
+    )
+    refrescar()
+  }
+
   /** Corrige la fecha de entrega real sin tocar fecha_s5 ni las fases. */
   const guardarEntrega = async (valor: string | null) => {
     const supabase = getSupabase()
@@ -874,15 +903,12 @@ function GestionFolioDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* ── Desglose del valor a pagar ── */}
-        <DesgloseValor
+        {/* ── Arriba: la entrega de piezas ── */}
+        <RelacionEntrega
           row={row}
           readOnly={readOnly}
-          onCambiarCosto={guardarCosto}
           onCambiarEntrega={guardarEntrega}
-          onCambiarCostoServicio={guardarCostoServicio}
           onCambiarRecibidas={guardarRecibidas}
-          servicios={servicios}
         />
 
         {cargando ? (
@@ -899,17 +925,28 @@ function GestionFolioDialog({
               onBorrar={borrar}
             />
             <PanelNoEntregadas row={row} />
-            <div className="lg:col-span-2">
-              <SeccionPagos
-                filas={pagos}
-                row={row}
-                readOnly={readOnly}
-                saldoPendiente={saldoPendiente}
-                onGuardar={guardar}
-                onBorrar={borrar}
-              />
-            </div>
           </div>
+        )}
+
+        {/* ── Abajo: el costeo ── */}
+        <DesgloseValor
+          row={row}
+          readOnly={readOnly}
+          onCambiarCosto={guardarCosto}
+          onCambiarCostoServicio={guardarCostoServicio}
+          onCambiarProcesadas={guardarProcesadas}
+          servicios={servicios}
+        />
+
+        {!cargando && (
+          <SeccionPagos
+            filas={pagos}
+            row={row}
+            readOnly={readOnly}
+            saldoPendiente={saldoPendiente}
+            onGuardar={guardar}
+            onBorrar={borrar}
+          />
         )}
 
         <DialogFooter>
@@ -923,65 +960,191 @@ function GestionFolioDialog({
 }
 
 /**
- * El cálculo, línea por línea.
+ * La entrega de piezas: cuánto salió, cuánto volvió y qué quedó debiendo.
  *
- * Se muestra desglosado y no solo el total porque cada resta viene de una
- * fuente distinta —recepciones, no entregadas, fecha de entrega— y cuando
- * una cifra no cuadra hay que poder ver de dónde salió.
+ * Va antes del costeo porque es de donde salen las cantidades que después
+ * se multiplican. Al revés se discute el importe sin saber todavía sobre
+ * cuántas piezas se calculó.
  */
+function RelacionEntrega({
+  row,
+  readOnly,
+  onCambiarEntrega,
+  onCambiarRecibidas,
+}: {
+  row: VwPagoMaquilas
+  readOnly: boolean
+  onCambiarEntrega: (v: string | null) => void
+  onCambiarRecibidas: (v: number | null) => void
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="border-b border-border bg-muted/40 px-3 py-2">
+        <p className="text-base font-semibold text-foreground">Relación de entrega</p>
+      </div>
+
+      <div className="grid gap-4 p-3 lg:grid-cols-2">
+        {/* Las piezas */}
+        <div className="space-y-1.5">
+          <Linea
+            etiqueta="Orden original"
+            valor={row.piezas_orden?.toLocaleString("es-MX") ?? "—"}
+            tono="text-muted-foreground"
+          />
+          <Linea
+            etiqueta="Piezas cortadas"
+            valor={row.piezas_cortadas > 0 ? row.piezas_cortadas.toLocaleString("es-MX") : "—"}
+            tono="text-muted-foreground"
+          />
+          <Linea
+            etiqueta={
+              <>
+                Piezas recibidas
+                {row.recibidas_ajustadas && (
+                  <span className="ml-1.5 text-sm font-normal text-amber-600">
+                    fijadas a mano
+                  </span>
+                )}
+              </>
+            }
+            valor={
+              <RecibidasEditable
+                valor={row.piezas_recibidas}
+                deEntregas={row.piezas_recibidas_entregas}
+                ajustado={row.recibidas_ajustadas}
+                disabled={readOnly}
+                onSave={onCambiarRecibidas}
+              />
+            }
+            tono="text-foreground"
+          />
+          <div className="mt-1 border-t border-border pt-1.5">
+            <Linea
+              etiqueta={<span className="font-semibold">Piezas no entregadas</span>}
+              valor={row.piezas_no_entregadas.toLocaleString("es-MX")}
+              tono={row.piezas_no_entregadas > 0 ? "text-rose-600" : "text-foreground"}
+              destacado
+            />
+          </div>
+        </div>
+
+        {/* Las fechas que gobiernan la demora */}
+        <div className="space-y-1.5 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+          <Linea
+            etiqueta="Arranque de maquila (S1)"
+            valor={fmtFecha(row.fecha_s1)}
+            tono="text-muted-foreground"
+          />
+          <Linea
+            etiqueta={`Plazo (S1 + ${DEMORA_PLAZO_DIAS} días)`}
+            valor={fmtFecha(row.fecha_limite_maquilero)}
+            tono={row.semanas_demora > 0 ? "text-rose-600" : "text-muted-foreground"}
+          />
+          <Linea
+            etiqueta={
+              <>
+                Entrega real
+                {row.entrega_corregida && (
+                  <span className="ml-1.5 text-sm font-normal text-amber-600">corregida</span>
+                )}
+              </>
+            }
+            valor={
+              <FechaEntregaEditable
+                corregida={row.fecha_entrega_corregida}
+                delExcel={row.fecha_entrega_s5}
+                disabled={readOnly}
+                onSave={onCambiarEntrega}
+              />
+            }
+            tono="text-foreground"
+          />
+          <Linea
+            etiqueta="Fecha de cancelación"
+            valor={fmtFecha(row.fecha_cancelacion)}
+            tono="text-muted-foreground"
+          />
+        </div>
+      </div>
+
+      {row.semanas_demora > 0 && (
+        <p className="flex items-start gap-1.5 border-t border-border px-3 py-2 text-sm text-rose-700">
+          <Clock className="mt-0.5 size-4 shrink-0" />
+          {row.fecha_entrega_maquilero
+            ? `Entregó ${row.semanas_demora} ${row.semanas_demora === 1 ? "semana" : "semanas"} después de su plazo de ${DEMORA_PLAZO_DIAS} días.`
+            : `Su plazo de ${DEMORA_PLAZO_DIAS} días venció hace ${row.semanas_demora} ${row.semanas_demora === 1 ? "semana" : "semanas"} y no hay entrega registrada; el descuento sigue creciendo.`}
+        </p>
+      )}
+    </div>
+  )
+}
+
 /**
- * El cálculo del folio, línea por línea.
+ * El costeo del folio, línea por línea.
  *
- * Todo se mide sobre las MISMAS piezas: las que devolvió el maquilero. Cada
- * proceso aporta su costo unitario, se suman todos, y ese unitario total se
- * multiplica por las recibidas.
+ * Cada proceso se multiplica por las piezas que ÉL trabajó: la maquila por
+ * las recibidas, cada servicio por sus piezas procesadas. No siempre son la
+ * misma cantidad —la lavandería lava lo que le llega— y por eso la columna
+ * de piezas se edita renglón por renglón.
  *
  * Los seis procesos se muestran siempre, incluso en cero. Un renglón en
- * cero dice "este folio no lleva ese proceso"; no verlo no dice nada, y fue
- * justo lo que hacía falta para saber qué se podía agregar.
+ * cero dice "este folio no lleva ese proceso"; no verlo no dice nada.
  */
 function DesgloseValor({
   row,
   readOnly,
   onCambiarCosto,
-  onCambiarEntrega,
   onCambiarCostoServicio,
-  onCambiarRecibidas,
+  onCambiarProcesadas,
   servicios,
 }: {
   row: VwPagoMaquilas
   readOnly: boolean
   onCambiarCosto: (v: number | null) => void
-  onCambiarEntrega: (v: string | null) => void
   onCambiarCostoServicio: (s: ServicioExterno, v: number | null) => void
-  onCambiarRecibidas: (v: number | null) => void
+  onCambiarProcesadas: (s: ServicioExterno, v: number | null) => void
   servicios: VwServicioPago[]
 }) {
   const recibidas = row.piezas_recibidas
-  const procesoDe = (s: ServicioExterno) =>
-    servicios.find((x) => x.servicio === s)?.proceso ?? null
 
   const renglones: {
     nombre: string
     unitario: number | null
+    piezas: React.ReactNode
+    subtotal: number
     detalle?: React.ReactNode
     onSave?: (v: number | null) => void
   }[] = [
     {
       nombre: "Maquila",
       unitario: row.costo_maquila,
+      piezas: recibidas.toLocaleString("es-MX"),
+      subtotal: recibidas * num(row.costo_maquila),
       detalle: row.beneficiario,
       onSave: onCambiarCosto,
     },
-    ...SERVICIOS_EXTERNOS.map((s) => ({
-      nombre: s,
-      unitario: COSTO_DEL_SERVICIO[s](row),
-      detalle: s === "Lavandería" ? procesoDe(s) : null,
-      onSave: (v: number | null) => onCambiarCostoServicio(s, v),
-    })),
+    ...SERVICIOS_EXTERNOS.map((s) => {
+      const fila = servicios.find((x) => x.servicio === s) ?? null
+      const unitario = COSTO_DEL_SERVICIO[s](row)
+      const procesadas = fila?.piezas_procesadas ?? recibidas
+      return {
+        nombre: s as string,
+        unitario,
+        piezas: (
+          <ProcesadasEditable
+            valor={procesadas}
+            deRecibidas={recibidas}
+            capturado={fila?.procesadas_capturadas ?? false}
+            disabled={readOnly}
+            onSave={(v: number | null) => onCambiarProcesadas(s, v)}
+          />
+        ),
+        subtotal: fila ? num(fila.valor) : procesadas * num(unitario),
+        detalle: s === "Lavandería" ? (fila?.proceso ?? null) : null,
+        onSave: (v: number | null) => onCambiarCostoServicio(s, v),
+      }
+    }),
   ]
-
-  const unitarioTotal = num(row.costo_unitario_total)
 
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-4">
@@ -989,16 +1152,8 @@ function DesgloseValor({
       <div className="mb-4 overflow-hidden rounded-lg border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/40 px-3 py-2">
           <p className="text-base font-semibold text-foreground">Costo por proceso</p>
-          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            Todo sobre
-            <RecibidasEditable
-              valor={recibidas}
-              deEntregas={row.piezas_recibidas_entregas}
-              ajustado={row.recibidas_ajustadas}
-              disabled={readOnly}
-              onSave={onCambiarRecibidas}
-            />
-            piezas recibidas
+          <span className="text-sm text-muted-foreground">
+            Cada proceso sobre las piezas que trabajó
           </span>
         </div>
 
@@ -1012,46 +1167,44 @@ function DesgloseValor({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {renglones.map((r) => {
-              const u = num(r.unitario)
-              return (
-                <TableRow
-                  key={r.nombre}
-                  className={cn("hover:bg-muted/20", r.unitario == null && "opacity-60")}
-                >
-                  <TableCell className="py-1.5 text-base font-medium">
-                    {r.nombre}
-                    {r.detalle && (
-                      <span className="ml-1.5 text-sm font-normal text-muted-foreground">
-                        {r.detalle}
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="py-1.5 text-right">
-                    <CostoUnitarioEditable
-                      valor={r.unitario}
-                      disabled={readOnly || !r.onSave}
-                      onSave={r.onSave ?? (() => {})}
-                    />
-                  </TableCell>
-                  <TableCell className="py-1.5 text-right text-base tabular-nums text-muted-foreground">
-                    {recibidas.toLocaleString("es-MX")}
-                  </TableCell>
-                  <TableCell className="py-1.5 text-right text-base font-medium tabular-nums">
-                    {fmtCurrency(recibidas * u)}
-                  </TableCell>
-                </TableRow>
-              )
-            })}
+            {renglones.map((r) => (
+              <TableRow
+                key={r.nombre}
+                className={cn("hover:bg-muted/20", r.unitario == null && "opacity-60")}
+              >
+                <TableCell className="py-1.5 text-base font-medium">
+                  {r.nombre}
+                  {r.detalle && (
+                    <span className="ml-1.5 text-sm font-normal text-muted-foreground">
+                      {r.detalle}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="py-1.5 text-right">
+                  <CostoUnitarioEditable
+                    valor={r.unitario}
+                    disabled={readOnly || !r.onSave}
+                    onSave={r.onSave ?? (() => {})}
+                  />
+                </TableCell>
+                <TableCell className="py-1.5 text-right text-base tabular-nums text-muted-foreground">
+                  {r.piezas}
+                </TableCell>
+                <TableCell className="py-1.5 text-right text-base font-medium tabular-nums">
+                  {fmtCurrency(r.subtotal)}
+                </TableCell>
+              </TableRow>
+            ))}
 
             <TableRow className="border-t-2 border-border bg-muted/20 hover:bg-muted/20">
               <TableCell className="py-2 text-base font-semibold">Costo final</TableCell>
-              <TableCell className="py-2 text-right text-base font-semibold tabular-nums">
-                {fmtCurrency(unitarioTotal)}
+              <TableCell
+                className="py-2 text-right text-sm tabular-nums text-muted-foreground"
+                title="Lo que cuesta una pieza con todos sus procesos encima. Es referencia: cada proceso se cobra sobre sus propias piezas."
+              >
+                {fmtCurrency(num(row.costo_unitario_total))} / pz
               </TableCell>
-              <TableCell className="py-2 text-right text-base tabular-nums text-muted-foreground">
-                {recibidas.toLocaleString("es-MX")}
-              </TableCell>
+              <TableCell className="py-2" />
               <TableCell className="py-2 text-right text-lg font-bold tabular-nums">
                 {fmtCurrency(num(row.costo_final))}
               </TableCell>
@@ -1062,7 +1215,7 @@ function DesgloseValor({
         {!readOnly && (
           <p className="border-t border-border px-3 py-2 text-sm text-muted-foreground">
             Clic sobre un costo para cambiarlo; vacío hace que ese proceso deje de aplicar.
-            Las piezas recibidas también se editan arriba.
+            Las piezas de cada servicio también se editan aquí: vacías siguen a las recibidas.
           </p>
         )}
       </div>
@@ -1119,55 +1272,18 @@ function DesgloseValor({
 
         <div className="space-y-1.5 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
           <Linea
-            etiqueta="Piezas de la orden"
-            valor={row.piezas_orden?.toLocaleString("es-MX") ?? "—"}
-            tono="text-muted-foreground"
+            etiqueta="Pagado"
+            valor={fmtCurrency(num(row.valor_pagado))}
+            tono="text-emerald-700"
           />
-          <Linea
-            etiqueta="Piezas cortadas"
-            valor={row.piezas_cortadas > 0 ? row.piezas_cortadas.toLocaleString("es-MX") : "—"}
-            tono="text-muted-foreground"
-          />
-          <Linea
-            etiqueta="Arranque de maquila (S1)"
-            valor={fmtFecha(row.fecha_s1)}
-            tono="text-muted-foreground"
-          />
-          <Linea
-            etiqueta={`Plazo (S1 + ${DEMORA_PLAZO_DIAS} días)`}
-            valor={fmtFecha(row.fecha_limite_maquilero)}
-            tono={row.semanas_demora > 0 ? "text-rose-600" : "text-muted-foreground"}
-          />
-          <Linea
-            etiqueta={
-              <>
-                Entrega real
-                {row.entrega_corregida && (
-                  <span className="ml-1.5 text-sm font-normal text-amber-600">corregida</span>
-                )}
-              </>
-            }
-            valor={
-              <FechaEntregaEditable
-                corregida={row.fecha_entrega_corregida}
-                delExcel={row.fecha_entrega_s5}
-                disabled={readOnly}
-                onSave={onCambiarEntrega}
-              />
-            }
-            tono="text-foreground"
-          />
-          <Linea
-            etiqueta="Compromiso con el cliente"
-            valor={fmtFecha(row.fecha_cancelacion)}
-            tono="text-muted-foreground"
-          />
-          <div className="mt-1 border-t border-border pt-1.5">
+          {num(row.valor_adelantos) > 0 && (
             <Linea
-              etiqueta="Pagado"
-              valor={fmtCurrency(num(row.valor_pagado))}
-              tono="text-emerald-700"
+              etiqueta="De eso, adelantado"
+              valor={fmtCurrency(num(row.valor_adelantos))}
+              tono="text-muted-foreground"
             />
+          )}
+          <div className="mt-1 border-t border-border pt-1.5">
             <Linea
               etiqueta={<span className="font-semibold">Saldo</span>}
               valor={row.costo_capturado ? fmtCurrency(num(row.saldo)) : "—"}
@@ -1177,15 +1293,6 @@ function DesgloseValor({
           </div>
         </div>
       </div>
-
-      {row.semanas_demora > 0 && (
-        <p className="mt-3 flex items-start gap-1.5 text-sm text-rose-700">
-          <Clock className="mt-0.5 size-4 shrink-0" />
-          {row.fecha_entrega_maquilero
-            ? `Entregó ${row.semanas_demora} ${row.semanas_demora === 1 ? "semana" : "semanas"} después de su plazo de ${DEMORA_PLAZO_DIAS} días.`
-            : `Su plazo de ${DEMORA_PLAZO_DIAS} días venció hace ${row.semanas_demora} ${row.semanas_demora === 1 ? "semana" : "semanas"} y no hay entrega registrada; el descuento sigue creciendo.`}
-        </p>
-      )}
     </div>
   )
 }
@@ -1519,7 +1626,7 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
 
       <div className="space-y-2 p-3">
         <div className="flex items-center justify-between gap-3 text-base">
-          <span className="text-muted-foreground">Piezas de la orden</span>
+          <span className="text-muted-foreground">Orden original</span>
           <span className="tabular-nums font-medium">
             {orden > 0 ? orden.toLocaleString("es-MX") : "—"}
           </span>
@@ -1966,63 +2073,59 @@ function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boo
   )
 }
 
-// ─── Pestaña 4: Servicios ────────────────────────────────────────────────────
+// ─── Pestaña 4: Lavandería ───────────────────────────────────────────────────
 
-function ServiciosTab({
-  servicios,
-  loading,
-  onRefresh,
-}: {
-  servicios: VwServicioPago[]
-  loading: boolean
-  onRefresh: () => void
-}) {
+/**
+ * El proceso de lavandería, con su propio flujo de pago.
+ *
+ * Solo lavandería: los otros servicios externos se costean dentro del folio,
+ * en Gestionar. Aquí importa lo que la lavandería alcanzó a procesar, que no
+ * siempre es todo lo que devolvió el maquilero, y su costo va sobre esa
+ * cantidad —no sobre las recibidas—.
+ */
+function LavanderiaTab({ rows, servicios, loading, onRefresh }: TabProps) {
   const readOnly = useReadOnly()
-  const [filtroServicio, setFiltroServicio] = useState("__all__")
-  const [soloPendientes, setSoloPendientes] = useState(true)
+  const [soloPendientes, setSoloPendientes] = useState(false)
   const [search, setSearch] = useState("")
+  const [gestionando, setGestionando] = useState<string | null>(null)
+
+  const lavanderia = useMemo(
+    () => servicios.filter((s) => s.servicio === "Lavandería"),
+    [servicios],
+  )
 
   const filtrados = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return servicios.filter((s) => {
-      if (filtroServicio !== "__all__" && s.servicio !== filtroServicio) return false
-      if (soloPendientes && s.piezas_recibidas > 0) return false
+    return lavanderia.filter((s) => {
+      if (soloPendientes && s.procesadas_capturadas) return false
       if (q && !`${s.folio} ${s.cliente ?? ""} ${s.familia ?? ""}`.toLowerCase().includes(q))
         return false
       return true
     })
-  }, [servicios, filtroServicio, soloPendientes, search])
+  }, [lavanderia, soloPendientes, search])
 
   const kpis = useMemo(() => {
     let valor = 0
-    let sinRecibir = 0
+    let piezas = 0
+    let sinProcesar = 0
     let sinCosto = 0
     for (const s of filtrados) {
       valor += num(s.valor)
-      if (s.piezas_recibidas === 0) sinRecibir++
+      piezas += s.piezas_procesadas
+      if (!s.procesadas_capturadas) sinProcesar++
       if (s.costo_unitario == null) sinCosto++
     }
-    return { valor, sinRecibir, sinCosto, registros: filtrados.length }
+    return { valor, piezas, sinProcesar, sinCosto, folios: filtrados.length }
   }, [filtrados])
 
-  /** Cuánto aporta cada servicio al costo. */
-  const porServicio = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const s of filtrados) m.set(s.servicio, (m.get(s.servicio) ?? 0) + num(s.valor))
-    return Array.from(m.entries()).sort((a, b) => b[1] - a[1])
-  }, [filtrados])
-
-  const guardarProceso = async (
-    folio: string,
-    servicio: ServicioExterno,
-    proceso: ProcesoLavanderia | null,
-  ) => {
+  /** El tipo de lavado. Vive en servicio_unidades, junto a las procesadas. */
+  const guardarProceso = async (folio: string, proceso: ProcesoLavanderia | null) => {
     const supabase = getSupabase()
     if (!supabase) return
     const { error } = await supabase
       .from("servicio_unidades")
       .upsert(
-        { idempresa: IDEMPRESA, folio, servicio, proceso },
+        { idempresa: IDEMPRESA, folio, servicio: "Lavandería", proceso },
         { onConflict: "idempresa,folio,servicio" },
       )
     if (error) {
@@ -2032,11 +2135,35 @@ function ServiciosTab({
     onRefresh()
   }
 
+  /** Las piezas que la lavandería trabajó. Vacío = las recibidas del maquilero. */
+  const guardarProcesadas = async (folio: string, valor: number | null) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("servicio_unidades")
+      .upsert(
+        { idempresa: IDEMPRESA, folio, servicio: "Lavandería", piezas_procesadas: valor },
+        { onConflict: "idempresa,folio,servicio" },
+      )
+    if (error) {
+      toast.error("No se pudieron guardar las piezas procesadas", {
+        description: error.message,
+      })
+      return
+    }
+    toast.success(
+      valor == null ? "Vuelve a seguir las piezas recibidas" : "Piezas procesadas guardadas",
+    )
+    onRefresh()
+  }
+
+  const folioGestionado = gestionando ? rows.find((r) => r.folio === gestionando) : undefined
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard
-          label="Valor servicios"
+          label="Valor lavandería"
           value={kpis.valor}
           format={fmtCurrency}
           icon={<Sparkles className="size-3.5" />}
@@ -2045,22 +2172,22 @@ function ServiciosTab({
           valueColor="text-cyan-700"
         />
         <KpiCard
-          label="Registros"
-          value={kpis.registros}
-          icon={<Sparkles className="size-3.5" />}
+          label="Piezas procesadas"
+          value={kpis.piezas}
+          icon={<PackageCheck className="size-3.5" />}
           iconBg="bg-slate-100 ring-slate-200"
           iconColor="text-slate-600"
           valueColor="text-foreground"
-          hint="Folio × servicio que aplican"
+          hint={`En ${kpis.folios} folios`}
         />
         <KpiCard
-          label="Sin recibir"
-          value={kpis.sinRecibir}
+          label="Sin capturar"
+          value={kpis.sinProcesar}
           icon={<AlertTriangle className="size-3.5" />}
           iconBg="bg-amber-100 ring-amber-200"
           iconColor="text-amber-600"
-          valueColor={kpis.sinRecibir > 0 ? "text-amber-600" : "text-foreground"}
-          hint="Falta marcar lo que regresó"
+          valueColor={kpis.sinProcesar > 0 ? "text-amber-600" : "text-foreground"}
+          hint="Se cobran sobre las recibidas"
         />
         <KpiCard
           label="Sin costo"
@@ -2083,47 +2210,16 @@ function ServiciosTab({
             className="h-9 w-56 pl-8"
           />
         </div>
-        <Select value={filtroServicio} onValueChange={setFiltroServicio}>
-          <SelectTrigger className="h-9 w-44 bg-transparent">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">Todos los servicios</SelectItem>
-            {SERVICIOS_EXTERNOS.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <Button
           size="sm"
           variant={soloPendientes ? "default" : "outline"}
           onClick={() => setSoloPendientes(!soloPendientes)}
           className="h-9"
         >
-          {soloPendientes ? "Solo sin recibir" : "Todos"}
+          {soloPendientes ? "Solo sin capturar" : "Todos"}
         </Button>
-        <span className="ml-auto text-xs text-muted-foreground">{filtrados.length} registros</span>
+        <span className="ml-auto text-xs text-muted-foreground">{filtrados.length} folios</span>
       </div>
-
-      {porServicio.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          {porServicio.map(([nombre, saldo]) => (
-            <button
-              key={nombre}
-              type="button"
-              onClick={() => setFiltroServicio(nombre)}
-              className="rounded-lg border border-border bg-card px-3 py-1.5 text-left transition-colors hover:border-cyan-300"
-            >
-              <p className="text-[11px] text-muted-foreground">{nombre}</p>
-              <p className="text-sm font-semibold tabular-nums text-foreground">
-                {fmtCurrency(saldo)}
-              </p>
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="overflow-x-auto rounded-lg border border-border">
         <Table>
@@ -2132,12 +2228,12 @@ function ServiciosTab({
               <TableHead className="font-semibold">Folio</TableHead>
               <TableHead className="font-semibold">Cliente</TableHead>
               <TableHead className="font-semibold">Familia</TableHead>
-              <TableHead className="font-semibold">Servicio</TableHead>
               <TableHead className="font-semibold">Proceso</TableHead>
               <TableHead className="font-semibold text-right">Piezas cortadas</TableHead>
+              <TableHead className="font-semibold text-right">Piezas procesadas</TableHead>
               <TableHead className="font-semibold text-right">Costo unitario</TableHead>
-              <TableHead className="font-semibold text-right">Recibidas</TableHead>
               <TableHead className="font-semibold text-right">Costo total</TableHead>
+              <TableHead className="w-24" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -2154,57 +2250,91 @@ function ServiciosTab({
             ) : filtrados.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">
-                  {servicios.length === 0
-                    ? "Ningún folio tiene costos de servicios capturados en el Excel."
-                    : "Sin registros para los filtros aplicados."}
+                  {lavanderia.length === 0
+                    ? "Ningún folio tiene costo de lavandería capturado en el Excel."
+                    : "Sin folios para los filtros aplicados."}
                 </TableCell>
               </TableRow>
             ) : (
-              filtrados.map((s) => (
-                <TableRow key={`${s.folio}-${s.servicio}`} className="hover:bg-muted/30">
-                  <TableCell>
-                    <FolioLink folio={s.folio} className="text-xs" />
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{s.cliente ?? "—"}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{s.familia ?? "—"}</TableCell>
-                  <TableCell className="text-sm font-medium">{s.servicio}</TableCell>
-                  <TableCell>
-                    <ProcesoSelect
-                      servicio={s.servicio}
-                      valor={s.proceso}
-                      disabled={readOnly}
-                      onSave={(v) => guardarProceso(s.folio, s.servicio, v)}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
-                    {s.piezas_cortadas > 0 ? s.piezas_cortadas.toLocaleString("es-MX") : "—"}
-                  </TableCell>
-                  <TableCell className="text-right text-sm">
-                    <ValorUnitario valor={s.costo_unitario} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">
-                    {s.piezas_recibidas > 0 ? (
-                      s.piezas_recibidas.toLocaleString("es-MX")
-                    ) : (
-                      <span className="text-muted-foreground/50">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm font-medium">
-                    {fmtCurrency(num(s.valor))}
-                  </TableCell>
-                </TableRow>
-              ))
+              filtrados.map((s) => {
+                const gestionable = rows.some((r) => r.folio === s.folio)
+                return (
+                  <TableRow key={s.folio} className="hover:bg-muted/30">
+                    <TableCell>
+                      <FolioLink folio={s.folio} className="text-xs" />
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {s.cliente ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {s.familia ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <ProcesoSelect
+                        servicio={s.servicio}
+                        valor={s.proceso}
+                        disabled={readOnly}
+                        onSave={(v) => guardarProceso(s.folio, v)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
+                      {s.piezas_cortadas > 0 ? s.piezas_cortadas.toLocaleString("es-MX") : "—"}
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      <ProcesadasEditable
+                        valor={s.piezas_procesadas}
+                        deRecibidas={s.piezas_recibidas}
+                        capturado={s.procesadas_capturadas}
+                        disabled={readOnly}
+                        onSave={(v) => guardarProcesadas(s.folio, v)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      <ValorUnitario valor={s.costo_unitario} />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm font-medium">
+                      {fmtCurrency(num(s.valor))}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1 px-2 text-xs"
+                        disabled={!gestionable}
+                        title={
+                          gestionable
+                            ? "Costos, entregas y pagos del folio"
+                            : "El folio no tiene maquilero asignado"
+                        }
+                        onClick={() => setGestionando(s.folio)}
+                      >
+                        <Settings2 className="size-3.5" />
+                        Gestionar
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        Todo se mide sobre las piezas que recibió el maquilero, y su importe ya está dentro
-        del costo final del folio. El costo unitario de cada proceso se edita desde{" "}
-        <strong>Gestionar</strong>, en Cuentas por Pagar: dejarlo vacío hace que ese proceso
-        deje de aplicar.
+        El costo de lavandería se calcula sobre las <strong>piezas procesadas</strong>; si no
+        se capturan, se usan las piezas que recibió el maquilero. Ese importe ya está dentro
+        del costo final del folio, así que los pagos se registran en <strong>Gestionar</strong>.
       </p>
+
+      {folioGestionado && (
+        <GestionFolioDialog
+          row={folioGestionado}
+          servicios={servicios.filter((x) => x.folio === folioGestionado.folio)}
+          onClose={() => setGestionando(null)}
+          onSaved={onRefresh}
+          readOnly={readOnly}
+        />
+      )}
     </div>
   )
 }
@@ -2691,6 +2821,89 @@ function FechaEntregaEditable({
  * Cuando el ajuste difiere de lo que suman las entregas, se avisa — es la
  * señal de que alguien corrigió el número por fuera del historial.
  */
+/**
+ * Piezas que un proceso trabajó realmente. Vacío = las que recibió el
+ * maquilero, para que el folio siga a las entregas si mañana cambian.
+ */
+function ProcesadasEditable({
+  valor,
+  deRecibidas,
+  capturado,
+  disabled,
+  onSave,
+}: {
+  valor: number
+  deRecibidas: number
+  capturado: boolean
+  disabled: boolean
+  onSave: (v: number | null) => void
+}) {
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(String(valor || ""))
+
+  useEffect(() => {
+    if (!editando) setTexto(String(valor || ""))
+  }, [valor, editando])
+
+  const confirmar = () => {
+    setEditando(false)
+    const t = texto.trim()
+    const n = t === "" ? null : Math.trunc(Number(t))
+    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+      setTexto(String(valor || ""))
+      return
+    }
+    // Igualar las recibidas se guarda como null: no es lo mismo "procesó
+    // justo lo que llegó" que "quedó fijado en ese número para siempre".
+    const limpio = n === deRecibidas ? null : n
+    if (limpio !== (capturado ? valor : null)) onSave(limpio)
+  }
+
+  if (disabled) {
+    return <span className="tabular-nums">{valor.toLocaleString("es-MX")}</span>
+  }
+
+  if (editando) {
+    return (
+      <Input
+        autoFocus
+        type="number"
+        min="0"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") confirmar()
+          if (e.key === "Escape") {
+            setTexto(String(valor || ""))
+            setEditando(false)
+          }
+        }}
+        className="ml-auto h-9 w-28 text-right text-base"
+      />
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditando(true)}
+      title={
+        capturado
+          ? `Capturadas a mano · el maquilero entregó ${deRecibidas.toLocaleString("es-MX")}`
+          : `Sin capturar · se usan las ${deRecibidas.toLocaleString("es-MX")} recibidas`
+      }
+      className={cn(
+        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors hover:bg-muted",
+        capturado ? "font-semibold text-cyan-700" : "text-muted-foreground",
+      )}
+    >
+      {valor.toLocaleString("es-MX")}
+      <Pencil className="size-3.5 text-muted-foreground/50" />
+    </button>
+  )
+}
+
 function RecibidasEditable({
   valor,
   deEntregas,
