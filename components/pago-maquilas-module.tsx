@@ -52,7 +52,6 @@ import {
   type MaquilaRecepcion,
   type ProcesoLavanderia,
   type ServicioExterno,
-  type ServicioPago,
   type VwPagoMaquilas,
   type VwServicioPago,
 } from "@/lib/types"
@@ -93,8 +92,32 @@ import {
 /** Tolerancia de centavo: nunca comparar saldos contra 0 exacto. */
 const CENTAVO = 0.005
 
-/** Descuento por cada semana completa de atraso sobre la fecha de entrega. */
+/** Descuento por cada semana completa de atraso sobre el plazo. */
 const DEMORA_SEMANAL_PCT = 1.5
+
+/** De dónde sale el costo de cada proceso en una fila de la vista. */
+const COSTO_DEL_SERVICIO: Record<ServicioExterno, (r: VwPagoMaquilas) => number | null> = {
+  "Lavandería": (r) => r.costo_lavanderia,
+  Estampado: (r) => r.costo_estampado,
+  Bordado: (r) => r.costo_bordado,
+  "Corte Externo": (r) => r.costo_corte_externo,
+  Otro: (r) => r.costo_otro,
+}
+
+/** Columna de `ordenes_produccion` donde vive el costo de cada servicio. */
+const COLUMNA_COSTO: Record<ServicioExterno, string> = {
+  "Lavandería": "costo_lavanderia",
+  Estampado: "costo_estampado",
+  Bordado: "costo_bordado",
+  "Corte Externo": "costo_corte_externo",
+  Otro: "costo_otro",
+}
+
+/**
+ * Días que tiene el maquilero para entregar desde que arranca maquila (S1).
+ * Espeja `fn_plazo_maquilero` del script 035 — si cambia allá, cambiar aquí.
+ */
+const DEMORA_PLAZO_DIAS = 45
 
 const ESTADO_STYLE: Record<string, string> = {
   Anticipo: "border-indigo-300 bg-indigo-50 text-indigo-700",
@@ -775,6 +798,65 @@ function GestionFolioDialog({
     refrescar()
   }
 
+  /** Fija las piezas recibidas a mano, sin tocar el historial de entregas. */
+  const guardarRecibidas = async (valor: number | null) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ piezas_recibidas_ajuste: valor })
+      .eq("folio", row.folio)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudieron guardar las piezas recibidas", {
+        description: error.message,
+      })
+      return
+    }
+    toast.success(
+      valor == null
+        ? "Se volvió a usar la suma de las entregas"
+        : "Piezas recibidas actualizadas",
+    )
+    refrescar()
+  }
+
+  /** El costo de cada proceso vive en su columna de la orden. */
+  const guardarCostoServicio = async (servicio: ServicioExterno, valor: number | null) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ [COLUMNA_COSTO[servicio]]: valor })
+      .eq("folio", row.folio)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudo guardar el costo", { description: error.message })
+      return
+    }
+    toast.success(
+      valor == null ? `${servicio} ya no aplica a este folio` : `Costo de ${servicio} guardado`,
+    )
+    refrescar()
+  }
+
+  /** Corrige la fecha de entrega real sin tocar fecha_s5 ni las fases. */
+  const guardarEntrega = async (valor: string | null) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ fecha_entrega_real: valor })
+      .eq("folio", row.folio)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudo cambiar la fecha de entrega", { description: error.message })
+      return
+    }
+    toast.success(valor ? "Fecha de entrega corregida" : "Se restauró la fecha del Excel")
+    refrescar()
+  }
+
   const saldoPendiente = Math.max(0, num(row.saldo))
 
   return (
@@ -793,9 +875,15 @@ function GestionFolioDialog({
         </DialogHeader>
 
         {/* ── Desglose del valor a pagar ── */}
-        <DesgloseValor row={row} readOnly={readOnly} onCambiarCosto={guardarCosto} />
-
-        <HojaCostos row={row} servicios={servicios} />
+        <DesgloseValor
+          row={row}
+          readOnly={readOnly}
+          onCambiarCosto={guardarCosto}
+          onCambiarEntrega={guardarEntrega}
+          onCambiarCostoServicio={guardarCostoServicio}
+          onCambiarRecibidas={guardarRecibidas}
+          servicios={servicios}
+        />
 
         {cargando ? (
           <div className="flex justify-center py-8">
@@ -821,16 +909,6 @@ function GestionFolioDialog({
                 onBorrar={borrar}
               />
             </div>
-            <div className="lg:col-span-2">
-              <SeccionServicios
-                folio={row.folio}
-                piezasOrden={row.piezas_orden}
-                piezasRecibidas={row.piezas_recibidas}
-                servicios={servicios}
-                readOnly={readOnly}
-                onSaved={refrescar}
-              />
-            </div>
           </div>
         )}
 
@@ -852,144 +930,148 @@ function GestionFolioDialog({
  * una cifra no cuadra hay que poder ver de dónde salió.
  */
 /**
- * Hoja de costos del folio: lo que cuesta cada proceso y el total.
+ * El cálculo del folio, línea por línea.
  *
- * Maquila sale de las piezas recibidas; cada servicio externo de las que le
- * devolvieron. Los procesos sin costo capturado se listan igual, en ámbar,
- * porque un renglón faltante en una hoja de costos es información: dice que
- * ese proceso todavía no se puede costear.
+ * Todo se mide sobre las MISMAS piezas: las que devolvió el maquilero. Cada
+ * proceso aporta su costo unitario, se suman todos, y ese unitario total se
+ * multiplica por las recibidas.
+ *
+ * Los seis procesos se muestran siempre, incluso en cero. Un renglón en
+ * cero dice "este folio no lleva ese proceso"; no verlo no dice nada, y fue
+ * justo lo que hacía falta para saber qué se podía agregar.
  */
-function HojaCostos({
-  row,
-  servicios,
-}: {
-  row: VwPagoMaquilas
-  servicios: VwServicioPago[]
-}) {
-  const renglones = [
-    {
-      proceso: "Maquila",
-      detalle: row.beneficiario ?? null,
-      unitario: row.costo_maquila,
-      piezas: row.piezas_recibidas,
-      total: num(row.costo_final),
-    },
-    ...servicios.map((s) => ({
-      proceso: s.servicio,
-      detalle: s.proceso,
-      unitario: s.costo_unitario,
-      piezas: s.piezas_recibidas,
-      total: num(s.valor),
-    })),
-  ]
-
-  const total = renglones.reduce((a, r) => a + r.total, 0)
-  const sinCosto = renglones.filter((r) => r.unitario == null).length
-  // Cuánto cuesta producir una pieza, con todos los procesos encima
-  const unitarioTotal = renglones.reduce((a, r) => a + num(r.unitario), 0)
-
-  return (
-    <div className="rounded-lg border border-border">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-2">
-        <p className="text-sm font-semibold text-foreground">Hoja de costos</p>
-        <p className="text-sm text-muted-foreground">
-          Costo por pieza con todos los procesos:{" "}
-          <span className="font-semibold text-foreground">{fmtCurrency(unitarioTotal)}</span>
-          {row.precio_venta != null && (
-            <>
-              {" · venta "}
-              <span className="font-semibold text-foreground">
-                {fmtCurrency(num(row.precio_venta))}
-              </span>
-            </>
-          )}
-        </p>
-      </div>
-
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="h-9 text-sm font-semibold">Proceso</TableHead>
-            <TableHead className="h-9 text-right text-sm font-semibold">Costo unitario</TableHead>
-            <TableHead className="h-9 text-right text-sm font-semibold">Piezas</TableHead>
-            <TableHead className="h-9 text-right text-sm font-semibold">Costo total</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {renglones.map((r) => (
-            <TableRow key={r.proceso} className="hover:bg-muted/20">
-              <TableCell className="py-1.5 text-sm font-medium">
-                {r.proceso}
-                {r.detalle && (
-                  <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                    {r.detalle}
-                  </span>
-                )}
-              </TableCell>
-              <TableCell className="py-1.5 text-right text-sm">
-                {r.unitario != null ? (
-                  <span className="tabular-nums">{fmtCurrency(Number(r.unitario))}</span>
-                ) : (
-                  <span className="text-xs font-medium text-amber-600">sin costo</span>
-                )}
-              </TableCell>
-              <TableCell className="py-1.5 text-right text-sm tabular-nums text-muted-foreground">
-                {r.piezas > 0 ? r.piezas.toLocaleString("es-MX") : "—"}
-              </TableCell>
-              <TableCell className="py-1.5 text-right text-sm font-medium tabular-nums">
-                {fmtCurrency(r.total)}
-              </TableCell>
-            </TableRow>
-          ))}
-          <TableRow className="border-t-2 border-border hover:bg-transparent">
-            <TableCell colSpan={3} className="py-2 text-sm font-semibold">
-              Costo total del folio
-            </TableCell>
-            <TableCell className="py-2 text-right text-base font-bold tabular-nums">
-              {fmtCurrency(total)}
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-
-      {sinCosto > 0 && (
-        <p className="border-t border-border px-3 py-2 text-xs text-amber-700">
-          {sinCosto === 1
-            ? "Un proceso no tiene costo capturado en el Excel, así que no suma al total."
-            : `${sinCosto} procesos no tienen costo capturado en el Excel, así que no suman al total.`}
-        </p>
-      )}
-    </div>
-  )
-}
-
 function DesgloseValor({
   row,
   readOnly,
   onCambiarCosto,
+  onCambiarEntrega,
+  onCambiarCostoServicio,
+  onCambiarRecibidas,
+  servicios,
 }: {
   row: VwPagoMaquilas
   readOnly: boolean
   onCambiarCosto: (v: number | null) => void
+  onCambiarEntrega: (v: string | null) => void
+  onCambiarCostoServicio: (s: ServicioExterno, v: number | null) => void
+  onCambiarRecibidas: (v: number | null) => void
+  servicios: VwServicioPago[]
 }) {
+  const recibidas = row.piezas_recibidas
+  const procesoDe = (s: ServicioExterno) =>
+    servicios.find((x) => x.servicio === s)?.proceso ?? null
+
+  const renglones: {
+    nombre: string
+    unitario: number | null
+    detalle?: React.ReactNode
+    onSave?: (v: number | null) => void
+  }[] = [
+    {
+      nombre: "Maquila",
+      unitario: row.costo_maquila,
+      detalle: row.beneficiario,
+      onSave: onCambiarCosto,
+    },
+    ...SERVICIOS_EXTERNOS.map((s) => ({
+      nombre: s,
+      unitario: COSTO_DEL_SERVICIO[s](row),
+      detalle: s === "Lavandería" ? procesoDe(s) : null,
+      onSave: (v: number | null) => onCambiarCostoServicio(s, v),
+    })),
+  ]
+
+  const unitarioTotal = num(row.costo_unitario_total)
+
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-4">
+      {/* ── Costos por pieza y su subtotal ── */}
+      <div className="mb-4 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/40 px-3 py-2">
+          <p className="text-base font-semibold text-foreground">Costo por proceso</p>
+          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            Todo sobre
+            <RecibidasEditable
+              valor={recibidas}
+              deEntregas={row.piezas_recibidas_entregas}
+              ajustado={row.recibidas_ajustadas}
+              disabled={readOnly}
+              onSave={onCambiarRecibidas}
+            />
+            piezas recibidas
+          </span>
+        </div>
+
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="h-9 text-sm font-semibold">Proceso</TableHead>
+              <TableHead className="h-9 text-right text-sm font-semibold">Costo unitario</TableHead>
+              <TableHead className="h-9 text-right text-sm font-semibold">Piezas</TableHead>
+              <TableHead className="h-9 text-right text-sm font-semibold">Subtotal</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {renglones.map((r) => {
+              const u = num(r.unitario)
+              return (
+                <TableRow
+                  key={r.nombre}
+                  className={cn("hover:bg-muted/20", r.unitario == null && "opacity-60")}
+                >
+                  <TableCell className="py-1.5 text-base font-medium">
+                    {r.nombre}
+                    {r.detalle && (
+                      <span className="ml-1.5 text-sm font-normal text-muted-foreground">
+                        {r.detalle}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right">
+                    <CostoUnitarioEditable
+                      valor={r.unitario}
+                      disabled={readOnly || !r.onSave}
+                      onSave={r.onSave ?? (() => {})}
+                    />
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right text-base tabular-nums text-muted-foreground">
+                    {recibidas.toLocaleString("es-MX")}
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right text-base font-medium tabular-nums">
+                    {fmtCurrency(recibidas * u)}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+
+            <TableRow className="border-t-2 border-border bg-muted/20 hover:bg-muted/20">
+              <TableCell className="py-2 text-base font-semibold">Costo final</TableCell>
+              <TableCell className="py-2 text-right text-base font-semibold tabular-nums">
+                {fmtCurrency(unitarioTotal)}
+              </TableCell>
+              <TableCell className="py-2 text-right text-base tabular-nums text-muted-foreground">
+                {recibidas.toLocaleString("es-MX")}
+              </TableCell>
+              <TableCell className="py-2 text-right text-lg font-bold tabular-nums">
+                {fmtCurrency(num(row.costo_final))}
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+
+        {!readOnly && (
+          <p className="border-t border-border px-3 py-2 text-sm text-muted-foreground">
+            Clic sobre un costo para cambiarlo; vacío hace que ese proceso deje de aplicar.
+            Las piezas recibidas también se editan arriba.
+          </p>
+        )}
+      </div>
+
+      {/* ── Descuentos y saldo ── */}
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-1.5">
           <Linea
-            etiqueta={
-              <>
-                Costo final
-                <span className="ml-1.5 text-[13px] font-normal text-muted-foreground">
-                  {row.piezas_recibidas.toLocaleString("es-MX")} recibidas ×{" "}
-                  <CostoEditable
-                    valor={row.costo_maquila}
-                    disabled={readOnly}
-                    onSave={onCambiarCosto}
-                  />
-                </span>
-              </>
-            }
+            etiqueta={<span className="font-semibold">Costo final</span>}
             valor={row.costo_capturado ? fmtCurrency(num(row.costo_final)) : "Sin costo"}
             tono={row.costo_capturado ? "text-foreground" : "text-amber-600"}
           />
@@ -997,7 +1079,7 @@ function DesgloseValor({
             etiqueta={
               <>
                 Pzs no entregadas
-                <span className="ml-1.5 text-[13px] font-normal text-muted-foreground">
+                <span className="ml-1.5 text-sm font-normal text-muted-foreground">
                   {row.piezas_no_entregadas} × {fmtCurrency(num(row.precio_venta))} de venta
                 </span>
               </>
@@ -1013,10 +1095,12 @@ function DesgloseValor({
             etiqueta={
               <>
                 Demora en entrega
-                <span className="ml-1.5 text-[13px] font-normal text-muted-foreground">
+                <span className="ml-1.5 text-sm font-normal text-muted-foreground">
                   {row.semanas_demora > 0
-                    ? `${row.semanas_demora} sem × ${DEMORA_SEMANAL_PCT}% = ${num(row.demora_pct).toFixed(1)}%`
-                    : "sin atraso"}
+                    ? `${row.semanas_demora} sem × ${DEMORA_SEMANAL_PCT}% de la maquila`
+                    : row.fecha_s1
+                      ? "dentro del plazo"
+                      : "sin S1, no corre plazo"}
                 </span>
               </>
             }
@@ -1035,23 +1119,47 @@ function DesgloseValor({
 
         <div className="space-y-1.5 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
           <Linea
+            etiqueta="Piezas de la orden"
+            valor={row.piezas_orden?.toLocaleString("es-MX") ?? "—"}
+            tono="text-muted-foreground"
+          />
+          <Linea
             etiqueta="Piezas cortadas"
             valor={row.piezas_cortadas > 0 ? row.piezas_cortadas.toLocaleString("es-MX") : "—"}
             tono="text-muted-foreground"
           />
           <Linea
-            etiqueta="Fecha de entrega"
+            etiqueta="Arranque de maquila (S1)"
+            valor={fmtFecha(row.fecha_s1)}
+            tono="text-muted-foreground"
+          />
+          <Linea
+            etiqueta={`Plazo (S1 + ${DEMORA_PLAZO_DIAS} días)`}
+            valor={fmtFecha(row.fecha_limite_maquilero)}
+            tono={row.semanas_demora > 0 ? "text-rose-600" : "text-muted-foreground"}
+          />
+          <Linea
+            etiqueta={
+              <>
+                Entrega real
+                {row.entrega_corregida && (
+                  <span className="ml-1.5 text-sm font-normal text-amber-600">corregida</span>
+                )}
+              </>
+            }
+            valor={
+              <FechaEntregaEditable
+                corregida={row.fecha_entrega_corregida}
+                delExcel={row.fecha_entrega_s5}
+                disabled={readOnly}
+                onSave={onCambiarEntrega}
+              />
+            }
+            tono="text-foreground"
+          />
+          <Linea
+            etiqueta="Compromiso con el cliente"
             valor={fmtFecha(row.fecha_cancelacion)}
-            tono="text-muted-foreground"
-          />
-          <Linea
-            etiqueta="Entrega del maquilero"
-            valor={fmtFecha(row.fecha_entrega_maquilero)}
-            tono="text-muted-foreground"
-          />
-          <Linea
-            etiqueta="Última recepción"
-            valor={fmtFecha(row.ultima_recepcion)}
             tono="text-muted-foreground"
           />
           <div className="mt-1 border-t border-border pt-1.5">
@@ -1071,46 +1179,19 @@ function DesgloseValor({
       </div>
 
       {row.semanas_demora > 0 && (
-        <p className="mt-3 flex items-start gap-1.5 text-[13px] text-rose-700">
-          <Clock className="mt-0.5 size-3 shrink-0" />
+        <p className="mt-3 flex items-start gap-1.5 text-sm text-rose-700">
+          <Clock className="mt-0.5 size-4 shrink-0" />
           {row.fecha_entrega_maquilero
-            ? `El maquilero entregó ${row.semanas_demora} semanas después de la fecha comprometida.`
-            : `Han pasado ${row.semanas_demora} semanas de la fecha comprometida y el Excel no registra la entrega (FECHA_STATUS5); el descuento sigue creciendo.`}
+            ? `Entregó ${row.semanas_demora} ${row.semanas_demora === 1 ? "semana" : "semanas"} después de su plazo de ${DEMORA_PLAZO_DIAS} días.`
+            : `Su plazo de ${DEMORA_PLAZO_DIAS} días venció hace ${row.semanas_demora} ${row.semanas_demora === 1 ? "semana" : "semanas"} y no hay entrega registrada; el descuento sigue creciendo.`}
         </p>
       )}
     </div>
   )
 }
 
-function Linea({
-  etiqueta,
-  valor,
-  tono,
-  destacado,
-}: {
-  etiqueta: React.ReactNode
-  valor: string
-  tono?: string
-  destacado?: boolean
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="text-sm text-muted-foreground">{etiqueta}</span>
-      <span
-        className={cn(
-          "shrink-0 tabular-nums",
-          destacado ? "text-lg font-bold" : "text-base font-medium",
-          tono,
-        )}
-      >
-        {valor}
-      </span>
-    </div>
-  )
-}
-
-/** Costo unitario editable en línea, dentro del desglose. */
-function CostoEditable({
+/** Costo por pieza de un proceso, editable en línea. Vacío = no aplica. */
+function CostoUnitarioEditable({
   valor,
   disabled,
   onSave,
@@ -1144,6 +1225,7 @@ function CostoEditable({
         type="number"
         step="0.01"
         min="0"
+        placeholder="vacío = no aplica"
         value={texto}
         onChange={(e) => setTexto(e.target.value)}
         onBlur={confirmar}
@@ -1154,28 +1236,60 @@ function CostoEditable({
             setEditando(false)
           }
         }}
-        className="inline-block h-6 w-24 px-1.5 py-0 text-[13px]"
+        className="ml-auto h-9 w-36 text-right text-base"
       />
     )
   }
 
   if (disabled) {
-    return <span className="font-medium">{valor != null ? fmtCurrency(valor) : "sin costo"}</span>
+    return (
+      <span className={cn("text-base tabular-nums", valor == null && "text-muted-foreground/50")}>
+        {valor != null ? fmtCurrency(valor) : fmtCurrency(0)}
+      </span>
+    )
   }
 
   return (
     <button
       type="button"
       onClick={() => setEditando(true)}
-      title="Clic para cambiar el costo de maquila"
+      title={valor == null ? "Este proceso no aplica — clic para agregarlo" : "Clic para cambiar el costo"}
       className={cn(
-        "inline-flex items-center gap-1 rounded px-1 py-0.5 font-medium transition-colors hover:bg-muted",
-        valor == null && "text-amber-600",
+        "ml-auto flex items-center gap-1.5 rounded px-2 py-1 text-base tabular-nums transition-colors hover:bg-muted",
+        valor == null && "text-muted-foreground/50",
       )}
     >
-      {valor != null ? fmtCurrency(valor) : "sin costo"}
-      <Pencil className="size-2.5 text-muted-foreground/60" />
+      {valor != null ? fmtCurrency(valor) : fmtCurrency(0)}
+      <Pencil className="size-3.5 text-muted-foreground/50" />
     </button>
+  )
+}
+
+
+function Linea({
+  etiqueta,
+  valor,
+  tono,
+  destacado,
+}: {
+  etiqueta: React.ReactNode
+  valor: React.ReactNode
+  tono?: string
+  destacado?: boolean
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-base text-muted-foreground">{etiqueta}</span>
+      <span
+        className={cn(
+          "shrink-0 tabular-nums",
+          destacado ? "text-xl font-bold" : "text-lg font-medium",
+          tono,
+        )}
+      >
+        {valor}
+      </span>
+    </div>
   )
 }
 
@@ -1202,8 +1316,8 @@ function Seccion({
   return (
     <div className="rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
-        <p className="text-sm font-semibold text-foreground">{titulo}</p>
-        <p className="text-sm font-medium tabular-nums text-muted-foreground">{total}</p>
+        <p className="text-base font-semibold text-foreground">{titulo}</p>
+        <p className="text-base font-medium tabular-nums text-muted-foreground">{total}</p>
       </div>
       <div className="max-h-60 divide-y divide-border/60 overflow-y-auto">{children}</div>
       {formulario && <div className="border-t border-border bg-muted/20 p-2">{formulario}</div>}
@@ -1223,9 +1337,9 @@ function FilaMovimiento({
   onBorrar?: () => void
 }) {
   return (
-    <div className="flex items-center gap-3 px-3 py-1.5 text-sm">
+    <div className="flex items-center gap-3 px-3 py-1.5 text-base">
       <span className="w-16 shrink-0 text-muted-foreground">{fmtFecha(fecha)}</span>
-      <span className="w-36 shrink-0 font-medium tabular-nums text-foreground">{principal}</span>
+      <span className="w-40 shrink-0 font-medium tabular-nums text-foreground">{principal}</span>
       <span className="truncate text-muted-foreground">{detalle ?? ""}</span>
       {onBorrar && (
         <button
@@ -1242,7 +1356,7 @@ function FilaMovimiento({
 }
 
 function Vacio({ texto }: { texto: string }) {
-  return <p className="px-3 py-3 text-center text-[13px] text-muted-foreground/60">{texto}</p>
+  return <p className="px-3 py-3 text-center text-sm text-muted-foreground/60">{texto}</p>
 }
 
 function CampoMini({
@@ -1256,7 +1370,7 @@ function CampoMini({
 }) {
   return (
     <div className={cn("space-y-1", ancho)}>
-      <label className="block text-xs uppercase tracking-wide text-muted-foreground">
+      <label className="block text-[13px] uppercase tracking-wide text-muted-foreground">
         {label}
       </label>
       {children}
@@ -1273,7 +1387,7 @@ function CheckAdelanto({
   onChange: (v: boolean) => void
 }) {
   return (
-    <label className="flex cursor-pointer items-center gap-1.5 text-[13px] font-medium text-foreground">
+    <label className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-foreground">
       <input
         type="checkbox"
         checked={checked}
@@ -1330,7 +1444,7 @@ function SeccionRecepciones({
         readOnly ? undefined : (
           <div className="flex flex-wrap items-end gap-2">
             <CampoMini label="Fecha" ancho="w-36">
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-9" />
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-10" />
             </CampoMini>
             <CampoMini label="Piezas" ancho="w-28">
               <Input
@@ -1338,14 +1452,14 @@ function SeccionRecepciones({
                 min="1"
                 value={piezas}
                 onChange={(e) => setPiezas(e.target.value)}
-                className="h-9"
+                className="h-10"
               />
             </CampoMini>
             <Button
               size="sm"
               onClick={enviar}
               disabled={!valido || guardando}
-              className="h-9 gap-1.5 bg-sky-600 text-white hover:bg-sky-700"
+              className="h-10 gap-1.5 bg-sky-600 text-white hover:bg-sky-700"
             >
               {guardando ? (
                 <Loader2 className="size-3.5 animate-spin" />
@@ -1355,7 +1469,7 @@ function SeccionRecepciones({
               Recibir
             </Button>
             {excede && (
-              <p className="w-full text-[13px] font-medium text-amber-600">
+              <p className="w-full text-sm font-medium text-amber-600">
                 Se supera lo cortado ({base.toLocaleString("es-MX")} pz).
               </p>
             )}
@@ -1397,26 +1511,26 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
   return (
     <div className="rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
-        <p className="text-sm font-semibold text-foreground">Piezas no entregadas</p>
-        <p className="text-sm font-medium tabular-nums text-muted-foreground">
+        <p className="text-base font-semibold text-foreground">Piezas no entregadas</p>
+        <p className="text-base font-medium tabular-nums text-muted-foreground">
           {sinPrecio ? "Sin precio de venta" : fmtCurrency(num(row.valor_no_entregadas))}
         </p>
       </div>
 
       <div className="space-y-2 p-3">
-        <div className="flex items-center justify-between gap-3 text-sm">
+        <div className="flex items-center justify-between gap-3 text-base">
           <span className="text-muted-foreground">Piezas de la orden</span>
           <span className="tabular-nums font-medium">
             {orden > 0 ? orden.toLocaleString("es-MX") : "—"}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-3 text-sm">
+        <div className="flex items-center justify-between gap-3 text-base">
           <span className="text-muted-foreground">− Recibidas</span>
           <span className="tabular-nums font-medium">
             {row.piezas_recibidas.toLocaleString("es-MX")}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-3 border-t border-border pt-2 text-sm">
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-2 text-base">
           <span className="font-semibold text-foreground">No entregadas</span>
           <span
             className={cn(
@@ -1429,7 +1543,7 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
         </div>
 
         {row.piezas_no_entregadas > 0 && (
-          <p className="text-[13px] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {sinPrecio ? (
               <span className="font-medium text-amber-600">
                 Este folio no tiene precio de venta, así que no descuenta nada.
@@ -1446,7 +1560,7 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
           </p>
         )}
 
-        <p className="border-t border-border pt-2 text-[13px] text-muted-foreground/80">
+        <p className="border-t border-border pt-2 text-sm text-muted-foreground/80">
           Se calcula solo. Para corregirlo hay que registrar las entregas que falten en el
           panel de la izquierda.
         </p>
@@ -1512,7 +1626,7 @@ function SeccionPagos({
       }`}
       formulario={
         readOnly ? undefined : !row.costo_capturado && !adelanto ? (
-          <p className="text-[13px] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Sin costo unitario no hay contra qué calcular un pago. Puedes registrar un{" "}
             <button
               type="button"
@@ -1526,7 +1640,7 @@ function SeccionPagos({
         ) : (
           <div className="flex flex-wrap items-end gap-2">
             <CampoMini label="Fecha" ancho="w-36">
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-9" />
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-10" />
             </CampoMini>
             <CampoMini label="Monto" ancho="w-36">
               <Input
@@ -1535,7 +1649,7 @@ function SeccionPagos({
                 min="0"
                 value={monto}
                 onChange={(e) => setMonto(e.target.value)}
-                className="h-9"
+                className="h-10"
               />
             </CampoMini>
             <CampoMini label="Referencia" ancho="flex-1 min-w-40">
@@ -1543,7 +1657,7 @@ function SeccionPagos({
                 value={referencia}
                 onChange={(e) => setReferencia(e.target.value)}
                 placeholder="Transferencia, cheque…"
-                className="h-9"
+                className="h-10"
               />
             </CampoMini>
             <Button
@@ -1568,7 +1682,7 @@ function SeccionPagos({
             </Button>
             <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1">
               <CheckAdelanto checked={adelanto} onChange={setAdelanto} />
-              <p className="text-[13px] text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {adelanto
                   ? "Pago sin recibir: queda registrado como anticipo."
                   : `Saldo pendiente: ${fmtCurrency(saldoPendiente)}`}
@@ -1598,449 +1712,6 @@ function SeccionPagos({
         ))
       )}
     </Seccion>
-  )
-}
-
-// ─── Servicios externos ──────────────────────────────────────────────────────
-
-/**
- * Los cinco servicios de un folio, dentro del modal.
- *
- * Cada uno es un acreedor distinto con su propio saldo: se le paga por las
- * piezas que devolvió, no por las que se le mandaron.
- */
-function SeccionServicios({
-  folio,
-  piezasOrden,
-  piezasRecibidas,
-  servicios,
-  readOnly,
-  onSaved,
-}: {
-  folio: string
-  piezasOrden: number | null
-  piezasRecibidas: number
-  servicios: VwServicioPago[]
-  readOnly: boolean
-  onSaved: () => void
-}) {
-  const [pagando, setPagando] = useState<ServicioExterno | null>(null)
-
-  const guardarPiezas = async (
-    servicio: ServicioExterno,
-    campo: "piezas_enviadas" | "piezas_recibidas",
-    piezas: number | null,
-  ) => {
-    const supabase = getSupabase()
-    if (!supabase) return
-    // upsert: la fila (folio, servicio) puede no existir todavía
-    const { error } = await supabase
-      .from("servicio_unidades")
-      .upsert(
-        { idempresa: IDEMPRESA, folio, servicio, [campo]: piezas },
-        { onConflict: "idempresa,folio,servicio" },
-      )
-    if (error) {
-      toast.error("No se pudieron guardar las unidades", { description: error.message })
-      return
-    }
-    onSaved()
-  }
-
-  if (servicios.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-border p-4 text-center">
-        <p className="text-sm text-muted-foreground">
-          Este folio no tiene costos de servicios externos capturados en el Excel
-          (lavandería, estampado, bordado, corte externo u otro).
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="rounded-lg border border-border">
-      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
-        <p className="text-sm font-semibold text-foreground">Servicios externos</p>
-        <p className="text-sm text-muted-foreground">
-          Se paga por las piezas que devolvieron
-        </p>
-      </div>
-      <div className="divide-y divide-border/60">
-        {servicios.map((s) => (
-          <div key={s.servicio} className="space-y-2 px-3 py-2.5">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <div className="w-28 shrink-0">
-                <p className="text-sm font-semibold text-foreground">{s.servicio}</p>
-                <EstadoPill estado={s.estado} />
-              </div>
-
-              <div className="flex items-end gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Costo
-                  </p>
-                  <p className="text-sm font-medium tabular-nums">
-                    {s.costo_unitario != null ? (
-                      <>
-                        {fmtCurrency(num(s.costo_unitario))}
-                        <span className="text-xs font-normal text-muted-foreground">/pz</span>
-                      </>
-                    ) : (
-                      <span className="text-amber-600">sin valor</span>
-                    )}
-                  </p>
-                </div>
-                <div>
-                  <p className="mb-0.5 text-xs uppercase tracking-wide text-muted-foreground">
-                    Enviadas
-                  </p>
-                  <PiezasEditable
-                    valor={s.piezas_enviadas}
-                    sugerido={piezasRecibidas || piezasOrden || 0}
-                    etiquetaSugerido="Usar las piezas recibidas del maquilero"
-                    disabled={readOnly}
-                    onSave={(v) => guardarPiezas(s.servicio, "piezas_enviadas", v)}
-                  />
-                </div>
-                <div>
-                  <p className="mb-0.5 text-xs uppercase tracking-wide text-muted-foreground">
-                    Recibidas
-                  </p>
-                  <PiezasEditable
-                    valor={s.piezas_recibidas}
-                    sugerido={s.piezas_enviadas || piezasRecibidas || 0}
-                    etiquetaSugerido="Usar las piezas enviadas"
-                    disabled={readOnly}
-                    onSave={(v) => guardarPiezas(s.servicio, "piezas_recibidas", v)}
-                  />
-                </div>
-                {s.merma > 0 && (
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Merma
-                    </p>
-                    <p className="text-sm font-medium tabular-nums text-amber-600">
-                      {s.merma.toLocaleString("es-MX")}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="ml-auto flex items-end gap-3">
-                <div className="text-right">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Valor
-                  </p>
-                  <p className="text-sm font-semibold tabular-nums">{fmtCurrency(num(s.valor))}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Saldo
-                  </p>
-                  <p
-                    className={cn(
-                      "text-sm font-semibold tabular-nums",
-                      num(s.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground",
-                    )}
-                  >
-                    {fmtCurrency(num(s.saldo))}
-                  </p>
-                </div>
-                {!readOnly && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setPagando(pagando === s.servicio ? null : s.servicio)}
-                    className="h-7 gap-1 text-sm"
-                  >
-                    <Wallet className="size-3" />
-                    Pagos
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            {pagando === s.servicio && (
-              <PagosServicio servicio={s} onSaved={onSaved} readOnly={readOnly} />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/** Historial y alta de pagos de un servicio, desplegable dentro de su fila. */
-function PagosServicio({
-  servicio,
-  onSaved,
-  readOnly,
-}: {
-  servicio: VwServicioPago
-  onSaved: () => void
-  readOnly: boolean
-}) {
-  const { user } = useAuth()
-  const [pagos, setPagos] = useState<ServicioPago[]>([])
-  const [cargando, setCargando] = useState(true)
-  const saldoPendiente = Math.max(0, num(servicio.saldo))
-  const [fecha, setFecha] = useState(hoyISO())
-  const [monto, setMonto] = useState(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : "")
-  const [referencia, setReferencia] = useState("")
-  const [adelanto, setAdelanto] = useState(servicio.piezas_recibidas === 0)
-  const [guardando, setGuardando] = useState(false)
-
-  const cargar = useCallback(async () => {
-    const supabase = getSupabase()
-    if (!supabase) return
-    setCargando(true)
-    const { data } = await supabase
-      .from("servicio_pagos")
-      .select("*")
-      .eq("idempresa", IDEMPRESA)
-      .eq("folio", servicio.folio)
-      .eq("servicio", servicio.servicio)
-      .order("fecha")
-    setPagos((data as ServicioPago[]) ?? [])
-    setCargando(false)
-  }, [servicio.folio, servicio.servicio])
-
-  useEffect(() => {
-    cargar()
-  }, [cargar])
-
-  const n = Number(monto)
-  const valido = Number.isFinite(n) && n > 0
-  const excede = valido && !adelanto && n > saldoPendiente + CENTAVO
-
-  const pagar = async () => {
-    const supabase = getSupabase()
-    if (!supabase) return
-    setGuardando(true)
-    const { error } = await supabase.from("servicio_pagos").insert({
-      idempresa: IDEMPRESA,
-      folio: servicio.folio,
-      servicio: servicio.servicio,
-      fecha,
-      monto: Number(n.toFixed(2)),
-      referencia: referencia.trim() || null,
-      es_adelanto: adelanto,
-      capturado_por: user?.username ?? null,
-    })
-    setGuardando(false)
-    if (error) {
-      toast.error("No se pudo registrar el pago", { description: error.message })
-      return
-    }
-    toast.success(`Pago a ${servicio.servicio} registrado`)
-    setMonto("")
-    setReferencia("")
-    cargar()
-    onSaved()
-  }
-
-  const borrar = async (id: number) => {
-    const supabase = getSupabase()
-    if (!supabase) return
-    const { error } = await supabase
-      .from("servicio_pagos")
-      .delete()
-      .eq("id", id)
-      .eq("idempresa", IDEMPRESA)
-    if (error) {
-      toast.error("No se pudo eliminar el pago", { description: error.message })
-      return
-    }
-    toast.success("Pago eliminado")
-    cargar()
-    onSaved()
-  }
-
-  return (
-    <div className="rounded-md border border-border bg-muted/20 p-2">
-      {cargando ? (
-        <div className="flex justify-center py-3">
-          <Loader2 className="size-4 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <>
-          {pagos.length === 0 ? (
-            <Vacio texto={`Sin pagos a ${servicio.servicio}`} />
-          ) : (
-            <div className="mb-2 divide-y divide-border/60">
-              {pagos.map((g) => (
-                <FilaMovimiento
-                  key={g.id}
-                  fecha={g.fecha}
-                  principal={fmtCurrency(num(g.monto))}
-                  detalle={(g.es_adelanto ? "Adelanto · " : "") + (g.referencia ?? "")}
-                  onBorrar={readOnly ? undefined : () => borrar(g.id)}
-                />
-              ))}
-            </div>
-          )}
-
-          {!readOnly && (
-            <div className="flex flex-wrap items-end gap-2 border-t border-border pt-2">
-              <CampoMini label="Fecha" ancho="w-36">
-                <Input
-                  type="date"
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                  className="h-9"
-                />
-              </CampoMini>
-              <CampoMini label="Monto" ancho="w-32">
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={monto}
-                  onChange={(e) => setMonto(e.target.value)}
-                  className="h-9"
-                />
-              </CampoMini>
-              <CampoMini label="Referencia" ancho="flex-1 min-w-32">
-                <Input
-                  value={referencia}
-                  onChange={(e) => setReferencia(e.target.value)}
-                  className="h-9"
-                />
-              </CampoMini>
-              <Button
-                size="sm"
-                onClick={pagar}
-                disabled={!valido || guardando}
-                className={cn(
-                  "h-8 gap-1.5 text-white",
-                  excede
-                    ? "bg-rose-600 hover:bg-rose-700"
-                    : adelanto
-                      ? "bg-indigo-600 hover:bg-indigo-700"
-                      : "bg-emerald-600 hover:bg-emerald-700",
-                )}
-              >
-                {guardando && <Loader2 className="size-3.5 animate-spin" />}
-                {excede ? "Pagar de más" : adelanto ? "Adelantar" : "Pagar"}
-              </Button>
-              <div className="flex w-full items-center gap-3">
-                <CheckAdelanto checked={adelanto} onChange={setAdelanto} />
-                <p className="text-[13px] text-muted-foreground">
-                  Saldo: {fmtCurrency(saldoPendiente)}
-                </p>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-/** Cantidad de piezas editable en línea, con atajo para copiar un sugerido. */
-function PiezasEditable({
-  valor,
-  sugerido,
-  etiquetaSugerido,
-  disabled,
-  onSave,
-}: {
-  valor: number
-  sugerido: number
-  etiquetaSugerido: string
-  disabled: boolean
-  onSave: (v: number | null) => void
-}) {
-  const [editando, setEditando] = useState(false)
-  const [texto, setTexto] = useState(String(valor || ""))
-
-  useEffect(() => {
-    if (!editando) setTexto(String(valor || ""))
-  }, [valor, editando])
-
-  const confirmar = () => {
-    setEditando(false)
-    const t = texto.trim()
-    const n = t === "" ? null : Math.trunc(Number(t))
-    if (n !== null && (!Number.isFinite(n) || n < 0)) {
-      setTexto(String(valor || ""))
-      return
-    }
-    if (n !== (valor || null)) onSave(n)
-  }
-
-  if (disabled) {
-    return (
-      <span className="tabular-nums text-base">
-        {valor > 0 ? (
-          valor.toLocaleString("es-MX")
-        ) : (
-          <span className="text-muted-foreground/50">—</span>
-        )}
-      </span>
-    )
-  }
-
-  if (editando) {
-    return (
-      <Input
-        autoFocus
-        type="number"
-        min="0"
-        value={texto}
-        onChange={(e) => setTexto(e.target.value)}
-        onBlur={confirmar}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") confirmar()
-          if (e.key === "Escape") {
-            setTexto(String(valor || ""))
-            setEditando(false)
-          }
-        }}
-        className="h-9 w-28 text-right"
-      />
-    )
-  }
-
-  // Sin cantidad todavía: la celda tiene que verse capturable. Un guion
-  // suelto se lee como "no hay nada que hacer aquí" y el dato nunca se captura.
-  if (valor === 0) {
-    return (
-      <div className="flex items-center gap-1">
-        {sugerido > 0 && (
-          <button
-            type="button"
-            onClick={() => onSave(sugerido)}
-            title={etiquetaSugerido}
-            className="rounded-md border border-sky-200 bg-sky-50 px-1.5 py-1 text-xs font-medium text-sky-700 transition-colors hover:border-sky-400 hover:bg-sky-100"
-          >
-            {sugerido.toLocaleString("es-MX")}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setEditando(true)}
-          title="Capturar cantidad"
-          className="flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-1 text-[13px] text-muted-foreground transition-colors hover:border-sky-400 hover:bg-sky-50 hover:text-sky-700"
-        >
-          <Pencil className="size-3" />
-          Capturar
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => setEditando(true)}
-      title="Clic para editar"
-      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-base font-medium tabular-nums text-foreground transition-colors hover:bg-muted"
-    >
-      {valor.toLocaleString("es-MX")}
-      <Pencil className="size-3 text-muted-foreground/50" />
-    </button>
   )
 }
 
@@ -2315,7 +1986,7 @@ function ServiciosTab({
     const q = search.trim().toLowerCase()
     return servicios.filter((s) => {
       if (filtroServicio !== "__all__" && s.servicio !== filtroServicio) return false
-      if (soloPendientes && s.estado === "Saldado") return false
+      if (soloPendientes && s.piezas_recibidas > 0) return false
       if (q && !`${s.folio} ${s.cliente ?? ""} ${s.familia ?? ""}`.toLowerCase().includes(q))
         return false
       return true
@@ -2324,43 +1995,22 @@ function ServiciosTab({
 
   const kpis = useMemo(() => {
     let valor = 0
-    let pagado = 0
     let sinRecibir = 0
+    let sinCosto = 0
     for (const s of filtrados) {
       valor += num(s.valor)
-      pagado += num(s.pagado)
       if (s.piezas_recibidas === 0) sinRecibir++
+      if (s.costo_unitario == null) sinCosto++
     }
-    return { valor, pagado, saldo: valor - pagado, sinRecibir }
+    return { valor, sinRecibir, sinCosto, registros: filtrados.length }
   }, [filtrados])
 
-  /** Totales por servicio: a quién se le debe más. */
+  /** Cuánto aporta cada servicio al costo. */
   const porServicio = useMemo(() => {
     const m = new Map<string, number>()
-    for (const s of filtrados) m.set(s.servicio, (m.get(s.servicio) ?? 0) + num(s.saldo))
+    for (const s of filtrados) m.set(s.servicio, (m.get(s.servicio) ?? 0) + num(s.valor))
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1])
   }, [filtrados])
-
-  const guardarPiezas = async (
-    folio: string,
-    servicio: ServicioExterno,
-    campo: "piezas_enviadas" | "piezas_recibidas",
-    piezas: number | null,
-  ) => {
-    const supabase = getSupabase()
-    if (!supabase) return
-    const { error } = await supabase
-      .from("servicio_unidades")
-      .upsert(
-        { idempresa: IDEMPRESA, folio, servicio, [campo]: piezas },
-        { onConflict: "idempresa,folio,servicio" },
-      )
-    if (error) {
-      toast.error("No se pudieron guardar las unidades", { description: error.message })
-      return
-    }
-    onRefresh()
-  }
 
   const guardarProceso = async (
     folio: string,
@@ -2395,22 +2045,13 @@ function ServiciosTab({
           valueColor="text-cyan-700"
         />
         <KpiCard
-          label="Pagado"
-          value={kpis.pagado}
-          format={fmtCurrency}
-          icon={<Wallet className="size-3.5" />}
-          iconBg="bg-emerald-100 ring-emerald-200"
-          iconColor="text-emerald-600"
-          valueColor="text-emerald-700"
-        />
-        <KpiCard
-          label="Saldo pendiente"
-          value={kpis.saldo}
-          format={fmtCurrency}
-          icon={<Banknote className="size-3.5" />}
-          iconBg="bg-sky-100 ring-sky-200"
-          iconColor="text-sky-600"
-          valueColor={kpis.saldo > CENTAVO ? "text-sky-700" : "text-foreground"}
+          label="Registros"
+          value={kpis.registros}
+          icon={<Sparkles className="size-3.5" />}
+          iconBg="bg-slate-100 ring-slate-200"
+          iconColor="text-slate-600"
+          valueColor="text-foreground"
+          hint="Folio × servicio que aplican"
         />
         <KpiCard
           label="Sin recibir"
@@ -2420,6 +2061,15 @@ function ServiciosTab({
           iconColor="text-amber-600"
           valueColor={kpis.sinRecibir > 0 ? "text-amber-600" : "text-foreground"}
           hint="Falta marcar lo que regresó"
+        />
+        <KpiCard
+          label="Sin costo"
+          value={kpis.sinCosto}
+          icon={<AlertTriangle className="size-3.5" />}
+          iconBg="bg-amber-100 ring-amber-200"
+          iconColor="text-amber-600"
+          valueColor={kpis.sinCosto > 0 ? "text-amber-600" : "text-foreground"}
+          hint="No suman al valor a pagar"
         />
       </div>
 
@@ -2452,7 +2102,7 @@ function ServiciosTab({
           onClick={() => setSoloPendientes(!soloPendientes)}
           className="h-9"
         >
-          {soloPendientes ? "Solo pendientes" : "Todos"}
+          {soloPendientes ? "Solo sin recibir" : "Todos"}
         </Button>
         <span className="ml-auto text-xs text-muted-foreground">{filtrados.length} registros</span>
       </div>
@@ -2486,19 +2136,15 @@ function ServiciosTab({
               <TableHead className="font-semibold">Proceso</TableHead>
               <TableHead className="font-semibold text-right">Piezas cortadas</TableHead>
               <TableHead className="font-semibold text-right">Costo unitario</TableHead>
-              <TableHead className="font-semibold text-right">Enviadas</TableHead>
               <TableHead className="font-semibold text-right">Recibidas</TableHead>
               <TableHead className="font-semibold text-right">Costo total</TableHead>
-              <TableHead className="font-semibold text-right">Pagado</TableHead>
-              <TableHead className="font-semibold text-right">Saldo</TableHead>
-              <TableHead className="font-semibold">Estado</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 13 }).map((__, j) => (
+                  {Array.from({ length: 9 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -2507,7 +2153,7 @@ function ServiciosTab({
               ))
             ) : filtrados.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={13} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">
                   {servicios.length === 0
                     ? "Ningún folio tiene costos de servicios capturados en el Excel."
                     : "Sin registros para los filtros aplicados."}
@@ -2536,44 +2182,15 @@ function ServiciosTab({
                   <TableCell className="text-right text-sm">
                     <ValorUnitario valor={s.costo_unitario} />
                   </TableCell>
-                  <TableCell className="text-right">
-                    <PiezasEditable
-                      valor={s.piezas_enviadas}
-                      sugerido={s.piezas_cortadas || s.piezas_orden || 0}
-                      etiquetaSugerido="Usar las piezas cortadas"
-                      disabled={readOnly}
-                      onSave={(v) => guardarPiezas(s.folio, s.servicio, "piezas_enviadas", v)}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <PiezasEditable
-                      valor={s.piezas_recibidas}
-                      sugerido={s.piezas_enviadas}
-                      etiquetaSugerido="Usar las piezas enviadas"
-                      disabled={readOnly}
-                      onSave={(v) => guardarPiezas(s.folio, s.servicio, "piezas_recibidas", v)}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm font-medium">
-                    {fmtCurrency(num(s.valor))}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm text-emerald-700">
-                    {num(s.pagado) > 0 ? (
-                      fmtCurrency(num(s.pagado))
+                  <TableCell className="text-right tabular-nums text-sm">
+                    {s.piezas_recibidas > 0 ? (
+                      s.piezas_recibidas.toLocaleString("es-MX")
                     ) : (
                       <span className="text-muted-foreground/50">—</span>
                     )}
                   </TableCell>
-                  <TableCell
-                    className={cn(
-                      "text-right tabular-nums text-sm font-semibold",
-                      num(s.saldo) < -CENTAVO ? "text-rose-600" : "text-foreground",
-                    )}
-                  >
-                    {fmtCurrency(num(s.saldo))}
-                  </TableCell>
-                  <TableCell>
-                    <EstadoPill estado={s.estado} />
+                  <TableCell className="text-right tabular-nums text-sm font-medium">
+                    {fmtCurrency(num(s.valor))}
                   </TableCell>
                 </TableRow>
               ))
@@ -2583,8 +2200,10 @@ function ServiciosTab({
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        Los pagos de cada servicio se registran desde el botón <strong>Gestionar</strong> del
-        folio, en la pestaña de Cuentas por Pagar.
+        Todo se mide sobre las piezas que recibió el maquilero, y su importe ya está dentro
+        del costo final del folio. El costo unitario de cada proceso se edita desde{" "}
+        <strong>Gestionar</strong>, en Cuentas por Pagar: dejarlo vacío hace que ese proceso
+        deje de aplicar.
       </p>
     </div>
   )
@@ -2971,5 +2590,181 @@ function ProcesoSelect({
         ))}
       </SelectContent>
     </Select>
+  )
+}
+
+/**
+ * Fecha de entrega real del maquilero, corregible a mano.
+ *
+ * Se guarda en `fecha_entrega_real`, aparte de la `fecha_s5` que trae el
+ * Excel: esa además determina la fase del pedido en Seguimiento de Maquila,
+ * y corregirla desde aquí movería una fase que alguien más registró.
+ * Cuando hay corrección se muestra de dónde venía.
+ */
+function FechaEntregaEditable({
+  corregida,
+  delExcel,
+  disabled,
+  onSave,
+}: {
+  corregida: string | null
+  delExcel: string | null
+  disabled: boolean
+  onSave: (v: string | null) => void
+}) {
+  const vigente = corregida ?? delExcel
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(vigente ?? "")
+
+  useEffect(() => {
+    if (!editando) setTexto(vigente ?? "")
+  }, [vigente, editando])
+
+  const confirmar = () => {
+    setEditando(false)
+    const v = texto.trim() || null
+    // Volver a la fecha del Excel se guarda como null, no como copia:
+    // así el folio sigue siguiendo al archivo si este cambia.
+    if (v !== corregida) onSave(v === delExcel ? null : v)
+  }
+
+  if (editando) {
+    return (
+      <span className="flex items-center gap-1.5">
+        <Input
+          autoFocus
+          type="date"
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          onBlur={confirmar}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") confirmar()
+            if (e.key === "Escape") {
+              setTexto(vigente ?? "")
+              setEditando(false)
+            }
+          }}
+          className="h-8 w-40 text-sm"
+        />
+        {corregida && (
+          <button
+            type="button"
+            onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+            onClick={() => {
+              setEditando(false)
+              onSave(null)
+            }}
+            title={`Volver a la fecha del Excel (${fmtFecha(delExcel)})`}
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            restaurar
+          </button>
+        )}
+      </span>
+    )
+  }
+
+  if (disabled) return <>{fmtFecha(vigente)}</>
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditando(true)}
+      title={
+        corregida
+          ? `Corregida a mano · el Excel dice ${fmtFecha(delExcel)}`
+          : "Clic para corregir la fecha de entrega"
+      }
+      className="inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-muted"
+    >
+      {fmtFecha(vigente)}
+      <Pencil className="size-3 text-muted-foreground/50" />
+    </button>
+  )
+}
+
+/**
+ * Piezas recibidas del maquilero, editables.
+ *
+ * Se guarda como ajuste en la orden, no como una entrega inventada: el
+ * historial de `maquila_recepciones` queda intacto y se puede volver a él.
+ * Cuando el ajuste difiere de lo que suman las entregas, se avisa — es la
+ * señal de que alguien corrigió el número por fuera del historial.
+ */
+function RecibidasEditable({
+  valor,
+  deEntregas,
+  ajustado,
+  disabled,
+  onSave,
+}: {
+  valor: number
+  deEntregas: number
+  ajustado: boolean
+  disabled: boolean
+  onSave: (v: number | null) => void
+}) {
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(String(valor || ""))
+
+  useEffect(() => {
+    if (!editando) setTexto(String(valor || ""))
+  }, [valor, editando])
+
+  const confirmar = () => {
+    setEditando(false)
+    const t = texto.trim()
+    const n = t === "" ? null : Math.trunc(Number(t))
+    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+      setTexto(String(valor || ""))
+      return
+    }
+    // Volver al valor del historial se guarda como null, para que el folio
+    // siga a las entregas si después se registra alguna más.
+    if (n !== (ajustado ? valor : null)) onSave(n === deEntregas ? null : n)
+  }
+
+  if (disabled) {
+    return <span className="font-semibold text-foreground">{valor.toLocaleString("es-MX")}</span>
+  }
+
+  if (editando) {
+    return (
+      <Input
+        autoFocus
+        type="number"
+        min="0"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") confirmar()
+          if (e.key === "Escape") {
+            setTexto(String(valor || ""))
+            setEditando(false)
+          }
+        }}
+        className="h-9 w-28 text-right text-base"
+      />
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditando(true)}
+      title={
+        ajustado
+          ? `Fijadas a mano · las entregas registradas suman ${deEntregas.toLocaleString("es-MX")}`
+          : "Clic para fijar las piezas recibidas"
+      }
+      className={cn(
+        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-semibold tabular-nums transition-colors hover:bg-muted",
+        ajustado ? "text-amber-700" : "text-foreground",
+      )}
+    >
+      {valor.toLocaleString("es-MX")}
+      <Pencil className="size-3.5 text-muted-foreground/50" />
+    </button>
   )
 }

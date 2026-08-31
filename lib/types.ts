@@ -190,7 +190,15 @@ export type VwPagoMaquilas = {
   fase_actual: string | null
   fecha_cancelacion: string | null
   fecha_facturacion: string | null
-  /** FECHA_STATUS5 del Excel: la entrega del maquilero. Base de la demora. */
+  /** Arranque de maquila. De aquí corren los 45 días de plazo. */
+  fecha_s1: string | null
+  /** fecha_s1 + 45 días: hasta cuándo puede entregar sin penalización. */
+  fecha_limite_maquilero: string | null
+  /** Lo que dijo el Excel en FECHA_STATUS5. */
+  fecha_entrega_s5: string | null
+  /** Corrección manual desde Pago Maquilas; manda sobre la del Excel. */
+  fecha_entrega_corregida: string | null
+  /** La que se usa para la demora: la corregida si existe, si no la del Excel. */
   fecha_entrega_maquilero: string | null
   piezas_orden: number | null
   /** Lo que se le entregó al maquilero para confeccionar. */
@@ -204,19 +212,32 @@ export type VwPagoMaquilas = {
   costo_bordado: number | null
   costo_corte_externo: number | null
   costo_otro: number | null
+  /** Ajuste manual si existe, si no la suma de las entregas. */
   piezas_recibidas: number
+  /** Lo que suman los registros de entrega. */
+  piezas_recibidas_entregas: number
+  /** Valor fijado a mano; null = se usa la suma de entregas. */
+  piezas_recibidas_ajuste: number | null
   ultima_recepcion: string | null
   /** Automático: piezas de la orden − recibidas. Se descuentan a precio de venta. */
   piezas_no_entregadas: number
   valor_no_entregadas: number
-  /** Piezas recibidas × costo unitario: la base del cálculo. */
+  /** Piezas recibidas × costo unitario total (maquila + procesos). */
   costo_final: number
   /** Semanas completas de atraso sobre la fecha de entrega. */
   semanas_demora: number
   /** 1.5% por semana, sin tope. */
   demora_pct: number
   valor_demora: number
-  /** precio_final − no entregadas − demora. */
+  /** costo_maquila + los cinco costos de proceso. */
+  costo_unitario_total: number
+  /** Solo los cinco costos de proceso, sin la maquila. */
+  costo_unitario_servicios: number
+  /** Piezas recibidas × costo_maquila. */
+  valor_maquila: number
+  /** Piezas recibidas × costo unitario de los procesos. */
+  valor_servicios: number
+  /** costo_final − no entregadas − demora. */
   valor_a_pagar: number
   valor_pagado: number
   /** Parte de lo pagado que se marcó como adelanto. */
@@ -225,6 +246,10 @@ export type VwPagoMaquilas = {
   saldo: number
   /** false = la orden no tiene costo capturado; no es lo mismo que $0. */
   costo_capturado: boolean
+  /** true = alguien corrigió la fecha de entrega a mano. */
+  entrega_corregida: boolean
+  /** true = las piezas recibidas se fijaron a mano. */
+  recibidas_ajustadas: boolean
   estado_pago:
     | "Anticipo"
     | "Sin costo"
@@ -267,7 +292,12 @@ export const SERVICIOS_EXTERNOS: ServicioExterno[] = [
   "Otro",
 ]
 
-/** Fila de `vw_servicios_pago`: un folio y un servicio. */
+/**
+ * Fila de `vw_servicios_pago`: un folio y un servicio.
+ *
+ * Sin saldo propio: desde el script 036 los servicios se le reembolsan al
+ * maquilero, así que su valor entra en `VwPagoMaquilas.valor_servicios`.
+ */
 export type VwServicioPago = {
   idempresa: number
   folio: string
@@ -284,25 +314,17 @@ export type VwServicioPago = {
   costo_unitario: number | null
   /** Tipo de lavado. Solo se usa cuando servicio = Lavandería. */
   proceso: ProcesoLavanderia | null
-  piezas_enviadas: number
+  /** Las del maquilero: todo se mide sobre las mismas piezas. */
   piezas_recibidas: number
-  merma: number
   valor: number
-  pagado: number
-  adelantos: number
-  ultimo_pago: string | null
-  saldo: number
-  estado:
-    | "Anticipo"
-    | "Sin valor"
-    | "Sin recepción"
-    | "Sobrepagado"
-    | "Saldado"
-    | "Parcial"
-    | "Pendiente"
 }
 
-/** Pago a un proveedor de servicio externo. */
+/**
+ * Pago a un proveedor de servicio externo.
+ *
+ * OBSOLETO desde el script 036: los servicios se le pagan al maquilero. Se
+ * conserva el tipo por si el criterio cambia.
+ */
 export type ServicioPago = {
   id: number
   idempresa: number
