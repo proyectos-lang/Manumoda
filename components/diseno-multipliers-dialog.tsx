@@ -30,6 +30,7 @@ import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 type CatTipo    = { id: number; nombre: string; multiplicador: number }
 type CatCatDem  = { id: number; nombre: string; multiplicador: number }
 type CatAdicion = { id: number; clave: string;  nombre: string; horas: number }
+type CatFamilia = { id: number; familia: string; base_horas_costura: number }
 
 type Props = {
   open: boolean
@@ -61,16 +62,19 @@ export function DisenoMultipliersDialog({ open, onOpenChange, onChanged }: Props
   const [tipos, setTipos]         = useState<CatTipo[]>([])
   const [categorias, setCategorias] = useState<CatCatDem[]>([])
   const [adiciones, setAdiciones] = useState<CatAdicion[]>([])
+  const [familias, setFamilias]   = useState<CatFamilia[]>([])
 
   // Inline-edit state
   const [tipoEdit, setTipoEdit]   = useState<{ id: number; nombre: string; multiplicador: string } | null>(null)
   const [catEdit, setCatEdit]     = useState<{ id: number; nombre: string; multiplicador: string } | null>(null)
   const [adicEdit, setAdicEdit]   = useState<{ id: number; nombre: string; horas: string } | null>(null)
+  const [famEdit, setFamEdit]     = useState<{ id: number; familia: string; base: string } | null>(null)
 
   // New-row state
   const [newTipo, setNewTipo]     = useState<{ nombre: string; multiplicador: string } | null>(null)
   const [newCat, setNewCat]       = useState<{ nombre: string; multiplicador: string } | null>(null)
   const [newAdic, setNewAdic]     = useState<{ nombre: string; horas: string } | null>(null)
+  const [newFam, setNewFam]       = useState<{ familia: string; base: string } | null>(null)
 
   useEffect(() => { if (open) fetchAll() }, [open])
 
@@ -78,14 +82,16 @@ export function DisenoMultipliersDialog({ open, onOpenChange, onChanged }: Props
     setLoading(true)
     const supabase = getSupabase()
     if (!supabase) { setLoading(false); return }
-    const [tRes, cRes, aRes] = await Promise.all([
+    const [tRes, cRes, aRes, fRes] = await Promise.all([
       supabase.from("cat_tipo_diseno").select("id, nombre, multiplicador").eq("idempresa", IDEMPRESA).order("id"),
       supabase.from("cat_categoria_demografica").select("id, nombre, multiplicador").eq("idempresa", IDEMPRESA).order("id"),
       supabase.from("cat_adiciones_diseno").select("id, clave, nombre, horas").eq("idempresa", IDEMPRESA).order("id"),
+      supabase.from("complejidad_familias").select("id, familia, base_horas_costura").eq("idempresa", IDEMPRESA).order("familia"),
     ])
     setTipos((tRes.data ?? []) as CatTipo[])
     setCategorias((cRes.data ?? []) as CatCatDem[])
     setAdiciones((aRes.data ?? []) as CatAdicion[])
+    setFamilias((fRes.data ?? []) as CatFamilia[])
     setLoading(false)
   }
 
@@ -200,15 +206,66 @@ export function DisenoMultipliersDialog({ open, onOpenChange, onChanged }: Props
     toast.success("Adición agregada")
   }
 
+  // ── Familia handlers ─────────────────────────────────────────────────────────
+  //
+  // Cambiar una hora base NO reescribe los registros ya evaluados: el trigger
+  // congela su plan. Aplica a los nuevos y a los que se vuelvan a tocar.
+
+  async function saveFam() {
+    if (!famEdit) return
+    const base = parseFloat(famEdit.base)
+    if (!famEdit.familia.trim() || isNaN(base) || base < 0) {
+      toast.error("Familia y horas base requeridas"); return
+    }
+    setSaving(true)
+    const { error } = await getSupabase()!.from("complejidad_familias")
+      .update({ familia: famEdit.familia.trim().toUpperCase(), base_horas_costura: base })
+      .eq("id", famEdit.id)
+    setSaving(false)
+    if (error) { toast.error("No se pudo guardar", { description: error.message }); return }
+    setFamEdit(null); await fetchAll(); onChanged?.()
+    toast.success("Horas base actualizadas")
+  }
+
+  async function deleteFam(id: number) {
+    setSaving(true)
+    const { error } = await getSupabase()!.from("complejidad_familias").delete().eq("id", id)
+    setSaving(false)
+    if (error) { toast.error("No se pudo eliminar", { description: error.message }); return }
+    await fetchAll(); onChanged?.()
+    toast.success("Familia eliminada")
+  }
+
+  async function insertFam() {
+    if (!newFam) return
+    const base = parseFloat(newFam.base)
+    if (!newFam.familia.trim() || isNaN(base) || base < 0) {
+      toast.error("Familia y horas base requeridas"); return
+    }
+    setSaving(true)
+    const { error } = await getSupabase()!.from("complejidad_familias")
+      .insert({
+        idempresa: IDEMPRESA,
+        familia: newFam.familia.trim().toUpperCase(),
+        base_horas_costura: base,
+        base_horas_diseno: base,
+      })
+    setSaving(false)
+    if (error) { toast.error("No se pudo agregar", { description: error.message }); return }
+    setNewFam(null); await fetchAll(); onChanged?.()
+    toast.success("Familia agregada")
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Multiplicadores de Diseño</DialogTitle>
-          <DialogDescription className="font-mono text-xs">
-            Horas = horas_base × tipo × categoría + Σ adiciones
+          <DialogTitle>Multiplicadores de Diseño y Costura</DialogTitle>
+          <DialogDescription className="space-y-0.5 font-mono text-xs">
+            <span className="block">Diseño = horas_base × tipo × categoría + Σ adiciones</span>
+            <span className="block">Costura = (base de la familia × categoría + casillas) × muestras</span>
           </DialogDescription>
         </DialogHeader>
 
@@ -222,6 +279,7 @@ export function DisenoMultipliersDialog({ open, onOpenChange, onChanged }: Props
               <TabsTrigger value="tipos" className="flex-1">Tipo de Orden</TabsTrigger>
               <TabsTrigger value="categorias" className="flex-1">Categoría Demográfica</TabsTrigger>
               <TabsTrigger value="adiciones" className="flex-1">Adiciones</TabsTrigger>
+              <TabsTrigger value="familias" className="flex-1">Familias (costura)</TabsTrigger>
             </TabsList>
 
             {/* ── Tab: Tipos ── */}
@@ -495,6 +553,104 @@ export function DisenoMultipliersDialog({ open, onOpenChange, onChanged }: Props
                   <Plus className="size-3.5" /> Agregar adición
                 </Button>
               )}
+            </TabsContent>
+
+            {/* ── Tab: Familias (costura) ── */}
+            <TabsContent value="familias" className="mt-4 space-y-3">
+              <p className="text-xs text-muted-foreground">
+                La hora base con la que arranca el plan de costura de cada familia. Una
+                familia sin fila aquí calcula desde cero, y su folio termina sin horas.
+              </p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Familia</TableHead>
+                    <TableHead>Operación</TableHead>
+                    <TableHead className="text-right">Horas base</TableHead>
+                    <TableHead className="w-20" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {familias.map((row) =>
+                    famEdit?.id === row.id ? (
+                      <TableRow key={row.id}>
+                        <TableCell>
+                          <Input value={famEdit.familia} className="h-7 text-xs"
+                            onChange={(e) => setFamEdit((p) => p && { ...p, familia: e.target.value })} />
+                        </TableCell>
+                        <TableCell><OpBadge op="+" /></TableCell>
+                        <TableCell>
+                          <Input type="number" step="0.05" min="0" value={famEdit.base} className="h-7 text-xs text-right w-24 ml-auto"
+                            onChange={(e) => setFamEdit((p) => p && { ...p, base: e.target.value })} />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button size="icon" variant="ghost" className="size-7" onClick={saveFam} disabled={saving}>
+                              <Check className="size-3.5 text-emerald-600" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="size-7" onClick={() => setFamEdit(null)}>
+                              <XIcon className="size-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-mono text-sm">{row.familia}</TableCell>
+                        <TableCell><OpBadge op="+" /></TableCell>
+                        <TableCell className="text-right font-mono">
+                          {Number(row.base_horas_costura).toFixed(2)} h
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button size="icon" variant="ghost" className="size-7"
+                              onClick={() => { setFamEdit({ id: row.id, familia: row.familia, base: String(row.base_horas_costura) }); setNewFam(null) }}>
+                              <Pencil className="size-3.5 text-muted-foreground" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="size-7 text-destructive/50 hover:text-destructive"
+                              onClick={() => deleteFam(row.id)}>
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  )}
+                  {newFam && (
+                    <TableRow>
+                      <TableCell>
+                        <Input autoFocus placeholder="Familia" value={newFam.familia} className="h-7 text-xs"
+                          onChange={(e) => setNewFam((p) => p && { ...p, familia: e.target.value })} />
+                      </TableCell>
+                      <TableCell><OpBadge op="+" /></TableCell>
+                      <TableCell>
+                        <Input type="number" step="0.05" min="0" placeholder="2.30" value={newFam.base} className="h-7 text-xs text-right w-24 ml-auto"
+                          onChange={(e) => setNewFam((p) => p && { ...p, base: e.target.value })} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button size="icon" variant="ghost" className="size-7" onClick={insertFam} disabled={saving}>
+                            <Check className="size-3.5 text-emerald-600" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="size-7" onClick={() => setNewFam(null)}>
+                            <XIcon className="size-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+              {!newFam && (
+                <Button variant="outline" size="sm" className="gap-1.5"
+                  onClick={() => { setNewFam({ familia: "", base: "2.30" }); setFamEdit(null) }}>
+                  <Plus className="size-3.5" /> Agregar familia
+                </Button>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Cambiar una hora base no reescribe los registros ya evaluados: su plan
+                queda congelado. Aplica a los nuevos y a los que se vuelvan a tocar.
+              </p>
             </TabsContent>
           </Tabs>
         )}

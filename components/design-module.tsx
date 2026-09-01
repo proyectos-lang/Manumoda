@@ -967,6 +967,11 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
                             plan={row.horas_plan_diseno}
                             rechazada={row.rechazo_orden}
                           />
+                          <PlanEnCero
+                            asignado={row.iddisenadora}
+                            plan={row.horas_plan_diseno}
+                            area="diseño"
+                          />
                         </TableCell>
                         <TableCell className="text-sm">{row.costureras?.nombre ?? <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm font-medium text-violet-700">
@@ -975,6 +980,11 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
                             cumplidas={row.horas_costura_cumplidas}
                             plan={row.horas_plan_costura}
                             rechazada={row.rechazo_orden}
+                          />
+                          <PlanEnCero
+                            asignado={row.idcosturera}
+                            plan={row.horas_plan_costura}
+                            area="costura"
                           />
                         </TableCell>
                         <TableCell><AprobacionBadge fecha={row.fecha_aprobacion_diseno} /></TableCell>
@@ -2927,6 +2937,38 @@ function getStatusKey(row: DisenoProgramacion): string {
  * — sobre todo en las órdenes rechazadas, donde el trigger acredita la
  * mitad del plan (scripts 006 y 012).
  */
+/**
+ * Avisa cuando hay colaborador asignado pero el plan quedó en cero.
+ *
+ * Es el caso que pasó inadvertido durante meses: `complejidad_familias`
+ * estaba vacía y 18 registros con cumplimiento palomeado valían 0 h. Un
+ * cero se lee igual que "todavía no", y nadie lo revisa. Marcado en ámbar
+ * sí se ve.
+ */
+function PlanEnCero({
+  asignado,
+  plan,
+  area,
+}: {
+  asignado: number | null | undefined
+  plan: number | null | undefined
+  area: "diseño" | "costura"
+}) {
+  if (asignado == null || Number(plan ?? 0) > 0) return null
+  return (
+    <p
+      className="mt-0.5 text-[11px] font-medium text-amber-600"
+      title={
+        area === "costura"
+          ? "La familia de esta prenda no tiene horas base de costura. Se configuran en Multiplicadores → Familias."
+          : "Este registro no tiene prenda vinculada ni horas de plan. Se corrige desde Evaluar."
+      }
+    >
+      sin plan de {area}
+    </p>
+  )
+}
+
 function HorasCumplidas({
   cumplidas,
   plan,
