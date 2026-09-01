@@ -373,6 +373,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       Folio: r.folio ?? "",
       Modelo: r.modelo ?? "",
       Familia: r.familia ?? "",
+      Cliente: r.cliente ?? "",
       Maquilador: r.maquilero_nombre ?? "",
       "Límite de Confirmación": r.fecha_limite_confirmacion ?? "",
       "Límite de Entrega": r.fecha_cancelacion ?? "",
@@ -1111,7 +1112,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
             <div>
               <h3 className="text-sm font-semibold text-foreground">Master Tracking</h3>
               <p className="text-xs text-muted-foreground">
-                Folio · Maquilador · Fechas clave · Riesgo · Avance S1–S7
+                Folio · Cliente · Maquilador · Fechas clave · Riesgo · Calificación · Avance S1–S7
               </p>
             </div>
           </div>
@@ -1140,11 +1141,13 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead className="w-[130px]">Folio</TableHead>
                 <TableHead>Modelo</TableHead>
                 <TableHead>Familia</TableHead>
+                <TableHead>Cliente</TableHead>
                 <TableHead>Maquilador</TableHead>
                 <TableHead className="w-[110px]">Límite de Confirmación</TableHead>
                 <TableHead className="w-[110px]">Límite de Entrega</TableHead>
                 <TableHead className="w-[110px]">Contra Muestra</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
+                <TableHead className="w-[90px] text-center">Calificación</TableHead>
                 <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
@@ -1157,12 +1160,14 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-28" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-28" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="mx-auto size-6 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-44" /></TableCell>
                     </TableRow>
                   ))}
@@ -1171,7 +1176,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10} className="py-12 text-center">
+                  <TableCell colSpan={12} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -1193,6 +1198,11 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {r.familia ?? <span className="text-muted-foreground/40 italic">—</span>}
+                      </TableCell>
+                      <TableCell className="text-sm text-foreground">
+                        {r.cliente?.trim() || (
+                          <span className="text-muted-foreground/40 italic">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="text-sm text-foreground">
@@ -1228,6 +1238,25 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                         >
                           {ri.label}
                         </span>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {r.calidad != null ? (
+                          <span
+                            className={cn(
+                              "inline-flex size-6 items-center justify-center rounded-full text-xs font-bold tabular-nums",
+                              r.calidad >= 8
+                                ? "bg-emerald-100 text-emerald-700"
+                                : r.calidad >= 5
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-rose-100 text-rose-700",
+                            )}
+                            title={`Calificación ${r.calidad} de 10`}
+                          >
+                            {r.calidad}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
                         {r.fecha_ultima_revision
