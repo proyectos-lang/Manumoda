@@ -200,20 +200,24 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
     return map
   }, [orders])
 
-  // Columnas de ancho fijo con scroll horizontal, no diez repartidas en el
-  // ancho de la pantalla: con 500 folios cada tarjeta quedaba en ~90 px y no
-  // se alcanzaba a leer ni el modelo. Es preferible desplazarse de lado.
+  // Columnas anchas de altura libre: se desplaza de lado para cambiar de
+  // columna y hacia abajo para recorrerla. Repartir diez columnas en el ancho
+  // de la pantalla dejaba cada tarjeta en ~90 px, y recortarlas a una altura
+  // fija escondía la mayoría —Sin Producción sola trae 200 folios—.
+  //
+  // `items-start` evita que todas las columnas crezcan hasta la altura de la
+  // más larga: cada una termina donde termina su contenido.
   return (
     <div className="-mx-1 overflow-x-auto px-1 pb-2">
-      <div className="flex min-w-max gap-3">
+      <div className="flex min-w-max items-start gap-4">
         {KANBAN_COLS.map((col) => {
           const items = grouped[col] ?? []
           return (
             <div
               key={col}
-              className="flex h-[min(76vh,760px)] w-[264px] shrink-0 flex-col rounded-xl border border-border bg-white/70"
+              className="flex w-[340px] shrink-0 flex-col rounded-xl border border-border bg-white/70"
             >
-              <div className="shrink-0 rounded-t-xl border-b border-border bg-white/80 px-3 py-2.5">
+              <div className="shrink-0 rounded-t-xl border-b border-border bg-white/80 px-3.5 py-3">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-sm font-semibold text-foreground" title={col}>
                     {col}
@@ -231,9 +235,9 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
                   {KANBAN_COL_HINT[col]}
                 </p>
               </div>
-              <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2.5">
+              <div className="flex flex-col gap-2 p-2.5">
                 {items.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/40">
+                  <div className="py-8 text-center text-xs text-muted-foreground/40">
                     Sin órdenes
                   </div>
                 ) : (
