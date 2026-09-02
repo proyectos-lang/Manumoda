@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { format, getISOWeek } from "date-fns"
+import { format, getISOWeek, setISOWeek, startOfISOWeek } from "date-fns"
 import { es } from "date-fns/locale"
 import { CalendarIcon, Check, ChevronsUpDown, Loader2, Scissors } from "lucide-react"
 import { toast } from "sonner"
@@ -180,17 +180,39 @@ function ComplementoCheck({
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
+/**
+ * Dos momentos distintos del mismo registro de corte.
+ *
+ * · "planear"     → se decide quién corta y en qué semana. Nada más: antes
+ *   de cortar todavía no se conocen la tela, los trazos ni los metros, y
+ *   pedirlos por adelantado obligaba a inventarlos.
+ * · "especificar" → al calificar el trabajo de la semana se capturan las
+ *   especificaciones y ahí sí se calculan las horas plan.
+ */
+export type ModoCorte = "planear" | "especificar"
+
 export function ScheduleCutDialog({
   open,
   onOpenChange,
   orden,
   onSaved,
+  modo = "planear",
+  registroId = null,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   orden: OrdenProduccion | null
   onSaved: () => void
+  modo?: ModoCorte
+  /**
+   * Registro concreto a editar. Sin él se toma el más reciente del folio,
+   * que es lo correcto al programar; pero un folio puede tener un registro
+   * por semana, y desde el Plan de Corte hay que editar justo la fila que
+   * se abrió, no la última.
+   */
+  registroId?: number | null
 }) {
+  const esPlan = modo === "planear"
   const [familias, setFamilias] = useState<CatFamiliaCorte[]>([])
   const [categorias, setCategorias] = useState<CatCategoriaCorte[]>([])
   const [telas, setTelas] = useState<CatTelaCorte[]>([])
@@ -231,13 +253,19 @@ export function ScheduleCutDialog({
         .select("idcortador, idapoyo, horas_plan_corte")
         .eq("idempresa", IDEMPRESA)
         .eq("semana", getISOWeek(new Date())),
-      supabase.from("corte_programacion")
-        .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar, semana, fecha")
-        .eq("idempresa", IDEMPRESA)
-        .eq("folio", orden?.folio ?? "")
-        .order("id", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+      (registroId != null
+        ? supabase.from("corte_programacion")
+            .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar, semana, fecha")
+            .eq("idempresa", IDEMPRESA)
+            .eq("id", registroId)
+            .maybeSingle()
+        : supabase.from("corte_programacion")
+            .select("id, idfamilia_corte, categoria_corte, categoria_tela, trazos, tendidos, combinacion, comp_entretela, comp_poquetin, comp_forro, idcortador, idapoyo, piezas_cortadas, metros_utilizar, semana, fecha")
+            .eq("idempresa", IDEMPRESA)
+            .eq("folio", orden?.folio ?? "")
+            .order("id", { ascending: false })
+            .limit(1)
+            .maybeSingle()),
     ]).then(([fRes, catRes, telaRes, trazRes, tendRes, compRes, cortRes, cargaRes, cpRes]) => {
       const familiasList = (fRes.data as CatFamiliaCorte[]) ?? []
       setFamilias(familiasList)
@@ -337,29 +365,41 @@ export function ScheduleCutDialog({
   const handleSubmit = async () => {
     if (!orden?.id || !orden.folio) return
 
-    if (!form.idfamilia) { toast.error("Campo requerido", { description: "Selecciona la familia de corte." }); return }
-    if (!form.categoriaCorte) { toast.error("Campo requerido", { description: "Selecciona la categoría." }); return }
-    if (!form.categoriaTela) { toast.error("Campo requerido", { description: "Selecciona el tipo de tela." }); return }
-    const trazosNum = parseInt(form.trazos, 10)
-    if (isNaN(trazosNum) || trazosNum < 1 || trazosNum > 5) { toast.error("Campo requerido", { description: "Ingresa los trazos (1–5)." }); return }
-    const tendidosNum = parseInt(form.tendidos, 10)
-    if (isNaN(tendidosNum) || tendidosNum < 1 || tendidosNum > 8) { toast.error("Campo requerido", { description: "Ingresa los tendidos (1–8)." }); return }
     const semanaNum = parseInt(form.semana, 10)
     if (isNaN(semanaNum) || semanaNum < 1 || semanaNum > 53) { toast.error("Semana inválida", { description: "Ingresa una semana entre 1 y 53." }); return }
-    if (!form.fecha) { toast.error("Campo requerido", { description: "Indica la fecha en que se realizó el corte." }); return }
-    // metros_utilizar es NOT NULL en la base: se exige un valor > 0
-    const metrosNum = form.metros_utilizar ? parseFloat(form.metros_utilizar) : null
-    if (metrosNum === null || isNaN(metrosNum) || metrosNum <= 0) { toast.error("Campo requerido", { description: "Ingresa los metros de tela (mayor a 0)." }); return }
-    const piezasNum = form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null
-    if (piezasNum !== null && (isNaN(piezasNum) || piezasNum <= 0)) { toast.error("Piezas inválidas", { description: "Las piezas cortadas deben ser mayores a 0." }); return }
-    if (horasCalculadas === null) { toast.error("Error de cálculo", { description: "Verifica los valores ingresados." }); return }
 
-    const supabase = getSupabase()
-    if (!supabase) return
+    // ── Programar: solo semana y cortadores ──────────────────────────────────
+    let payload: Record<string, unknown>
 
-    setSaving(true)
-    try {
-      const payload = {
+    if (esPlan) {
+      payload = {
+        semana: semanaNum,
+        idcortador: form.idcortador && form.idcortador !== "__none__" ? Number(form.idcortador) : null,
+        idapoyo: form.idapoyo && form.idapoyo !== "__none__" ? Number(form.idapoyo) : null,
+      }
+      // En un registro nuevo la fecha arranca en el lunes de la semana elegida:
+      // es una fecha de plan. Al calificar se reemplaza por la del corte real.
+      if (!editRegistroId) {
+        payload.fecha = format(startOfISOWeek(setISOWeek(new Date(), semanaNum)), "yyyy-MM-dd")
+      }
+
+    // ── Especificar: todo lo demás, y de ahí salen las horas ─────────────────
+    } else {
+      if (!form.idfamilia) { toast.error("Campo requerido", { description: "Selecciona la familia de corte." }); return }
+      if (!form.categoriaCorte) { toast.error("Campo requerido", { description: "Selecciona la categoría." }); return }
+      if (!form.categoriaTela) { toast.error("Campo requerido", { description: "Selecciona el tipo de tela." }); return }
+      const trazosNum = parseInt(form.trazos, 10)
+      if (isNaN(trazosNum) || trazosNum < 1 || trazosNum > 5) { toast.error("Campo requerido", { description: "Ingresa los trazos (1–5)." }); return }
+      const tendidosNum = parseInt(form.tendidos, 10)
+      if (isNaN(tendidosNum) || tendidosNum < 1 || tendidosNum > 8) { toast.error("Campo requerido", { description: "Ingresa los tendidos (1–8)." }); return }
+      if (!form.fecha) { toast.error("Campo requerido", { description: "Indica la fecha en que se realizó el corte." }); return }
+      const metrosNum = form.metros_utilizar ? parseFloat(form.metros_utilizar) : null
+      if (metrosNum === null || isNaN(metrosNum) || metrosNum <= 0) { toast.error("Campo requerido", { description: "Ingresa los metros de tela (mayor a 0)." }); return }
+      const piezasNum = form.piezas_cortadas ? parseInt(form.piezas_cortadas, 10) : null
+      if (piezasNum !== null && (isNaN(piezasNum) || piezasNum <= 0)) { toast.error("Piezas inválidas", { description: "Las piezas cortadas deben ser mayores a 0." }); return }
+      if (horasCalculadas === null) { toast.error("Error de cálculo", { description: "Verifica los valores ingresados." }); return }
+
+      payload = {
         idfamilia_corte: Number(form.idfamilia),
         categoria_corte: form.categoriaCorte,
         categoria_tela: form.categoriaTela,
@@ -378,6 +418,16 @@ export function ScheduleCutDialog({
         // Fecha real del corte: de aquí sale la puntualidad vs S1
         fecha: format(form.fecha, "yyyy-MM-dd"),
       }
+    }
+
+    const supabase = getSupabase()
+    if (!supabase) return
+
+    setSaving(true)
+    try {
+      const resumen = esPlan
+        ? `Folio ${orden.folio} · Semana ${semanaNum}`
+        : `Folio ${orden.folio} · Semana ${semanaNum} · ${horasCalculadas} h`
 
       if (editRegistroId) {
         const { error } = await supabase
@@ -386,9 +436,10 @@ export function ScheduleCutDialog({
           .eq("id", editRegistroId)
           .eq("idempresa", IDEMPRESA)
         if (error) { toast.error("No se pudo actualizar el corte", { description: error.message }); return }
-        toast.success("Programación de Corte actualizada", {
-          description: `Folio ${orden.folio} · Semana ${semanaNum} · ${horasCalculadas} h`,
-        })
+        toast.success(
+          esPlan ? "Programación de Corte actualizada" : "Especificaciones guardadas",
+          { description: resumen },
+        )
       } else {
         const { data: insertedRow, error: insertError } = await supabase
           .from("corte_programacion")
@@ -417,9 +468,7 @@ export function ScheduleCutDialog({
           })
           return
         }
-        toast.success("Programación de Corte guardada", {
-          description: `Folio ${orden.folio} · Semana ${semanaNum} · ${horasCalculadas} h`,
-        })
+        toast.success("Programación de Corte guardada", { description: resumen })
       }
       onOpenChange(false)
       onSaved()
@@ -475,10 +524,18 @@ export function ScheduleCutDialog({
             </div>
             <div className="min-w-0">
               <SheetTitle className="text-white text-base font-semibold leading-tight">
-                {editRegistroId ? "Reprogramar Corte" : "Programar en Corte"}
+                {!esPlan
+                  ? "Especificaciones de Corte"
+                  : editRegistroId
+                    ? "Reprogramar Corte"
+                    : "Programar en Corte"}
               </SheetTitle>
               <SheetDescription className="text-white/55 text-xs mt-0.5">
-                {editRegistroId ? `Actualizando · Folio: ${orden?.folio ?? "—"}` : `Folio: ${orden?.folio ?? "—"}`}
+                {!esPlan
+                  ? `Al calificar la semana · Folio: ${orden?.folio ?? "—"}`
+                  : editRegistroId
+                    ? `Actualizando · Folio: ${orden?.folio ?? "—"}`
+                    : `Folio: ${orden?.folio ?? "—"}`}
               </SheetDescription>
             </div>
           </div>
@@ -506,6 +563,34 @@ export function ScheduleCutDialog({
               </dl>
             </div>
 
+            {/* Semana del plan — lo único que se decide en ambos modos */}
+            <FormSection title="Semana del Plan">
+              <div className="grid grid-cols-1 gap-3">
+                <div className="space-y-1.5">
+                  <DLabel htmlFor="semana_corte">Semana</DLabel>
+                  <Input
+                    id="semana_corte"
+                    type="number"
+                    min="1"
+                    max="53"
+                    step="1"
+                    value={form.semana}
+                    onChange={(e) => setForm(f => ({ ...f, semana: e.target.value }))}
+                    className={DARK_INPUT}
+                  />
+                </div>
+              </div>
+              {esPlan && (
+                <p className="text-[10px] text-white/40">
+                  El registro entra al plan de corte de esta semana. Las especificaciones
+                  —tela, trazos, tendidos, metros— se capturan después, al calificar el
+                  trabajo de la semana en el Plan de Corte.
+                </p>
+              )}
+            </FormSection>
+
+            {!esPlan && (
+              <>
             {/* Familia de Corte */}
             <FormSection title="Familia de Corte — Horas Base">
               <div className="space-y-1.5">
@@ -700,7 +785,7 @@ export function ScheduleCutDialog({
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 <div className="space-y-1.5">
                   <DLabel htmlFor="metros_utilizar">Metros de tela <Req /></DLabel>
                   <Input
@@ -711,19 +796,6 @@ export function ScheduleCutDialog({
                     placeholder="0.00"
                     value={form.metros_utilizar}
                     onChange={(e) => setForm(f => ({ ...f, metros_utilizar: e.target.value }))}
-                    className={DARK_INPUT}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <DLabel htmlFor="semana_corte">Semana</DLabel>
-                  <Input
-                    id="semana_corte"
-                    type="number"
-                    min="1"
-                    max="53"
-                    step="1"
-                    value={form.semana}
-                    onChange={(e) => setForm(f => ({ ...f, semana: e.target.value }))}
                     className={DARK_INPUT}
                   />
                 </div>
@@ -763,24 +835,29 @@ export function ScheduleCutDialog({
               )}
             </FormSection>
 
+              </>
+            )}
+
             {/* Asignación */}
-            <FormSection title="Asignación">
-              <div className="space-y-1.5">
-                <DLabel htmlFor="piezas_cortadas">Piezas Cortadas</DLabel>
-                <Input
-                  id="piezas_cortadas"
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="0"
-                  value={form.piezas_cortadas}
-                  onChange={(e) => setForm(f => ({ ...f, piezas_cortadas: e.target.value }))}
-                  className={DARK_INPUT}
-                />
-              </div>
+            <FormSection title="Asignación de Cortadores">
+              {!esPlan && (
+                <div className="space-y-1.5">
+                  <DLabel htmlFor="piezas_cortadas">Piezas Cortadas</DLabel>
+                  <Input
+                    id="piezas_cortadas"
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="0"
+                    value={form.piezas_cortadas}
+                    onChange={(e) => setForm(f => ({ ...f, piezas_cortadas: e.target.value }))}
+                    className={DARK_INPUT}
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="idcortador">Cortador</DLabel>
+                  <DLabel htmlFor="idcortador">Cortador 1</DLabel>
                   <Select
                     value={form.idcortador || "__none__"}
                     onValueChange={(v) => setForm(f => ({ ...f, idcortador: v }))}
@@ -805,17 +882,17 @@ export function ScheduleCutDialog({
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <DLabel htmlFor="idapoyo">Ayudante</DLabel>
+                  <DLabel htmlFor="idapoyo">Cortador 2</DLabel>
                   <Select
                     value={form.idapoyo || "__none__"}
                     onValueChange={(v) => setForm(f => ({ ...f, idapoyo: v }))}
                     disabled={loading}
                   >
                     <SelectTrigger id="idapoyo" className={DARK_SELECT_TRIGGER}>
-                      <SelectValue placeholder="Sin ayudante" />
+                      <SelectValue placeholder="Sin asignar" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">Sin ayudante</SelectItem>
+                      <SelectItem value="__none__">Sin asignar</SelectItem>
                       {cortadores.map(c => (
                         <SelectItem key={c.id} value={String(c.id)}>
                           <span className="flex w-full items-center justify-between gap-3">
@@ -833,7 +910,7 @@ export function ScheduleCutDialog({
             </FormSection>
 
             {/* Preview Card */}
-            {horasCalculadas !== null && (
+            {!esPlan && horasCalculadas !== null && (
               <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-indigo-300/70">
                   Horas Plan Estimadas
@@ -875,7 +952,7 @@ export function ScheduleCutDialog({
           <Button
             type="button"
             onClick={handleSubmit}
-            disabled={saving || !orden || horasCalculadas === null}
+            disabled={saving || !orden || (!esPlan && horasCalculadas === null)}
             className="bg-indigo-600 hover:bg-indigo-500 text-white border-0"
           >
             {saving ? (
@@ -883,7 +960,11 @@ export function ScheduleCutDialog({
                 <Loader2 className="size-4 animate-spin" />
                 Guardando…
               </>
-            ) : editRegistroId ? "Actualizar Programación" : "Programar Corte"}
+            ) : !esPlan
+              ? "Guardar Especificaciones"
+              : editRegistroId
+                ? "Actualizar Programación"
+                : "Programar Corte"}
           </Button>
         </SheetFooter>
       </SheetContent>

@@ -35,7 +35,14 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { PhaseBubbleTimeline } from "@/components/phase-bubble-timeline"
 import { FolioLink } from "@/components/folio-detail-drawer"
-import { LEAD_DIAS, etapaActual, evaluarEtapaActual, type LeadTimeRow } from "@/lib/lead-times"
+import {
+  LEAD_DIAS,
+  enPlanDeCorte,
+  enPlanDeDiseno,
+  etapaActual,
+  evaluarEtapaActual,
+  type LeadTimeRow,
+} from "@/lib/lead-times"
 import { PHASE_PACE, parseLocalDate } from "@/lib/risk"
 import {
   Dialog,
@@ -334,6 +341,10 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
   /**
    * Puntualidad de las órdenes que están **ahora mismo** en Diseño y en Corte.
    *
+   * Solo entran al cálculo las que pertenecen al plan correspondiente: si un
+   * modelo no está en el plan de diseño ni en el de corte, nadie se
+   * comprometió con una fecha para él y calificarlo no significa nada.
+   *
    * Cada orden se cuenta una sola vez, en la etapa donde está parada. Antes
    * se evaluaba cada orden contra las dos etapas, así que una que ni siquiera
    * había empezado diseño aparecía reprobando corte y hundía ese indicador.
@@ -344,9 +355,14 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
   const leadStats = useMemo(() => {
     const base = { aTiempo: 0, aDestiempo: 0, sinFecha: 0 }
     const stats = { diseno: { ...base }, corte: { ...base } }
+    let fueraDePlan = 0
     for (const r of leadRows) {
       const etapa = etapaActual(r)
       if (etapa !== "diseno" && etapa !== "corte") continue
+      // Una orden confirmada por el cliente cuenta como Corte para el Kanban,
+      // pero mientras no tenga semana de corte asignada no hay plazo que medir.
+      const enPlan = etapa === "diseno" ? enPlanDeDiseno(r) : enPlanDeCorte(r)
+      if (!enPlan) { fueraDePlan++; continue }
       const { estado } = evaluarEtapaActual(r)
       if (estado === "a-tiempo") stats[etapa].aTiempo++
       else if (estado === "a-destiempo") stats[etapa].aDestiempo++
@@ -358,6 +374,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
     }
     return {
       ...stats,
+      fueraDePlan,
       pctDiseno: pct(stats.diseno),
       pctCorte: pct(stats.corte),
       chart: [
@@ -648,10 +665,19 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               Puntualidad de las órdenes en Diseño y Corte
             </h3>
             <p className="text-xs text-muted-foreground">
-              Cada orden cuenta en la etapa donde está hoy · Diseño debe estar listo{" "}
+              Solo las órdenes que están en plan de diseño o en plan de corte, cada una
+              en la etapa donde está hoy · Diseño debe estar listo{" "}
               <strong>{LEAD_DIAS.diseno} días</strong> antes de S1 · Corte{" "}
               <strong>{LEAD_DIAS.corte} días</strong> antes
             </p>
+            {leadStats.fueraDePlan > 0 && (
+              <p className="mt-0.5 text-xs text-muted-foreground/70">
+                {leadStats.fueraDePlan}{" "}
+                {leadStats.fueraDePlan === 1
+                  ? "orden confirmada sigue sin semana de corte y queda fuera del cálculo"
+                  : "órdenes confirmadas siguen sin semana de corte y quedan fuera del cálculo"}
+              </p>
+            )}
           </div>
           <LeadTimeInfo />
         </div>

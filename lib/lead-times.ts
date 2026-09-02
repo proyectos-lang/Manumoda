@@ -51,12 +51,12 @@ export type LeadTimeRow = {
 }
 
 /** Etapas del flujo. Una orden está en exactamente una a la vez. */
-export type EtapaPipeline = "sin-programar" | "diseno" | "corte" | "maquila"
+export type EtapaPipeline = "sin-produccion" | "diseno" | "corte" | "maquila"
 
 const FASES_MAQUILA = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
 
 export const ETAPA_LABEL: Record<EtapaPipeline, string> = {
-  "sin-programar": "Sin Programar",
+  "sin-produccion": "Sin Producción",
   diseno: "Diseño",
   corte: "Corte",
   maquila: "Maquila",
@@ -65,23 +65,44 @@ export const ETAPA_LABEL: Record<EtapaPipeline, string> = {
 /**
  * Etapa en la que se encuentra la orden **ahora mismo**.
  *
- * Sigue el vocabulario que ve el usuario en Panel General:
+ * La etapa se define por PERTENENCIA A UN PLAN, no por el avance interno:
  *
- * · "Reprogramar Diseño"  → está trabajando en diseño.
- * · "Diseño Completado"   → el cliente ya aprobó, así que pasa a corte
- *   aunque todavía no tenga semana de corte asignada.
+ * · Sin Producción → todavía no entra al plan de diseño. Es lo que
+ *   operación llama "no ha pasado por diseño".
+ * · Diseño         → está en el plan de diseño y el cliente aún no
+ *   confirma.
+ * · Corte          → está en el plan de corte. También caen aquí las que
+ *   ya confirmó el cliente y siguen esperando semana de corte: salieron
+ *   de diseño, y no tenerlas en ningún lado las volvería invisibles.
+ * · Maquila        → ya arrancó (fase S1…S7).
  *
- * Por eso la aprobación del cliente (`fecha_aprobacion_diseno`) manda
- * sobre el avance interno de diseño (`cumplimiento_diseno`): lo primero
- * cierra la etapa de cara al cliente, lo segundo solo dice que la
- * diseñadora terminó sus horas.
+ * Anclarla al plan y no a `cumplimiento_*` importa porque el avance se
+ * califica después, a veces semanas después: una orden programada esta
+ * semana pertenece a su etapa desde que entra al plan, no desde que
+ * alguien la evalúa.
  */
 export function etapaActual(row: LeadTimeRow): EtapaPipeline {
   if (row.fase_actual && FASES_MAQUILA.has(row.fase_actual)) return "maquila"
-  if (row.cumplimiento_corte === "Si" || row.fecha_corte) return "corte"
+  if (enPlanDeCorte(row)) return "corte"
   if (row.fecha_aprobacion_diseno) return "corte"
-  if (row.cumplimiento_diseno || row.fecha_diseno) return "diseno"
-  return "sin-programar"
+  if (enPlanDeDiseno(row)) return "diseno"
+  return "sin-produccion"
+}
+
+/**
+ * ¿La orden está en el plan de diseño?
+ *
+ * `fecha_diseno` es la fecha del registro en `diseno_programacion`, así
+ * que tenerla equivale a estar en el plan. `cumplimiento_diseno` no sirve
+ * de ancla: es la calificación, y llega después.
+ */
+export function enPlanDeDiseno(row: LeadTimeRow): boolean {
+  return row.fecha_diseno != null
+}
+
+/** ¿La orden está en el plan de corte? Mismo criterio, sobre corte_programacion. */
+export function enPlanDeCorte(row: LeadTimeRow): boolean {
+  return row.fecha_corte != null
 }
 
 /**

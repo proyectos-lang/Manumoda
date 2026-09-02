@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
-import type { VwBonosCorte, VwPlanCorteDetalle } from "@/lib/types"
+import type { OrdenProduccion, VwBonosCorte, VwPlanCorteDetalle } from "@/lib/types"
 import { esProximoAVencer } from "@/lib/risk"
 import { useReadOnly } from "@/lib/auth-context"
 import type { ModuleFilter } from "@/lib/module-filter"
@@ -55,6 +55,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import {
   Dialog,
   DialogContent,
@@ -179,6 +180,36 @@ function PlanCorteTab({
   useEffect(() => { setIncomingFilter(initialFilter) }, [initialFilter])
   const [editVarsOpen, setEditVarsOpen] = useState(false)
   const [multipliersOpen, setMultipliersOpen] = useState(false)
+
+  /**
+   * Especificaciones del corte, que ya no se capturan al programar.
+   *
+   * El diálogo pide la orden completa, y el plan solo trae el folio, así que
+   * se busca al abrir. Es una sola fila y evita cargar 500 órdenes que casi
+   * nunca se usan.
+   */
+  const [espec, setEspec] = useState<{ orden: OrdenProduccion; registroId: number } | null>(null)
+  const [especCargando, setEspecCargando] = useState<number | null>(null)
+
+  const abrirEspecificaciones = useCallback(async (folio: string, registroId: number) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    setEspecCargando(registroId)
+    const { data, error } = await supabase
+      .from("ordenes_produccion")
+      .select("id, idempresa, folio, modelo, familia, categoria, cliente, piezas")
+      .eq("idempresa", IDEMPRESA)
+      .eq("folio", folio)
+      .maybeSingle()
+    setEspecCargando(null)
+    if (error || !data) {
+      toast.error("No se pudo abrir el folio", {
+        description: error?.message ?? `No se encontró la orden ${folio}.`,
+      })
+      return
+    }
+    setEspec({ orden: data as OrdenProduccion, registroId })
+  }, [])
 
   // Local overrides for inline edits (keyed by registro_id)
   const [localRows, setLocalRows] = useState<Record<number, Partial<PatchRow>>>({})
@@ -389,6 +420,14 @@ function PlanCorteTab({
     {gate.dialog}
     <CorteMultipliersDialog open={multipliersOpen} onOpenChange={setMultipliersOpen} />
     <EditCorteVariablesSheet open={editVarsOpen} onClose={() => setEditVarsOpen(false)} />
+    <ScheduleCutDialog
+      open={espec !== null}
+      onOpenChange={(o) => { if (!o) setEspec(null) }}
+      orden={espec?.orden ?? null}
+      registroId={espec?.registroId ?? null}
+      onSaved={() => { setEspec(null); void fetchData() }}
+      modo="especificar"
+    />
     <div className="space-y-4">
       {/* Alerta de pedidos próximos a vencer */}
       <DeadlineAlertBanner
@@ -544,20 +583,21 @@ function PlanCorteTab({
               <TableHead className="text-right font-semibold">Hrs Cum.</TableHead>
               <TableHead className="text-center font-semibold">Calidad</TableHead>
               <TableHead className="min-w-[160px] font-semibold">Comentarios</TableHead>
+              <TableHead className="w-32 font-semibold">Especificaciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading && rows.length === 0 ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 17 }).map((__, j) => (
+                  {Array.from({ length: 18 }).map((__, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={17} className="h-28 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={18} className="h-28 text-center text-sm text-muted-foreground">
                   {rows.length === 0 ? "No hay registros en el plan de corte." : "Sin resultados para esta búsqueda."}
                 </TableCell>
               </TableRow>
@@ -659,6 +699,32 @@ function PlanCorteTab({
                         disabled={isSaving}
                         onSave={(v) => handleFieldSave(r.registro_id, "comentarios", v || null)}
                       />
+                    </TableCell>
+
+                    {/* Especificaciones — se capturan al calificar la semana */}
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant={r.idfamilia_corte == null ? "default" : "outline"}
+                        disabled={readOnly || especCargando === r.registro_id}
+                        onClick={() => abrirEspecificaciones(r.folio, r.registro_id)}
+                        title={
+                          r.idfamilia_corte == null
+                            ? "Falta capturar tela, trazos, tendidos y metros"
+                            : "Editar las especificaciones del corte"
+                        }
+                        className={cn(
+                          "h-7 gap-1 px-2 text-xs",
+                          r.idfamilia_corte == null && "bg-amber-500 text-white hover:bg-amber-600",
+                        )}
+                      >
+                        {especCargando === r.registro_id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Settings2 className="size-3.5" />
+                        )}
+                        {r.idfamilia_corte == null ? "Capturar" : "Editar"}
+                      </Button>
                     </TableCell>
                   </TableRow>
                 )

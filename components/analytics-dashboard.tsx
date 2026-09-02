@@ -149,12 +149,12 @@ function corteState(o: SeguimientoRow): StageState {
   return "pendiente"
 }
 
-// ── Kanban de Seguimiento (Sin Programar · Diseño · Corte · S1…S7) ───────────
+// ── Kanban de Seguimiento (Sin Producción · Diseño · Corte · S1…S7) ──────────
 
-const KANBAN_COLS = ["Sin Programar", "Diseño", "Corte", "S1", "S2", "S3", "S4", "S5", "S6", "S7"] as const
+const KANBAN_COLS = ["Sin Producción", "Diseño", "Corte", "S1", "S2", "S3", "S4", "S5", "S6", "S7"] as const
 
 const KANBAN_COL_CLASS: Record<string, string> = {
-  "Sin Programar": "border-slate-300 bg-slate-100 text-slate-600",
+  "Sin Producción": "border-slate-300 bg-slate-100 text-slate-600",
   Diseño: "border-indigo-300 bg-indigo-50 text-indigo-700",
   Corte: "border-amber-300 bg-amber-50 text-amber-700",
   S1: "border-cyan-300 bg-cyan-50 text-cyan-700",
@@ -166,21 +166,27 @@ const KANBAN_COL_CLASS: Record<string, string> = {
   S7: "border-emerald-300 bg-emerald-50 text-emerald-700",
 }
 
+/** Qué significa cada columna, para que nadie tenga que adivinar la regla. */
+const KANBAN_COL_HINT: Record<string, string> = {
+  "Sin Producción": "Todavía no entran al plan de diseño",
+  Diseño: "En plan de diseño, sin confirmar el cliente",
+  Corte: "En plan de corte, o confirmadas esperando semana",
+  S1: "En maquila", S2: "En maquila", S3: "En maquila",
+  S4: "En maquila", S5: "En maquila", S6: "En maquila", S7: "En maquila",
+}
+
 /**
  * Columna del Kanban a la que pertenece una orden.
  *
- * Comparte la regla de `etapaActual` en lib/lead-times.ts, con el
- * vocabulario que ve el usuario en Panel General: mientras el botón dice
- * "Reprogramar Diseño" la orden está en Diseño; en cuanto dice "Diseño
- * Completado" (el cliente aprobó) pasa a Corte, aunque todavía no tenga
- * semana de corte asignada.
+ * Es la misma regla de `etapaActual` en lib/lead-times.ts: la etapa se
+ * define por el plan al que pertenece la orden, no por su calificación.
  */
 function kanbanColumn(o: SeguimientoRow): string {
   const etapa = etapaActual(o)
   if (etapa === "maquila" && o.fase_actual) return o.fase_actual
   if (etapa === "corte") return "Corte"
   if (etapa === "diseno") return "Diseño"
-  return "Sin Programar"
+  return "Sin Producción"
 }
 
 function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
@@ -194,62 +200,81 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
     return map
   }, [orders])
 
+  // Columnas de ancho fijo con scroll horizontal, no diez repartidas en el
+  // ancho de la pantalla: con 500 folios cada tarjeta quedaba en ~90 px y no
+  // se alcanzaba a leer ni el modelo. Es preferible desplazarse de lado.
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10">
-      {KANBAN_COLS.map((col) => {
-        const items = grouped[col] ?? []
-        return (
-          <div
-            key={col}
-            className="flex h-[min(70vh,640px)] min-h-[320px] flex-col rounded-xl border border-border bg-white/70"
-          >
-            <div className="flex shrink-0 items-center justify-between gap-1 rounded-t-xl border-b border-border bg-white/80 px-2.5 py-2">
-              <span className="truncate text-xs font-semibold text-foreground" title={col}>
-                {col}
-              </span>
-              <span
-                className={cn(
-                  "shrink-0 rounded-full border px-1.5 text-[10px] font-semibold tabular-nums",
-                  KANBAN_COL_CLASS[col],
-                )}
-              >
-                {items.length}
-              </span>
-            </div>
-            <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
-              {items.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center text-[11px] text-muted-foreground/40">
-                  —
-                </div>
-              ) : (
-                items.map((o) => (
-                  <div
-                    key={String(o.id)}
-                    className="overflow-hidden rounded-lg border border-border bg-white p-2.5 shadow-none transition-colors hover:border-violet-300"
-                  >
-                    <div className="flex items-start justify-between gap-1">
-                      <span className="min-w-0 truncate">
-                        <FolioLink folio={o.folio} className="text-[11px]" />
-                      </span>
-                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                        {o.piezas ?? 0} pz
-                      </span>
-                    </div>
-                    <p className="mt-1 truncate text-[11px] font-medium text-foreground">{o.modelo ?? "—"}</p>
-                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{o.cliente ?? "—"}</p>
-                    {o.maquilero_nombre && (
-                      <p className="mt-0.5 truncate text-[10px] font-medium text-violet-600">{o.maquilero_nombre}</p>
+    <div className="-mx-1 overflow-x-auto px-1 pb-2">
+      <div className="flex min-w-max gap-3">
+        {KANBAN_COLS.map((col) => {
+          const items = grouped[col] ?? []
+          return (
+            <div
+              key={col}
+              className="flex h-[min(76vh,760px)] w-[264px] shrink-0 flex-col rounded-xl border border-border bg-white/70"
+            >
+              <div className="shrink-0 rounded-t-xl border-b border-border bg-white/80 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-semibold text-foreground" title={col}>
+                    {col}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums",
+                      KANBAN_COL_CLASS[col],
                     )}
-                    <div className="mt-1.5">
-                      <RiskBadge risk={o.__risk} days={o.__daysToDeadline} />
-                    </div>
+                  >
+                    {items.length}
+                  </span>
+                </div>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={KANBAN_COL_HINT[col]}>
+                  {KANBAN_COL_HINT[col]}
+                </p>
+              </div>
+              <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2.5">
+                {items.length === 0 ? (
+                  <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/40">
+                    Sin órdenes
                   </div>
-                ))
-              )}
+                ) : (
+                  items.map((o) => (
+                    <div
+                      key={String(o.id)}
+                      className="overflow-hidden rounded-lg border border-border bg-white p-3 shadow-none transition-colors hover:border-violet-300"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="min-w-0 truncate">
+                          <FolioLink folio={o.folio} className="text-sm" />
+                        </span>
+                        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                          {(o.piezas ?? 0).toLocaleString("es-MX")} pz
+                        </span>
+                      </div>
+                      <p className="mt-1.5 truncate text-sm font-medium text-foreground" title={o.modelo ?? undefined}>
+                        {o.modelo ?? "—"}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground" title={o.cliente ?? undefined}>
+                        {o.cliente ?? "—"}
+                      </p>
+                      {o.familia && (
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground/70">{o.familia}</p>
+                      )}
+                      {o.maquilero_nombre && (
+                        <p className="mt-0.5 truncate text-xs font-medium text-violet-600" title={o.maquilero_nombre}>
+                          {o.maquilero_nombre}
+                        </p>
+                      )}
+                      <div className="mt-2">
+                        <RiskBadge risk={o.__risk} days={o.__daysToDeadline} />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
     </div>
   )
 }
