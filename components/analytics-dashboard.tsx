@@ -200,13 +200,14 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
     return map
   }, [orders])
 
-  // Columnas anchas de altura libre: se desplaza de lado para cambiar de
-  // columna y hacia abajo para recorrerla. Repartir diez columnas en el ancho
-  // de la pantalla dejaba cada tarjeta en ~90 px, y recortarlas a una altura
-  // fija escondía la mayoría —Sin Producción sola trae 200 folios—.
+  // Columnas anchas, cada una con su propio desplazamiento vertical.
   //
-  // `items-start` evita que todas las columnas crezcan hasta la altura de la
-  // más larga: cada una termina donde termina su contenido.
+  // Repartir diez columnas en el ancho de la pantalla dejaba cada tarjeta en
+  // ~90 px; dejarlas crecer sin tope hacía que Sin Producción —200 folios—
+  // estirara la página varios miles de píxeles y arrastrara con ella a las
+  // columnas cortas. Con altura acotada el tablero se ve completo de un
+  // vistazo, el encabezado de cada columna queda siempre visible, y se
+  // navegan las tarjetas dentro de su columna.
   return (
     <div className="-mx-1 overflow-x-auto px-1 pb-2">
       <div className="flex min-w-max items-start gap-4">
@@ -215,7 +216,7 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
           return (
             <div
               key={col}
-              className="flex w-[340px] shrink-0 flex-col rounded-xl border border-border bg-white/70"
+              className="flex h-[min(80vh,880px)] min-h-[420px] w-[340px] shrink-0 flex-col rounded-xl border border-border bg-white/70"
             >
               <div className="shrink-0 rounded-t-xl border-b border-border bg-white/80 px-3.5 py-3">
                 <div className="flex items-center justify-between gap-2">
@@ -235,9 +236,9 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
                   {KANBAN_COL_HINT[col]}
                 </p>
               </div>
-              <div className="flex flex-col gap-2 p-2.5">
+              <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2.5">
                 {items.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-muted-foreground/40">
+                  <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/40">
                     Sin órdenes
                   </div>
                 ) : (
