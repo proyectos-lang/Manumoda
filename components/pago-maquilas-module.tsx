@@ -60,6 +60,7 @@ import { cn } from "@/lib/utils"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { KpiCard } from "@/components/kpi-card"
 import { PagoMaquilaDetalle } from "@/components/pago-maquilas-detalle"
+import { PenalizacionesCatalogoDialog } from "@/components/penalizaciones-catalogo-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -186,6 +187,7 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
   const [servicios, setServicios] = useState<VwServicioPago[]>([])
   /** Folio abierto en la vista de gestión. Null = se ve el listado. */
   const [folioActivo, setFolioActivo] = useState<string | null>(null)
+  const [catalogoOpen, setCatalogoOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -261,7 +263,22 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
             <code className="font-mono">vw_pago_maquilas</code>
           </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCatalogoOpen(true)}
+          className="ml-auto gap-1.5"
+        >
+          <Settings2 className="size-3.5" />
+          Penalizaciones
+        </Button>
       </div>
+
+      <PenalizacionesCatalogoDialog
+        open={catalogoOpen}
+        onOpenChange={setCatalogoOpen}
+        onChanged={fetchRows}
+      />
 
       {error && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">

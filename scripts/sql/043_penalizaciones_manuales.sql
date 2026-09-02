@@ -59,13 +59,13 @@ COMMENT ON COLUMN manumoda.cat_penalizaciones_maquila.activo IS
   'Un concepto retirado se desactiva, no se borra: los folios que ya lo '
   'tienen marcado conservan su descuento.';
 
--- Los tres del mockup. Los montos son los que ahí aparecen; se ajustan
--- desde la app sin volver a correr esto.
+-- Los tres conceptos manuales, a $500 cada uno. (El mockup los dibujaba en
+-- $1,000; operación confirmó que son $500.) Se ajustan desde la app.
 INSERT INTO manumoda.cat_penalizaciones_maquila (idempresa, clave, nombre, monto, orden)
 VALUES
-  (1, 'sin_packing_list',  'Sin entrega de Packing List',        1000.00, 10),
-  (1, 'sin_apartar_fecha', 'No apartó fecha de entrega',         1000.00, 20),
-  (1, 'mas_3_parciales',   'Entrega en más de 3 parcialidades',  1000.00, 30)
+  (1, 'sin_packing_list',  'Sin entrega de Packing List',        500.00, 10),
+  (1, 'sin_apartar_fecha', 'No apartó fecha de entrega',         500.00, 20),
+  (1, 'mas_3_parciales',   'Entrega en más de 3 parcialidades',  500.00, 30)
 ON CONFLICT (idempresa, clave) DO NOTHING;
 
 -- ════════════════════════════════════════════════════════════════════════════
