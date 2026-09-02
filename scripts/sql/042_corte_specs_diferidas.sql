@@ -12,9 +12,14 @@
 --   Diseño se programa igual que siempre: ahí las horas sí se pueden
 --   estimar de entrada.
 --
--- LO ÚNICO QUE LO IMPEDÍA:
---   `metros_utilizar` era la única columna NOT NULL del bloque de
---   especificaciones. El resto ya aceptaba NULL.
+-- LO QUE LO IMPEDÍA:
+--   `metros_utilizar` y `trazos` eran NOT NULL. El resto del bloque de
+--   especificaciones ya aceptaba NULL.
+--
+--   (Postgres reporta una violación de NOT NULL a la vez, así que la
+--   primera revisión solo vio `metros_utilizar`. La verificación de
+--   abajo ahora lista TODAS las columnas obligatorias, para no volver
+--   a descubrirlas de una en una.)
 --
 -- `horas_plan_corte` queda en NULL hasta que se capturen las
 -- especificaciones; la app lo calcula y lo guarda en ese momento.
@@ -24,12 +29,20 @@
 -- PREREQUISITO: ninguno.
 -- ============================================================
 
+-- Re-ejecutable: DROP NOT NULL sobre una columna que ya acepta NULL no hace nada.
 ALTER TABLE manumoda.corte_programacion
   ALTER COLUMN metros_utilizar DROP NOT NULL;
+
+ALTER TABLE manumoda.corte_programacion
+  ALTER COLUMN trazos DROP NOT NULL;
 
 COMMENT ON COLUMN manumoda.corte_programacion.metros_utilizar IS
   'Metros de tela. Se captura al calificar el corte, no al programarlo: '
   'antes de cortar todavía no se conoce.';
+
+COMMENT ON COLUMN manumoda.corte_programacion.trazos IS
+  'Trazos del corte. Se captura al calificar, junto al resto de las '
+  'especificaciones.';
 
 COMMENT ON COLUMN manumoda.corte_programacion.horas_plan_corte IS
   'Horas plan del corte. NULL mientras el registro no tenga capturadas sus '
@@ -39,12 +52,16 @@ COMMENT ON COLUMN manumoda.corte_programacion.horas_plan_corte IS
 -- Verificación
 -- ════════════════════════════════════════════════════════════════════════════
 
--- 1. La columna debe aceptar NULL ahora.
-SELECT column_name, is_nullable
+-- 1. Qué columnas siguen siendo obligatorias. Solo deben quedar las que la
+--    app SÍ manda al programar: id, idempresa, folio, fecha, semana
+--    (y las que tienen default, como variable_subjetiva o cumplimiento_corte).
+--    Si aparece alguna del bloque de especificaciones, programar va a fallar.
+SELECT column_name, column_default
 FROM information_schema.columns
 WHERE table_schema = 'manumoda'
   AND table_name = 'corte_programacion'
-  AND column_name IN ('metros_utilizar', 'horas_plan_corte', 'fecha', 'semana');
+  AND is_nullable = 'NO'
+ORDER BY ordinal_position;
 
 -- 2. Cuántos registros del plan de corte están sin especificar.
 --    Recién ejecutado el script debe ser 0: los que ya existen las traen.
