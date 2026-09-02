@@ -188,6 +188,8 @@ export type VwPagoMaquilas = {
   /** Catálogo si resolvió, si no el texto. Es la clave de agrupación. */
   beneficiario: string | null
   fase_actual: string | null
+  /** Fecha en que se levantó el pedido. */
+  fecha_pedido: string | null
   fecha_cancelacion: string | null
   fecha_facturacion: string | null
   /** Arranque de maquila. De aquí corren los 45 días de plazo. */
@@ -237,7 +239,13 @@ export type VwPagoMaquilas = {
   valor_maquila: number
   /** Piezas recibidas × costo unitario de los procesos. */
   valor_servicios: number
-  /** costo_final − no entregadas − demora. */
+  /** Penalizaciones de monto fijo marcadas a mano en la gestión del folio. */
+  valor_penalizaciones_fijas: number
+  /** Cuántos conceptos fijos tiene marcados. */
+  penalizaciones_fijas: number
+  /** no entregadas + demora + fijas. Todo lo que se le descuenta al folio. */
+  valor_penalizaciones: number
+  /** costo_final − valor_penalizaciones. */
   valor_a_pagar: number
   valor_pagado: number
   /** Parte de lo pagado que se marcó como adelanto. */
@@ -354,6 +362,38 @@ export type MaquilaRecepcion = {
 }
 
 export type MaquilaPenalizacion = MaquilaRecepcion & { motivo: string }
+
+/**
+ * Concepto de penalización de monto fijo (script 043).
+ *
+ * Se administra desde Pago Maquilas: los montos cambian y hay conceptos
+ * por definir, así que vive en catálogo y no en columnas.
+ */
+export type CatPenalizacionMaquila = {
+  id: number
+  idempresa: number
+  clave: string
+  nombre: string
+  monto: number
+  orden: number
+  /** Un concepto retirado se desactiva; los folios que ya lo tienen lo conservan. */
+  activo: boolean
+}
+
+/**
+ * Penalización fija aplicada a un folio. Que la fila exista es lo que la
+ * hace aplicar: desmarcarla es borrarla.
+ */
+export type MaquilaPenalizacionFija = {
+  id: number
+  idempresa: number
+  folio: string
+  idpenalizacion: number
+  /** Monto del catálogo congelado al marcarla. */
+  monto_aplicado: number
+  comentarios: string | null
+  capturado_por: string | null
+}
 
 /** Fila de `vw_historial_pagos`: maquila y lavandería en una línea de tiempo. */
 export type HistorialPago = {
