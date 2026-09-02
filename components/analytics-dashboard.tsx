@@ -169,23 +169,29 @@ const KANBAN_COL_CLASS: Record<string, string> = {
 /** Qué significa cada columna, para que nadie tenga que adivinar la regla. */
 const KANBAN_COL_HINT: Record<string, string> = {
   "Sin Producción": "Todavía no entran al plan de diseño",
-  Diseño: "En plan de diseño, sin confirmar el cliente",
-  Corte: "En plan de corte, o confirmadas esperando semana",
+  Diseño: "En plan de diseño, sin completar",
+  Corte: "En plan de corte, sin completar",
   S1: "En maquila", S2: "En maquila", S3: "En maquila",
   S4: "En maquila", S5: "En maquila", S6: "En maquila", S7: "En maquila",
 }
 
 /**
- * Columna del Kanban a la que pertenece una orden.
+ * Columna del Kanban a la que pertenece una orden, o null si no va al tablero.
  *
- * Es la misma regla de `etapaActual` en lib/lead-times.ts: la etapa se
- * define por el plan al que pertenece la orden, no por su calificación.
+ * Misma regla de `etapaActual` en lib/lead-times.ts: una etapa se ocupa
+ * desde que la orden entra a su plan semanal y hasta que se califica.
+ *
+ * Las que quedaron "entre etapas" —diseño terminado sin semana de corte,
+ * corte terminado sin arranque de maquila— NO se muestran: no se están
+ * trabajando en ninguna columna y ponerlas en cualquiera de las dos haría
+ * que el tablero mienta sobre la carga real.
  */
-function kanbanColumn(o: SeguimientoRow): string {
+function kanbanColumn(o: SeguimientoRow): string | null {
   const etapa = etapaActual(o)
   if (etapa === "maquila" && o.fase_actual) return o.fase_actual
   if (etapa === "corte") return "Corte"
   if (etapa === "diseno") return "Diseño"
+  if (etapa === "entre-etapas") return null
   return "Sin Producción"
 }
 
@@ -195,10 +201,17 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
     for (const col of KANBAN_COLS) map[col] = []
     for (const o of orders) {
       const col = kanbanColumn(o)
+      if (col === null) continue
       ;(map[col] ??= []).push(o)
     }
     return map
   }, [orders])
+
+  const enTablero = useMemo(
+    () => Object.values(grouped).reduce((a, xs) => a + xs.length, 0),
+    [grouped],
+  )
+  const ocultas = orders.length - enTablero
 
   // Columnas anchas, cada una con su propio desplazamiento vertical.
   //
@@ -209,6 +222,14 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
   // vistazo, el encabezado de cada columna queda siempre visible, y se
   // navegan las tarjetas dentro de su columna.
   return (
+    <>
+      {ocultas > 0 && (
+        <p className="mb-3 text-xs text-muted-foreground">
+          {ocultas} {ocultas === 1 ? "orden terminó" : "órdenes terminaron"} su etapa y
+          todavía no {ocultas === 1 ? "entra" : "entran"} a la siguiente
+          {" "}({ocultas === 1 ? "no aparece" : "no aparecen"} en el tablero).
+        </p>
+      )}
     <div className="-mx-1 overflow-x-auto px-1 pb-2">
       <div className="flex min-w-max items-start gap-4">
         {KANBAN_COLS.map((col) => {
@@ -289,6 +310,7 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
         })}
       </div>
     </div>
+    </>
   )
 }
 

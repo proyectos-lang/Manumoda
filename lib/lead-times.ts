@@ -51,7 +51,13 @@ export type LeadTimeRow = {
 }
 
 /** Etapas del flujo. Una orden está en exactamente una a la vez. */
-export type EtapaPipeline = "sin-produccion" | "diseno" | "corte" | "maquila"
+export type EtapaPipeline =
+  | "sin-produccion"
+  | "diseno"
+  | "corte"
+  /** Terminó su etapa y todavía no entra a la siguiente. */
+  | "entre-etapas"
+  | "maquila"
 
 const FASES_MAQUILA = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
 
@@ -59,33 +65,35 @@ export const ETAPA_LABEL: Record<EtapaPipeline, string> = {
   "sin-produccion": "Sin Producción",
   diseno: "Diseño",
   corte: "Corte",
+  "entre-etapas": "Entre etapas",
   maquila: "Maquila",
 }
 
 /**
- * Etapa en la que se encuentra la orden **ahora mismo**.
+ * Etapa en la que la orden **se está trabajando ahora mismo**.
  *
- * La etapa se define por PERTENENCIA A UN PLAN, no por el avance interno:
+ * Una etapa se ocupa desde que la orden entra a su plan semanal y hasta
+ * que se califica como completada:
  *
- * · Sin Producción → todavía no entra al plan de diseño. Es lo que
- *   operación llama "no ha pasado por diseño".
- * · Diseño         → está en el plan de diseño y el cliente aún no
- *   confirma.
- * · Corte          → está en el plan de corte. También caen aquí las que
- *   ya confirmó el cliente y siguen esperando semana de corte: salieron
- *   de diseño, y no tenerlas en ningún lado las volvería invisibles.
+ * · Sin Producción → todavía no entra al plan de diseño.
+ * · Diseño         → en el plan de diseño, sin completar.
+ * · Corte          → en el plan de corte, sin completar.
+ * · Entre etapas   → terminó una etapa y aún no entra a la siguiente:
+ *   diseño listo sin semana de corte, o corte listo sin arranque de
+ *   maquila. No se está trabajando en ninguna parte.
  * · Maquila        → ya arrancó (fase S1…S7).
  *
- * Anclarla al plan y no a `cumplimiento_*` importa porque el avance se
- * califica después, a veces semanas después: una orden programada esta
- * semana pertenece a su etapa desde que entra al plan, no desde que
- * alguien la evalúa.
+ * El plan marca la ENTRADA y la calificación marca la SALIDA. Usar solo
+ * el plan dejaba en Diseño a 88 folios ya terminados, y la columna decía
+ * 108 donde en realidad se estaban trabajando 20.
  */
 export function etapaActual(row: LeadTimeRow): EtapaPipeline {
   if (row.fase_actual && FASES_MAQUILA.has(row.fase_actual)) return "maquila"
-  if (enPlanDeCorte(row)) return "corte"
-  if (row.fecha_aprobacion_diseno) return "corte"
-  if (enPlanDeDiseno(row)) return "diseno"
+  if (enPlanDeCorte(row)) return corteCompletado(row) ? "entre-etapas" : "corte"
+  if (enPlanDeDiseno(row)) return disenoCompletado(row) ? "entre-etapas" : "diseno"
+  // Aprobó el cliente pero nunca pasó por el plan de diseño: salió de
+  // diseño de todos modos, así que tampoco está "sin producción".
+  if (row.fecha_aprobacion_diseno) return "entre-etapas"
   return "sin-produccion"
 }
 
@@ -93,8 +101,7 @@ export function etapaActual(row: LeadTimeRow): EtapaPipeline {
  * ¿La orden está en el plan de diseño?
  *
  * `fecha_diseno` es la fecha del registro en `diseno_programacion`, así
- * que tenerla equivale a estar en el plan. `cumplimiento_diseno` no sirve
- * de ancla: es la calificación, y llega después.
+ * que tenerla equivale a estar en el plan.
  */
 export function enPlanDeDiseno(row: LeadTimeRow): boolean {
   return row.fecha_diseno != null
@@ -103,6 +110,22 @@ export function enPlanDeDiseno(row: LeadTimeRow): boolean {
 /** ¿La orden está en el plan de corte? Mismo criterio, sobre corte_programacion. */
 export function enPlanDeCorte(row: LeadTimeRow): boolean {
   return row.fecha_corte != null
+}
+
+/**
+ * ¿Diseño terminó con esta orden?
+ *
+ * Cuenta tanto el cumplimiento interno —la diseñadora acabó sus horas—
+ * como la aprobación del cliente. Cualquiera de las dos la saca de la
+ * etapa: ya no hay nada que trabajar ahí.
+ */
+export function disenoCompletado(row: LeadTimeRow): boolean {
+  return row.cumplimiento_diseno === true || row.fecha_aprobacion_diseno != null
+}
+
+/** ¿El corte ya se calificó como cumplido? */
+export function corteCompletado(row: LeadTimeRow): boolean {
+  return row.cumplimiento_corte === "Si"
 }
 
 /**
