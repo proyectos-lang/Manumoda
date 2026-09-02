@@ -236,9 +236,17 @@ function SeguimientoKanban({ orders }: { orders: EnrichedOrder[] }) {
                   {KANBAN_COL_HINT[col]}
                 </p>
               </div>
-              <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2.5">
+              {/*
+                Bloque normal, NO flex: en un contenedor `flex-col` de altura
+                acotada los hijos traen `flex-shrink: 1`, así que el navegador
+                aplasta las tarjetas para que quepan en vez de desbordar. Con
+                seis no se nota; con las 200 de Sin Producción quedaban de un
+                renglón. `overflow-y-auto` no lo evita: el encogido ocurre
+                antes. Era el origen del "se ven pequeñas y apiladas".
+              */}
+              <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
                 {items.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/40">
+                  <div className="flex h-full items-center justify-center text-xs text-muted-foreground/40">
                     Sin órdenes
                   </div>
                 ) : (
