@@ -243,6 +243,14 @@ export type VwPagoMaquilas = {
   valor_maquila: number
   /** Piezas recibidas × costo unitario de los procesos. */
   valor_servicios: number
+  /** Cuántas veces entregó el maquilero (registros de recepción). */
+  parcialidades: number
+  /** Las que pasan de 3; cada una penaliza. */
+  parcialidades_excedentes: number
+  /** Monto por parcialidad excedente, del catálogo. */
+  monto_parcialidad: number
+  /** parcialidades_excedentes × monto_parcialidad. */
+  valor_parcialidades: number
   /** Penalizaciones de monto fijo marcadas a mano en la gestión del folio. */
   valor_penalizaciones_fijas: number
   /** Cuántos conceptos fijos tiene marcados. */

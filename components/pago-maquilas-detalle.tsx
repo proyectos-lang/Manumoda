@@ -435,6 +435,18 @@ export function PagoMaquilaDetalle({
                     : `${row.piezas_no_entregadas} × ${fmtCurrency(num(row.precio_venta))}`
                 }
               />
+              <FilaPenalAutomatica
+                nombre="Entrega en más de 3 parcialidades"
+                aplica={num(row.valor_parcialidades) > 0}
+                descuento={num(row.valor_parcialidades)}
+                detalle={
+                  row.parcialidades === 0
+                    ? "sin entregas registradas"
+                    : row.parcialidades_excedentes > 0
+                      ? `${row.parcialidades} entregas − 3 = ${row.parcialidades_excedentes} × ${fmtCurrency(num(row.monto_parcialidad))}`
+                      : `${row.parcialidades} ${row.parcialidades === 1 ? "entrega" : "entregas"}, dentro de las 3`
+                }
+              />
 
               {catPenal.map((c) => {
                 const marcada = penalFijas.find((p) => p.idpenalizacion === c.id)
@@ -864,6 +876,23 @@ function PanelEntregas({
           {base > 0 ? base.toLocaleString("es-MX") : "?"} pzs
         </p>
       </div>
+
+      {/* A partir de la cuarta, cada entrega cuesta dinero: conviene saberlo
+          ANTES de registrar una más, no al ver el total. */}
+      {recepciones.length >= 3 && (
+        <p
+          className={cn(
+            "border-b border-border px-3 py-1.5 text-[11px] font-medium",
+            row.parcialidades_excedentes > 0
+              ? "bg-rose-50 text-rose-700"
+              : "bg-amber-50 text-amber-700",
+          )}
+        >
+          {row.parcialidades_excedentes > 0
+            ? `${row.parcialidades} parcialidades · ${row.parcialidades_excedentes} de más × ${fmtCurrency(num(row.monto_parcialidad))} = ${fmtCurrency(num(row.valor_parcialidades))} de penalización`
+            : `Van 3 parcialidades. La siguiente penaliza ${fmtCurrency(num(row.monto_parcialidad))}.`}
+        </p>
+      )}
 
       <div className="max-h-40 divide-y divide-border/60 overflow-y-auto">
         {recepciones.length === 0 ? (
