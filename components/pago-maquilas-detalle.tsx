@@ -315,7 +315,7 @@ export function PagoMaquilaDetalle({
         <DatoCabecera etiqueta="Orden" valor={row.folio} mono />
         <DatoCabecera etiqueta="Maquilero" valor={row.beneficiario ?? "Sin asignar"} />
         <DatoCabecera etiqueta="Fecha orden" valor={fmtFecha(row.fecha_pedido)} />
-        <DatoCabecera etiqueta="Fecha compromiso de entrega" valor={fmtFecha(row.fecha_cancelacion)} />
+        <DatoCabecera etiqueta="Límite de entrega (cliente)" valor={fmtFecha(row.fecha_cancelacion)} />
         <div>
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Estatus</p>
           <span
@@ -331,7 +331,7 @@ export function PagoMaquilaDetalle({
 
       {/* ── 1. Relación de entrega ── */}
       <Bloque numero={1} titulo="Relación de entrega" icono={<Boxes className="size-4" />}>
-        <div className="grid gap-4 xl:grid-cols-4">
+        <div className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Tarjeta>
             <Renglon etiqueta="Orden original" valor={`${(row.piezas_orden ?? 0).toLocaleString("es-MX")} pzs`} />
             <Renglon
@@ -369,11 +369,25 @@ export function PagoMaquilaDetalle({
               tono={row.semanas_demora > 0 ? "text-rose-600" : undefined}
             />
             <Renglon
-              etiqueta="Entrega real"
-              valor={fmtFecha(row.fecha_entrega_maquilero)}
+              etiqueta="Entrega real (última parcialidad)"
+              valor={
+                row.sin_entrega ? "Sin entregar" : fmtFecha(row.fecha_entrega_maquilero)
+              }
               negrita
+              tono={row.sin_entrega ? "text-rose-600" : undefined}
             />
-            <Renglon etiqueta="Fecha de cancelación" valor={fmtFecha(row.fecha_cancelacion)} negrita />
+            {row.entrega_corregida && (
+              <Renglon
+                etiqueta="Corregida a mano"
+                valor={fmtFecha(row.fecha_entrega_corregida)}
+                tono="text-amber-600"
+              />
+            )}
+            <Renglon
+              etiqueta="Según el Excel (S5)"
+              valor={fmtFecha(row.fecha_entrega_s5)}
+              tono="text-muted-foreground/70"
+            />
           </Tarjeta>
         </div>
       </Bloque>
@@ -402,7 +416,9 @@ export function PagoMaquilaDetalle({
                 descuento={num(row.valor_demora)}
                 detalle={
                   row.semanas_demora > 0
-                    ? `${row.semanas_demora} sem × ${DEMORA_SEMANAL_PCT}%`
+                    ? `${row.semanas_demora} sem × ${DEMORA_SEMANAL_PCT}%${
+                        row.sin_entrega ? " · sigue corriendo, no ha entregado" : ""
+                      }`
                     : row.fecha_s1
                       ? "dentro del plazo"
                       : "sin S1, no corre plazo"
@@ -937,8 +953,13 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
         <p className="text-xs font-bold uppercase tracking-wide text-foreground">
           Piezas no entregadas
         </p>
-        <p className="text-sm font-bold tabular-nums text-rose-600">
-          {sinPrecio ? "Sin precio" : fmtCurrency(num(row.valor_no_entregadas))}
+        <p
+          className={cn(
+            "text-sm font-bold tabular-nums",
+            row.piezas_no_entregadas > 0 ? "text-rose-600" : "text-muted-foreground",
+          )}
+        >
+          {row.piezas_no_entregadas.toLocaleString("es-MX")} pzs
         </p>
       </div>
       <div className="space-y-2 p-3">
@@ -955,13 +976,21 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
             negrita
           />
         </div>
-        {row.piezas_no_entregadas > 0 && !sinPrecio && (
-          <Renglon
-            etiqueta={`Descuento ${row.piezas_no_entregadas} × ${fmtCurrency(num(row.precio_venta))} =`}
-            valor={`−${fmtCurrency(num(row.valor_no_entregadas))}`}
-            tono="text-rose-600"
-            negrita
-          />
+        {row.piezas_no_entregadas > 0 && (
+          <div className="border-t border-border pt-2">
+            <Renglon
+              etiqueta={
+                sinPrecio
+                  ? "Descuento"
+                  : `Descuento · ${row.piezas_no_entregadas} × ${fmtCurrency(num(row.precio_venta))}`
+              }
+              valor={
+                sinPrecio ? "Sin precio de venta" : `−${fmtCurrency(num(row.valor_no_entregadas))}`
+              }
+              tono={sinPrecio ? "text-amber-600" : "text-rose-600"}
+              negrita
+            />
+          </div>
         )}
         <p className="border-t border-border pt-2 text-[11px] text-muted-foreground">
           Se calcula solo. Para corregirlo hay que registrar las entregas que falten.

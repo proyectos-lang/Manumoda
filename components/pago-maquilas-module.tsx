@@ -239,7 +239,11 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
   // en un diálogo obligaba a desplazarse dentro de una ventana dentro de otra.
   if (rowActiva) {
     return (
-      <section className="glass rounded-2xl border border-border/60 p-6 shadow-xl shadow-black/5">
+      // La página encierra todo en un contenedor de 1400 px. La gestión son
+      // seis bloques con tablas y aquí sí se aprovecha la pantalla completa,
+      // así que se sale de ese ancho con márgenes negativos y vuelve a entrar
+      // con su propio padding.
+      <section className="glass -mx-4 rounded-2xl border border-border/60 p-4 shadow-xl shadow-black/5 sm:-mx-6 sm:p-6 lg:-mx-8 2xl:-mx-[max(0px,calc((100vw-1400px)/2+2rem))]">
         <PagoMaquilaDetalle
           row={rowActiva}
           servicios={servicios.filter((x) => x.folio === rowActiva.folio)}

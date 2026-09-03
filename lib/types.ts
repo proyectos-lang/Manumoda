@@ -200,8 +200,12 @@ export type VwPagoMaquilas = {
   fecha_entrega_s5: string | null
   /** Corrección manual desde Pago Maquilas; manda sobre la del Excel. */
   fecha_entrega_corregida: string | null
-  /** La que se usa para la demora: la corregida si existe, si no la del Excel. */
+  /** Fecha de la ÚLTIMA parcialidad recibida. */
+  fecha_ultima_entrega: string | null
+  /** La que manda para la demora: la corregida, si no la última parcialidad. */
   fecha_entrega_maquilero: string | null
+  /** true = no hay ninguna parcialidad ni corrección: cuenta como no entregado. */
+  sin_entrega: boolean
   piezas_orden: number | null
   /** Lo que se le entregó al maquilero para confeccionar. */
   piezas_cortadas: number
