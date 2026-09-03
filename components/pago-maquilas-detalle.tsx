@@ -400,6 +400,7 @@ export function PagoMaquilaDetalle({
           icono={<AlertTriangle className="size-4" />}
           tono="rose"
         >
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -475,6 +476,7 @@ export function PagoMaquilaDetalle({
               </TableRow>
             </TableBody>
           </Table>
+          </div>
           <p className="flex items-start gap-1.5 border-t border-border px-3 py-2 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-3.5 shrink-0" />
             Las automáticas se calculan solas. Las manuales congelan su monto al marcarlas:
@@ -543,6 +545,7 @@ export function PagoMaquilaDetalle({
       <div className="grid gap-4 lg:grid-cols-2">
         {/* ── 4. Costo por proceso ── */}
         <Bloque numero={4} titulo="Costo por proceso" icono={<Settings2 className="size-4" />}>
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -584,6 +587,7 @@ export function PagoMaquilaDetalle({
               </TableRow>
             </TableBody>
           </Table>
+          </div>
           <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
             La maquila va sobre las piezas recibidas; cada servicio, sobre las que ese proceso
             trabajó. Los costos unitarios se editan en Cuentas por Pagar.
@@ -597,6 +601,7 @@ export function PagoMaquilaDetalle({
               Sin pagos registrados.
             </p>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -642,6 +647,7 @@ export function PagoMaquilaDetalle({
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </Bloque>
       </div>
