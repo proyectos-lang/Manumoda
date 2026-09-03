@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Banknote,
   Clock,
+  DollarSign,
   Download,
   History,
   Loader2,
@@ -52,6 +53,7 @@ import {
   type MaquilaRecepcion,
   type ProcesoLavanderia,
   type ServicioExterno,
+  type ServicioPago,
   type VwPagoMaquilas,
   type VwServicioPago,
 } from "@/lib/types"
@@ -1165,7 +1167,7 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
               <TableHead className="font-semibold text-right">Piezas procesadas</TableHead>
               <TableHead className="font-semibold text-right">Costo unitario</TableHead>
               <TableHead className="font-semibold text-right">Costo total</TableHead>
-              <TableHead className="w-24" />
+              <TableHead className="w-56 text-right font-semibold">Pagos</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1189,7 +1191,6 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
               </TableRow>
             ) : (
               filtrados.map((s) => {
-                const gestionable = rows.some((r) => r.folio === s.folio)
                 return (
                   <TableRow key={s.folio} className="hover:bg-muted/30">
                     <TableCell>
@@ -1228,21 +1229,13 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
                       {fmtCurrency(num(s.valor))}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 gap-1 px-2 text-xs"
-                        disabled={!gestionable}
-                        title={
-                          gestionable
-                            ? "Costos, entregas y pagos del folio"
-                            : "El folio no tiene maquilero asignado"
-                        }
-                        onClick={() => onGestionar(s.folio)}
-                      >
-                        <Settings2 className="size-3.5" />
-                        Gestionar
-                      </Button>
+                      <PagosLavanderia
+                        folio={s.folio}
+                        servicio={s.servicio}
+                        costoTotal={num(s.valor)}
+                        readOnly={readOnly}
+                        onRefresh={onRefresh}
+                      />
                     </TableCell>
                   </TableRow>
                 )
@@ -1254,10 +1247,215 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
 
       <p className="text-[11px] text-muted-foreground">
         El costo de lavandería se calcula sobre las <strong>piezas procesadas</strong>; si no
-        se capturan, se usan las piezas que recibió el maquilero. Ese importe ya está dentro
-        del costo final del folio, así que los pagos se registran en <strong>Gestionar</strong>.
+        se capturan, se usan las piezas que recibió el maquilero. La lavandería es otro
+        proveedor: sus pagos se llevan aquí, aparte de los del maquilero.
       </p>
 
+    </div>
+  )
+}
+
+/**
+ * Pagos de un servicio, dentro del propio renglón.
+ *
+ * La lavandería es otro proveedor y otra cuenta: mandar a la gestión del
+ * folio llevaba a la pantalla del MAQUILERO, donde no hay nada suyo. Aquí
+ * solo hace falta ver lo pagado, el saldo, y poder abonar.
+ */
+function PagosLavanderia({
+  folio,
+  servicio,
+  costoTotal,
+  readOnly,
+  onRefresh,
+}: {
+  folio: string
+  servicio: ServicioExterno
+  costoTotal: number
+  readOnly: boolean
+  onRefresh: () => void
+}) {
+  const { user } = useAuth()
+  const [abierto, setAbierto] = useState(false)
+  const [pagos, setPagos] = useState<ServicioPago[]>([])
+  const [cargando, setCargando] = useState(false)
+  const [monto, setMonto] = useState("")
+  const [fecha, setFecha] = useState(hoyISO())
+  const [referencia, setReferencia] = useState("")
+  const [guardando, setGuardando] = useState(false)
+
+  const cargar = useCallback(async () => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    setCargando(true)
+    const { data } = await supabase
+      .from("servicio_pagos")
+      .select("*")
+      .eq("idempresa", IDEMPRESA)
+      .eq("folio", folio)
+      .eq("servicio", servicio)
+      .order("fecha")
+    setPagos((data as ServicioPago[]) ?? [])
+    setCargando(false)
+  }, [folio, servicio])
+
+  useEffect(() => {
+    if (abierto) cargar()
+  }, [abierto, cargar])
+
+  const pagado = pagos.reduce((a, p) => a + num(p.monto), 0)
+  const saldo = costoTotal - pagado
+
+  const registrar = async () => {
+    const m = Number(monto)
+    if (!Number.isFinite(m) || m <= 0) {
+      toast.error("Monto inválido")
+      return
+    }
+    const supabase = getSupabase()
+    if (!supabase) return
+    setGuardando(true)
+    const { error } = await supabase.from("servicio_pagos").insert({
+      idempresa: IDEMPRESA,
+      folio,
+      servicio,
+      fecha,
+      monto: m,
+      referencia: referencia.trim() || null,
+      capturado_por: user?.username ?? null,
+    })
+    setGuardando(false)
+    if (error) {
+      toast.error("No se pudo registrar el pago", { description: error.message })
+      return
+    }
+    toast.success(`Pago de ${fmtCurrency(m)} registrado`)
+    setMonto("")
+    setReferencia("")
+    await cargar()
+    onRefresh()
+  }
+
+  const borrar = async (id: number) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("servicio_pagos")
+      .delete()
+      .eq("id", id)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudo eliminar", { description: error.message })
+      return
+    }
+    await cargar()
+    onRefresh()
+  }
+
+  if (!abierto) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 gap-1 px-2 text-xs"
+        onClick={() => setAbierto(true)}
+      >
+        <DollarSign className="size-3.5" />
+        Pagos
+      </Button>
+    )
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-2 text-left">
+      {cargando ? (
+        <div className="flex justify-center py-2">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <>
+          <div className="flex items-baseline justify-between gap-2 text-xs">
+            <span className="text-muted-foreground">Pagado</span>
+            <span className="font-medium tabular-nums text-emerald-700">
+              {fmtCurrency(pagado)}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between gap-2 border-t border-border pt-1.5 text-xs">
+            <span className="font-semibold">Pendiente</span>
+            <span
+              className={cn(
+                "font-bold tabular-nums",
+                saldo > CENTAVO ? "text-rose-600" : "text-foreground",
+              )}
+            >
+              {fmtCurrency(saldo)}
+            </span>
+          </div>
+
+          {pagos.length > 0 && (
+            <div className="max-h-24 space-y-1 overflow-y-auto border-t border-border pt-1.5">
+              {pagos.map((p) => (
+                <div key={p.id} className="flex items-center gap-1.5 text-[11px]">
+                  <span className="tabular-nums text-muted-foreground">{fmtFecha(p.fecha)}</span>
+                  <span className="ml-auto tabular-nums">{fmtCurrency(num(p.monto))}</span>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => borrar(p.id)}
+                      className="text-destructive/50 hover:text-destructive"
+                      title="Eliminar pago"
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!readOnly && (
+            <div className="flex flex-wrap items-center gap-1 border-t border-border pt-1.5">
+              <Input
+                type="date"
+                value={fecha}
+                onChange={(e) => setFecha(e.target.value)}
+                className="h-7 w-[7.5rem] text-[11px]"
+              />
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={monto}
+                onChange={(e) => setMonto(e.target.value)}
+                placeholder={saldo > 0 ? saldo.toFixed(2) : "0.00"}
+                className="h-7 w-20 text-right text-[11px]"
+              />
+              <Input
+                value={referencia}
+                onChange={(e) => setReferencia(e.target.value)}
+                placeholder="Ref."
+                className="h-7 w-16 text-[11px]"
+              />
+              <Button
+                size="sm"
+                onClick={registrar}
+                disabled={guardando}
+                className="h-7 bg-emerald-600 px-2 text-[11px] text-white hover:bg-emerald-700"
+              >
+                {guardando ? <Loader2 className="size-3 animate-spin" /> : "Abonar"}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setAbierto(false)}
+        className="w-full text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        Cerrar
+      </button>
     </div>
   )
 }

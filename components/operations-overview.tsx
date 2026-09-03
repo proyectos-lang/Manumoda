@@ -25,7 +25,7 @@ import {
   Pie,
   Legend,
 } from "recharts"
-import { format } from "date-fns"
+import { format, getISOWeek } from "date-fns"
 import { es } from "date-fns/locale"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -206,9 +206,22 @@ function isAtTiempo(r: string | null | undefined) {
 /** Fila mínima para evaluar plazos de diseño y corte. */
 type LeadRow = LeadTimeRow & { folio: string; fecha_facturacion: string | null }
 
+/** Un renglón del plan semanal, de diseño o de corte. */
+type PlanSemanaRow = { folio: string; calificado: boolean }
+
 export function OperationsOverview({ configMissing }: { configMissing: boolean }) {
   const [rows, setRows] = useState<ResumenRow[]>([])
   const [leadRows, setLeadRows] = useState<LeadRow[]>([])
+  /**
+   * Plan de diseño y de corte de la SEMANA EN CURSO.
+   *
+   * La puntualidad mide órdenes en etapa; el plan semanal mide registros
+   * programados para esta semana. Son dos preguntas distintas y la
+   * diferencia confundía: la gráfica decía 20 donde el plan decía 24.
+   */
+  const [planSemana, setPlanSemana] = useState<{ diseno: PlanSemanaRow[]; corte: PlanSemanaRow[] }>(
+    { diseno: [], corte: [] },
+  )
   const [calidadRows, setCalidadRows] = useState<{ maquilero: string | null; calidad: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -227,7 +240,15 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       const supabase = getSupabase()
       if (!supabase) throw new Error("Supabase no configurado")
 
-      const [{ data, error: err }, { data: calData }, { data: leadData }] = await Promise.all([
+      const semanaActual = getISOWeek(new Date())
+
+      const [
+        { data, error: err },
+        { data: calData },
+        { data: leadData },
+        { data: planDisenoData },
+        { data: planCorteData },
+      ] = await Promise.all([
         supabase
           .from("vw_resumen_operacion")
           .select("*")
@@ -248,6 +269,17 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
             "folio, fase_actual, fecha_s1, fecha_cancelacion, fecha_diseno, cumplimiento_diseno, fecha_aprobacion_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
           )
           .eq("idempresa", IDEMPRESA),
+        // El plan de la semana: lo que el equipo se comprometió a sacar
+        supabase
+          .from("diseno_programacion")
+          .select("folio, cumplimiento_diseno")
+          .eq("idempresa", IDEMPRESA)
+          .eq("semana", semanaActual),
+        supabase
+          .from("corte_programacion")
+          .select("folio, cumplimiento_corte")
+          .eq("idempresa", IDEMPRESA)
+          .eq("semana", semanaActual),
       ])
 
       if (err) throw err
@@ -260,6 +292,12 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       setLeadRows(
         ((leadData ?? []) as LeadRow[]).filter((r) => !r.fecha_facturacion),
       )
+      setPlanSemana({
+        diseno: ((planDisenoData ?? []) as { folio: string; cumplimiento_diseno: boolean | null }[])
+          .map((r) => ({ folio: r.folio, calificado: r.cumplimiento_diseno === true })),
+        corte: ((planCorteData ?? []) as { folio: string; cumplimiento_corte: string | null }[])
+          .map((r) => ({ folio: r.folio, calificado: r.cumplimiento_corte === "Si" })),
+      })
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error al consultar vw_resumen_operacion"
       setError(msg)
@@ -383,6 +421,25 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       ],
     }
   }, [leadRows])
+
+  /**
+   * El plan de la semana: cuánto se programó y cuánto falta por calificar.
+   *
+   * Es el número contra el que trabaja el equipo, y el que ve en el módulo
+   * de Diseño. La puntualidad de arriba responde otra cosa —si las órdenes
+   * en etapa van a tiempo— y por eso no coinciden.
+   */
+  const resumenPlan = useMemo(() => {
+    const contar = (filas: PlanSemanaRow[]) => ({
+      total: filas.length,
+      pendientes: filas.filter((f) => !f.calificado).length,
+    })
+    return {
+      semana: getISOWeek(new Date()),
+      diseno: contar(planSemana.diseno),
+      corte: contar(planSemana.corte),
+    }
+  }, [planSemana])
 
   /** Exporta el master tracking (filas filtradas) a Excel. */
   const exportMasterTracking = () => {
@@ -669,6 +726,15 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
               en la etapa donde está hoy · Diseño debe estar listo{" "}
               <strong>{LEAD_DIAS.diseno} días</strong> antes de S1 · Corte{" "}
               <strong>{LEAD_DIAS.corte} días</strong> antes
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                Plan de la semana {resumenPlan.semana}:
+              </span>{" "}
+              Diseño {resumenPlan.diseno.total} programados,{" "}
+              <strong>{resumenPlan.diseno.pendientes} por calificar</strong> · Corte{" "}
+              {resumenPlan.corte.total} programados,{" "}
+              <strong>{resumenPlan.corte.pendientes} por calificar</strong>
             </p>
             {leadStats.fueraDePlan > 0 && (
               <p className="mt-0.5 text-xs text-muted-foreground/70">

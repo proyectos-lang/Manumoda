@@ -251,6 +251,16 @@ export type VwPagoMaquilas = {
   monto_parcialidad: number
   /** parcialidades_excedentes × monto_parcialidad. */
   valor_parcialidades: number
+  /** Total acordado con el maquilero. Manda sobre lo calculado; null = no hay acuerdo. */
+  penalizacion_negociada: number | null
+  /** true = el total de penalizaciones viene de un acuerdo, no de la regla. */
+  penalizacion_es_negociada: boolean
+  /** Lo que dicta la regla, siempre visible como referencia. */
+  valor_penalizaciones_calculado: number
+  /** Lo pagado a lavandería y demás servicios, que se cobran aparte. */
+  valor_servicios_pagado: number
+  /** valor_servicios − valor_servicios_pagado. */
+  saldo_servicios: number
   /** Penalizaciones de monto fijo marcadas a mano en la gestión del folio. */
   valor_penalizaciones_fijas: number
   /** Cuántos conceptos fijos tiene marcados. */

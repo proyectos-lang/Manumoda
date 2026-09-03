@@ -11,6 +11,7 @@ import {
   Info,
   Loader2,
   PackageCheck,
+  Pencil,
   Settings2,
   Trash2,
 } from "lucide-react"
@@ -66,6 +67,15 @@ const SERVICIOS_EXTERNOS: ServicioExterno[] = [
   "Corte Externo",
   "Otro",
 ]
+
+/** Dónde vive el costo unitario de cada proceso en `ordenes_produccion`. */
+const COLUMNA_COSTO: Record<ServicioExterno, string> = {
+  "Lavandería": "costo_lavanderia",
+  Estampado: "costo_estampado",
+  Bordado: "costo_bordado",
+  "Corte Externo": "costo_corte_externo",
+  Otro: "costo_otro",
+}
 
 const COSTO_DEL_SERVICIO: Record<ServicioExterno, (r: VwPagoMaquilas) => number | null> = {
   "Lavandería": (r) => r.costo_lavanderia,
@@ -224,6 +234,27 @@ export function PagoMaquilaDetalle({
     return true
   }
 
+  /** Actualiza una columna de la orden. Todo el costeo se deriva de ellas. */
+  const guardarEnOrden = async (
+    campo: string,
+    valor: number | null,
+    exito: string,
+  ) => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({ [campo]: valor })
+      .eq("folio", row.folio)
+      .eq("idempresa", IDEMPRESA)
+    if (error) {
+      toast.error("No se pudo guardar", { description: error.message })
+      return
+    }
+    toast.success(exito)
+    refrescar()
+  }
+
   /** Marcar o desmarcar un concepto: la fila existe = la penalización aplica. */
   const togglePenalizacion = async (cat: CatPenalizacionMaquila, aplicar: boolean) => {
     const supabase = getSupabase()
@@ -267,24 +298,33 @@ export function PagoMaquilaDetalle({
 
   const procesos = useMemo(() => {
     const filaDe = (s: ServicioExterno) => servicios.find((x) => x.servicio === s) ?? null
-    const lista: { nombre: string; unitario: number | null; piezas: number; subtotal: number }[] = [
+    const lista: {
+      nombre: string
+      unitario: number | null
+      piezas: number
+      subtotal: number
+      campo: string
+    }[] = [
       {
         nombre: "Maquila (Confección)",
         unitario: row.costo_maquila,
         piezas: recibidas,
         subtotal: recibidas * num(row.costo_maquila),
+        campo: "costo_maquila",
       },
     ]
+    // Los cinco procesos se listan SIEMPRE, tengan costo o no: un renglón
+    // vacío es lo que permite capturar el costo que falta.
     for (const s of SERVICIOS_EXTERNOS) {
       const unitario = COSTO_DEL_SERVICIO[s](row)
       const fila = filaDe(s)
-      if (unitario == null && !fila) continue
       const piezas = fila?.piezas_procesadas ?? recibidas
       lista.push({
         nombre: s,
         unitario,
         piezas,
         subtotal: fila ? num(fila.valor) : piezas * num(unitario),
+        campo: COLUMNA_COSTO[s],
       })
     }
     return lista
@@ -476,6 +516,53 @@ export function PagoMaquilaDetalle({
                 )
               })}
 
+              <TableRow className="border-t border-border hover:bg-muted/20">
+                <TableCell className="py-2 text-sm">
+                  Penalización negociada
+                  <span className="ml-1.5 text-xs text-muted-foreground">
+                    lo acordado con el maquilero
+                  </span>
+                </TableCell>
+                <TableCell className="py-2 text-xs text-muted-foreground">Manual</TableCell>
+                <TableCell className="py-2 text-center">
+                  <span
+                    className={cn(
+                      "inline-flex rounded border px-1.5 py-0.5 text-[11px] font-bold",
+                      row.penalizacion_es_negociada
+                        ? "border-violet-300 bg-violet-50 text-violet-700"
+                        : "border-border text-muted-foreground/50",
+                    )}
+                  >
+                    {row.penalizacion_es_negociada ? "SÍ" : "NO"}
+                  </span>
+                </TableCell>
+                <TableCell className="py-2 text-right text-sm">
+                  <CostoEditable
+                    valor={row.penalizacion_negociada}
+                    disabled={readOnly}
+                    vacio="Sin negociar"
+                    onSave={(v) =>
+                      guardarEnOrden(
+                        "penalizacion_negociada",
+                        v,
+                        v == null
+                          ? "Vuelve a aplicarse lo calculado"
+                          : `Penalización negociada en ${fmtCurrency(v)}`,
+                      )
+                    }
+                  />
+                </TableCell>
+              </TableRow>
+
+              {row.penalizacion_es_negociada && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={4} className="py-1.5 text-right text-xs text-muted-foreground">
+                    Por regla salían {fmtCurrency(num(row.valor_penalizaciones_calculado))}; manda
+                    lo negociado.
+                  </TableCell>
+                </TableRow>
+              )}
+
               <TableRow className="border-t-2 border-border bg-rose-50/60 hover:bg-rose-50/60">
                 <TableCell colSpan={3} className="py-2 text-sm font-bold uppercase text-rose-700">
                   Total penalizaciones
@@ -574,12 +661,18 @@ export function PagoMaquilaDetalle({
                   className={cn("hover:bg-muted/20", p.unitario == null && "opacity-60")}
                 >
                   <TableCell className="py-2 text-sm font-medium">{p.nombre}</TableCell>
-                  <TableCell className="py-2 text-right text-sm tabular-nums">
-                    {p.unitario == null ? (
-                      <span className="text-amber-600">Sin costo</span>
-                    ) : (
-                      fmtCurrency(Number(p.unitario))
-                    )}
+                  <TableCell className="py-2 text-right text-sm">
+                    <CostoEditable
+                      valor={p.unitario}
+                      disabled={readOnly}
+                      onSave={(v) =>
+                        guardarEnOrden(
+                          p.campo,
+                          v,
+                          v == null ? `${p.nombre} ya no aplica` : `Costo de ${p.nombre} guardado`,
+                        )
+                      }
+                    />
                   </TableCell>
                   <TableCell className="py-2 text-right text-sm tabular-nums text-muted-foreground">
                     {p.piezas.toLocaleString("es-MX")} pzs
@@ -602,7 +695,8 @@ export function PagoMaquilaDetalle({
           </div>
           <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
             La maquila va sobre las piezas recibidas; cada servicio, sobre las que ese proceso
-            trabajó. Los costos unitarios se editan en Cuentas por Pagar.
+            trabajó. Clic sobre un costo para cambiarlo; dejarlo vacío hace que ese proceso
+            deje de aplicar.
           </p>
         </Bloque>
 
@@ -831,6 +925,85 @@ function FilaPenalAutomatica({
         {aplica ? `−${fmtCurrency(descuento)}` : "—"}
       </TableCell>
     </TableRow>
+  )
+}
+
+/**
+ * Importe editable en línea. Vacío guarda null, que cada campo interpreta:
+ * un proceso deja de aplicar, una negociación vuelve a lo calculado.
+ */
+function CostoEditable({
+  valor,
+  disabled,
+  onSave,
+  vacio = "Sin costo",
+}: {
+  valor: number | null
+  disabled: boolean
+  onSave: (v: number | null) => void
+  vacio?: string
+}) {
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(valor == null ? "" : String(valor))
+
+  useEffect(() => {
+    if (!editando) setTexto(valor == null ? "" : String(valor))
+  }, [valor, editando])
+
+  const confirmar = () => {
+    setEditando(false)
+    const t = texto.trim()
+    const n = t === "" ? null : Number(t)
+    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+      setTexto(valor == null ? "" : String(valor))
+      return
+    }
+    if (n !== valor) onSave(n)
+  }
+
+  if (disabled) {
+    return (
+      <span className={cn("tabular-nums", valor == null && "text-amber-600")}>
+        {valor == null ? vacio : fmtCurrency(Number(valor))}
+      </span>
+    )
+  }
+
+  if (editando) {
+    return (
+      <Input
+        autoFocus
+        type="number"
+        min="0"
+        step="0.01"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") confirmar()
+          if (e.key === "Escape") {
+            setTexto(valor == null ? "" : String(valor))
+            setEditando(false)
+          }
+        }}
+        className="ml-auto h-8 w-28 text-right text-sm"
+      />
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditando(true)}
+      title="Clic para editar · vacío lo deja sin aplicar"
+      className={cn(
+        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors hover:bg-muted",
+        valor == null ? "text-amber-600" : "font-medium text-foreground",
+      )}
+    >
+      {valor == null ? vacio : fmtCurrency(Number(valor))}
+      <Pencil className="size-3 text-muted-foreground/50" />
+    </button>
   )
 }
 
