@@ -115,15 +115,28 @@ export function enPlanDeCorte(row: LeadTimeRow): boolean {
 /**
  * ¿Diseño terminó con esta orden?
  *
- * Cuenta tanto el cumplimiento interno —la diseñadora acabó sus horas—
- * como la aprobación del cliente. Cualquiera de las dos la saca de la
- * etapa: ya no hay nada que trabajar ahí.
+ * SOLO la aprobación del cliente la cierra, que es la misma regla que
+ * usa Panel General: mientras el botón diga "Reprogramar Diseño" la
+ * orden sigue en la etapa, y cambia a "Diseño Completado" cuando hay
+ * `fecha_aprobacion_diseno`.
+ *
+ * `cumplimiento_diseno` NO sirve para esto: es la calificación del
+ * trabajo de la diseñadora —terminó sus horas— y llega mucho antes que
+ * el visto bueno del cliente. Usarlo daba 17 órdenes en diseño donde
+ * Panel General mostraba 176: los 158 folios que la diseñadora ya
+ * entregó pero el cliente no ha aprobado seguían en la etapa y el
+ * tablero los escondía.
  */
 export function disenoCompletado(row: LeadTimeRow): boolean {
-  return row.cumplimiento_diseno === true || row.fecha_aprobacion_diseno != null
+  return row.fecha_aprobacion_diseno != null
 }
 
-/** ¿El corte ya se calificó como cumplido? */
+/**
+ * ¿El corte ya se cumplió?
+ *
+ * Aquí sí manda la calificación: es lo que Panel General usa para
+ * mostrar "Corte Completado" en vez de "Reprogramar Corte".
+ */
 export function corteCompletado(row: LeadTimeRow): boolean {
   return row.cumplimiento_corte === "Si"
 }
