@@ -77,6 +77,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -1023,7 +1024,45 @@ function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boo
 function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: TabProps) {
   const readOnly = useReadOnly()
   const [soloPendientes, setSoloPendientes] = useState(false)
+  const [soloConSaldo, setSoloConSaldo] = useState(false)
   const [search, setSearch] = useState("")
+
+  /**
+   * Los pagos de todos los folios, de una sola consulta.
+   *
+   * Antes vivían dentro del panel de cada renglón, así que había que
+   * abrirlos uno por uno para saber cuánto se debía y no se podían
+   * totalizar. La cuenta de lavandería se lleva por proveedor, no folio
+   * por folio.
+   */
+  const [pagos, setPagos] = useState<ServicioPago[]>([])
+
+  const cargarPagos = useCallback(async () => {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const { data } = await supabase
+      .from("servicio_pagos")
+      .select("*")
+      .eq("idempresa", IDEMPRESA)
+      .eq("servicio", "Lavandería")
+    setPagos((data as ServicioPago[]) ?? [])
+  }, [])
+
+  useEffect(() => {
+    cargarPagos()
+  }, [cargarPagos])
+
+  /** Lo pagado por folio, para no recorrer la lista en cada renglón. */
+  const pagadoPorFolio = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of pagos) m.set(p.folio, (m.get(p.folio) ?? 0) + num(p.monto))
+    return m
+  }, [pagos])
+
+  const refrescarTodo = useCallback(() => {
+    cargarPagos()
+    onRefresh()
+  }, [cargarPagos, onRefresh])
 
   const lavanderia = useMemo(
     () => servicios.filter((s) => s.servicio === "Lavandería"),
@@ -1034,25 +1073,41 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
     const q = search.trim().toLowerCase()
     return lavanderia.filter((s) => {
       if (soloPendientes && s.procesadas_capturadas) return false
+      if (soloConSaldo && num(s.valor) - (pagadoPorFolio.get(s.folio) ?? 0) <= CENTAVO) return false
       if (q && !`${s.folio} ${s.cliente ?? ""} ${s.familia ?? ""}`.toLowerCase().includes(q))
         return false
       return true
     })
-  }, [lavanderia, soloPendientes, search])
+  }, [lavanderia, soloPendientes, soloConSaldo, search, pagadoPorFolio])
 
   const kpis = useMemo(() => {
     let valor = 0
+    let pagado = 0
     let piezas = 0
     let sinProcesar = 0
     let sinCosto = 0
+    let conSaldo = 0
     for (const s of filtrados) {
-      valor += num(s.valor)
+      const costo = num(s.valor)
+      const abonado = pagadoPorFolio.get(s.folio) ?? 0
+      valor += costo
+      pagado += abonado
       piezas += s.piezas_procesadas
+      if (costo - abonado > CENTAVO) conSaldo++
       if (!s.procesadas_capturadas) sinProcesar++
       if (s.costo_unitario == null) sinCosto++
     }
-    return { valor, piezas, sinProcesar, sinCosto, folios: filtrados.length }
-  }, [filtrados])
+    return {
+      valor,
+      pagado,
+      saldo: valor - pagado,
+      piezas,
+      sinProcesar,
+      sinCosto,
+      conSaldo,
+      folios: filtrados.length,
+    }
+  }, [filtrados, pagadoPorFolio])
 
   /** El tipo de lavado. Vive en servicio_unidades, junto a las procesadas. */
   const guardarProceso = async (folio: string, proceso: ProcesoLavanderia | null) => {
@@ -1097,40 +1152,42 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard
-          label="Valor lavandería"
+          label="Costo lavandería"
           value={kpis.valor}
           format={fmtCurrency}
           icon={<Sparkles className="size-3.5" />}
           iconBg="bg-cyan-100 ring-cyan-200"
           iconColor="text-cyan-600"
           valueColor="text-cyan-700"
+          hint={`${kpis.folios} folios · ${kpis.piezas.toLocaleString("es-MX")} pzs`}
         />
         <KpiCard
-          label="Piezas procesadas"
-          value={kpis.piezas}
-          icon={<PackageCheck className="size-3.5" />}
-          iconBg="bg-slate-100 ring-slate-200"
-          iconColor="text-slate-600"
-          valueColor="text-foreground"
-          hint={`En ${kpis.folios} folios`}
+          label="Pagado"
+          value={kpis.pagado}
+          format={fmtCurrency}
+          icon={<Wallet className="size-3.5" />}
+          iconBg="bg-emerald-100 ring-emerald-200"
+          iconColor="text-emerald-600"
+          valueColor="text-emerald-700"
         />
         <KpiCard
-          label="Sin capturar"
-          value={kpis.sinProcesar}
+          label="Saldo pendiente"
+          value={kpis.saldo}
+          format={fmtCurrency}
+          icon={<Banknote className="size-3.5" />}
+          iconBg="bg-rose-100 ring-rose-200"
+          iconColor="text-rose-600"
+          valueColor={kpis.saldo > CENTAVO ? "text-rose-600" : "text-foreground"}
+          hint={`${kpis.conSaldo} folios por pagar`}
+        />
+        <KpiCard
+          label="Sin costo o sin capturar"
+          value={kpis.sinCosto + kpis.sinProcesar}
           icon={<AlertTriangle className="size-3.5" />}
           iconBg="bg-amber-100 ring-amber-200"
           iconColor="text-amber-600"
-          valueColor={kpis.sinProcesar > 0 ? "text-amber-600" : "text-foreground"}
-          hint="Se cobran sobre las recibidas"
-        />
-        <KpiCard
-          label="Sin costo"
-          value={kpis.sinCosto}
-          icon={<AlertTriangle className="size-3.5" />}
-          iconBg="bg-amber-100 ring-amber-200"
-          iconColor="text-amber-600"
-          valueColor={kpis.sinCosto > 0 ? "text-amber-600" : "text-foreground"}
-          hint="No suman al valor a pagar"
+          valueColor={kpis.sinCosto + kpis.sinProcesar > 0 ? "text-amber-600" : "text-foreground"}
+          hint={`${kpis.sinCosto} sin costo · ${kpis.sinProcesar} sin piezas procesadas`}
         />
       </div>
 
@@ -1152,6 +1209,14 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
         >
           {soloPendientes ? "Solo sin capturar" : "Todos"}
         </Button>
+        <Button
+          size="sm"
+          variant={soloConSaldo ? "default" : "outline"}
+          onClick={() => setSoloConSaldo(!soloConSaldo)}
+          className="h-9"
+        >
+          {soloConSaldo ? "Solo con saldo" : "Pagados y pendientes"}
+        </Button>
         <span className="ml-auto text-xs text-muted-foreground">{filtrados.length} folios</span>
       </div>
 
@@ -1167,6 +1232,9 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
               <TableHead className="font-semibold text-right">Piezas procesadas</TableHead>
               <TableHead className="font-semibold text-right">Costo unitario</TableHead>
               <TableHead className="font-semibold text-right">Costo total</TableHead>
+              <TableHead className="font-semibold text-right">Pagado</TableHead>
+              <TableHead className="font-semibold text-right">Saldo</TableHead>
+              <TableHead className="font-semibold">Estado</TableHead>
               <TableHead className="w-56 text-right font-semibold">Pagos</TableHead>
             </TableRow>
           </TableHeader>
@@ -1174,7 +1242,7 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 9 }).map((__, j) => (
+                  {Array.from({ length: 12 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -1183,7 +1251,7 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
               ))
             ) : filtrados.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={12} className="h-24 text-center text-sm text-muted-foreground">
                   {lavanderia.length === 0
                     ? "Ningún folio tiene costo de lavandería capturado en el Excel."
                     : "Sin folios para los filtros aplicados."}
@@ -1191,6 +1259,9 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
               </TableRow>
             ) : (
               filtrados.map((s) => {
+                const costo = num(s.valor)
+                const abonado = pagadoPorFolio.get(s.folio) ?? 0
+                const saldo = costo - abonado
                 return (
                   <TableRow key={s.folio} className="hover:bg-muted/30">
                     <TableCell>
@@ -1226,15 +1297,39 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
                       <ValorUnitario valor={s.costo_unitario} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-sm font-medium">
-                      {fmtCurrency(num(s.valor))}
+                      {fmtCurrency(costo)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">
+                      {abonado > 0 ? (
+                        <span className="font-medium text-emerald-700">{fmtCurrency(abonado)}</span>
+                      ) : (
+                        <span className="text-muted-foreground/50">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">
+                      <span
+                        className={cn(
+                          "font-semibold",
+                          saldo > CENTAVO
+                            ? "text-rose-600"
+                            : saldo < -CENTAVO
+                              ? "text-amber-600"
+                              : "text-muted-foreground",
+                        )}
+                      >
+                        {fmtCurrency(saldo)}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <EstadoLavanderia costo={costo} pagado={abonado} />
                     </TableCell>
                     <TableCell className="text-right">
                       <PagosLavanderia
                         folio={s.folio}
                         servicio={s.servicio}
-                        costoTotal={num(s.valor)}
+                        costoTotal={costo}
                         readOnly={readOnly}
-                        onRefresh={onRefresh}
+                        onRefresh={refrescarTodo}
                       />
                     </TableCell>
                   </TableRow>
@@ -1242,6 +1337,30 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
               })
             )}
           </TableBody>
+          {filtrados.length > 0 && (
+            <TableFooter>
+              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                <TableCell colSpan={7} className="text-sm font-semibold">
+                  Total · {filtrados.length} folios
+                </TableCell>
+                <TableCell className="text-right text-sm font-bold tabular-nums">
+                  {fmtCurrency(kpis.valor)}
+                </TableCell>
+                <TableCell className="text-right text-sm font-bold tabular-nums text-emerald-700">
+                  {fmtCurrency(kpis.pagado)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "text-right text-sm font-bold tabular-nums",
+                    kpis.saldo > CENTAVO ? "text-rose-600" : "text-foreground",
+                  )}
+                >
+                  {fmtCurrency(kpis.saldo)}
+                </TableCell>
+                <TableCell colSpan={2} />
+              </TableRow>
+            </TableFooter>
+          )}
         </Table>
       </div>
 
@@ -1252,6 +1371,34 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
       </p>
 
     </div>
+  )
+}
+
+/** Estado de la cuenta con la lavandería para un folio. */
+function EstadoLavanderia({ costo, pagado }: { costo: number; pagado: number }) {
+  const saldo = costo - pagado
+  // El sobrepago se evalúa ANTES que "sin costo": un folio sin costo
+  // capturado al que ya se le pagó algo es justo lo que hay que ver, y
+  // preguntar por el costo primero lo escondía.
+  const estado =
+    saldo < -CENTAVO
+      ? { texto: "Sobrepagado", clase: "bg-amber-100 text-amber-700 ring-amber-200" }
+      : costo <= CENTAVO
+        ? { texto: "Sin costo", clase: "bg-slate-100 text-slate-600 ring-slate-200" }
+        : Math.abs(saldo) <= CENTAVO
+          ? { texto: "Pagado", clase: "bg-emerald-100 text-emerald-700 ring-emerald-200" }
+          : pagado > CENTAVO
+            ? { texto: "Parcial", clase: "bg-sky-100 text-sky-700 ring-sky-200" }
+            : { texto: "Pendiente", clase: "bg-rose-100 text-rose-700 ring-rose-200" }
+  return (
+    <span
+      className={cn(
+        "inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        estado.clase,
+      )}
+    >
+      {estado.texto}
+    </span>
   )
 }
 
