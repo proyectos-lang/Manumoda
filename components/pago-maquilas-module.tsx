@@ -322,6 +322,7 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
           <TabsTrigger value="maquileros">Por Maquilero</TabsTrigger>
           <TabsTrigger value="servicios">Lavandería</TabsTrigger>
           <TabsTrigger value="historial">Historial de Pagos</TabsTrigger>
+          <TabsTrigger value="historial-lavanderia">Pagos de Lavandería</TabsTrigger>
         </TabsList>
 
         <TabsContent value="cuentas" className="mt-5">
@@ -359,7 +360,11 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
         </TabsContent>
 
         <TabsContent value="historial" className="mt-5">
-          <HistorialTab configMissing={configMissing} />
+          <HistorialTab configMissing={configMissing} ambito="maquila" />
+        </TabsContent>
+
+        <TabsContent value="historial-lavanderia" className="mt-5">
+          <HistorialTab configMissing={configMissing} ambito="servicios" />
         </TabsContent>
       </Tabs>
     </section>
@@ -1616,7 +1621,21 @@ function PagosLavanderia({
  * "¿qué le he pagado a esta persona y cuándo?", que es la pregunta que se
  * hace al cuadrar cuentas con un maquilero.
  */
-function HistorialTab({ configMissing }: { configMissing: boolean }) {
+/**
+ * Historial de pagos, acotado a un ámbito.
+ *
+ * Es el mismo componente para maquila y para servicios: cambian los datos,
+ * no la pregunta —qué se le pagó a alguien y cuándo—. `ambito` filtra por
+ * el tipo del movimiento; el resto de los filtros trabaja sobre eso.
+ */
+function HistorialTab({
+  configMissing,
+  ambito = "maquila",
+}: {
+  configMissing: boolean
+  /** "maquila" = pagos al maquilero · "servicios" = lavandería y demás. */
+  ambito?: "maquila" | "servicios"
+}) {
   const [pagos, setPagos] = useState<HistorialPago[]>([])
   const [loading, setLoading] = useState(false)
   const [beneficiario, setBeneficiario] = useState("__all__")
@@ -1640,8 +1659,14 @@ function HistorialTab({ configMissing }: { configMissing: boolean }) {
       toast.error("No se pudo cargar el historial", { description: error.message })
       return
     }
-    setPagos((data as HistorialPago[]) ?? [])
-  }, [configMissing])
+    // El ámbito parte el historial en dos cuentas distintas: al maquilero
+    // se le paga por confeccionar, a la lavandería por procesar. Mezclarlos
+    // en un total no significa nada.
+    const todos = (data as HistorialPago[]) ?? []
+    setPagos(
+      todos.filter((p) => (ambito === "maquila" ? p.tipo === "Maquila" : p.tipo !== "Maquila")),
+    )
+  }, [configMissing, ambito])
 
   useEffect(() => {
     fetchPagos()
@@ -1708,7 +1733,10 @@ function HistorialTab({ configMissing }: { configMissing: boolean }) {
     const ws = XLSX.utils.json_to_sheet(datos)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, "Historial de pagos")
-    XLSX.writeFile(wb, `historial_pagos_${hoyISO()}.xlsx`)
+    XLSX.writeFile(
+      wb,
+      `historial_pagos_${ambito === "servicios" ? "servicios" : "maquila"}_${hoyISO()}.xlsx`,
+    )
     toast.success(`${datos.length} pagos exportados`)
   }
 
@@ -1771,6 +1799,7 @@ function HistorialTab({ configMissing }: { configMissing: boolean }) {
             </SelectContent>
           </Select>
         </CampoMini>
+        {ambito === "servicios" && (
         <CampoMini label="Tipo" ancho="w-40">
           <Select value={tipo} onValueChange={setTipo}>
             <SelectTrigger className="h-9 bg-transparent">
@@ -1786,6 +1815,7 @@ function HistorialTab({ configMissing }: { configMissing: boolean }) {
             </SelectContent>
           </Select>
         </CampoMini>
+        )}
         <CampoMini label="Desde" ancho="w-36">
           <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="h-9" />
         </CampoMini>
