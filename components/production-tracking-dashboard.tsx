@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import type { OrdenProduccion } from "@/lib/types"
 import { computeProgress, computeRisk, daysUntil, parseLocalDate, relativeDays, type Risk } from "@/lib/risk"
 import type { ModuleFilter } from "@/lib/module-filter"
@@ -206,14 +207,16 @@ export function ProductionTrackingDashboard({
     if (!supabase) return
 
     setLoading(true)
-    const { data, error } = await supabase
-      .from("ordenes_produccion")
-      .select(
-        "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra, fecha_facturacion",
-      )
-      .eq("idempresa", IDEMPRESA)
-      .neq("fase_actual", "Por Programar")
-      .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
+    const { data, error } = await fetchAll(() =>
+      supabase
+        .from("ordenes_produccion")
+        .select(
+          "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra, fecha_facturacion",
+        )
+        .eq("idempresa", IDEMPRESA)
+        .neq("fase_actual", "Por Programar")
+        .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
+    )
 
     setLoading(false)
 

@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import type { OrdenProduccion, VwBonosCorte, VwPlanCorteDetalle } from "@/lib/types"
 import { esProximoAVencer } from "@/lib/risk"
 import { useReadOnly } from "@/lib/auth-context"
@@ -225,12 +226,14 @@ function PlanCorteTab({
 
     setLoading(true)
     const [planRes, cortRes] = await Promise.all([
-      supabase
-        .from("vw_plan_corte_detalle")
-        .select("*")
-        .eq("idempresa", IDEMPRESA)
-        .order("semana", { ascending: false })
-        .order("folio"),
+      fetchAll(() =>
+        supabase
+          .from("vw_plan_corte_detalle")
+          .select("*")
+          .eq("idempresa", IDEMPRESA)
+          .order("semana", { ascending: false })
+          .order("folio"),
+      ),
       supabase
         .from("cortadores")
         .select("id, nombre")
@@ -904,12 +907,14 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
     const disenoMap = new Map<string, Partial<CorteFolioRow>>()
 
     if (folios.length > 0) {
-      const { data: disenoData, error: disenoError } = await supabase
-        .from("diseno_programacion")
-        .select("folio, horas_plan_diseno, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja")
-        .eq("idempresa", IDEMPRESA)
-        .in("folio", folios)
-        .order("id", { ascending: false })
+      const { data: disenoData, error: disenoError } = await fetchAll(() =>
+        supabase
+          .from("diseno_programacion")
+          .select("folio, horas_plan_diseno, idprenda, tipo, categoria_demografica, muchas_operaciones, telas_pesadas, muchas_habilitaciones, prenda_compleja")
+          .eq("idempresa", IDEMPRESA)
+          .in("folio", folios)
+          .order("id", { ascending: false }),
+      )
 
       if (disenoError) {
         // No bloquea el acordeón: solo faltará la columna Plan Diseño

@@ -29,6 +29,7 @@ import { format, getISOWeek } from "date-fns"
 import { es } from "date-fns/locale"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -249,26 +250,32 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
         { data: planDisenoData },
         { data: planCorteData },
       ] = await Promise.all([
-        supabase
-          .from("vw_resumen_operacion")
-          .select("*")
-          .eq("idempresa", IDEMPRESA)
-          .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
-        supabase
-          .from("ordenes_produccion")
-          .select("maquilero, calidad")
-          .eq("idempresa", IDEMPRESA)
-          .not("calidad", "is", null)
-          .gt("calidad", 0),
+        fetchAll(() =>
+          supabase
+            .from("vw_resumen_operacion")
+            .select("*")
+            .eq("idempresa", IDEMPRESA)
+            .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
+        ),
+        fetchAll(() =>
+          supabase
+            .from("ordenes_produccion")
+            .select("maquilero, calidad")
+            .eq("idempresa", IDEMPRESA)
+            .not("calidad", "is", null)
+            .gt("calidad", 0),
+        ),
         // Cumplimiento de plazos previos a S1. Se consulta la vista integrada
         // porque vw_resumen_operacion excluye 'Por Programar', que es
         // justamente donde diseño y corte suelen ir atrasados.
-        supabase
-          .from("vw_seguimiento_integrado")
-          .select(
-            "folio, fase_actual, fecha_s1, fecha_cancelacion, fecha_diseno, cumplimiento_diseno, fecha_aprobacion_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
-          )
-          .eq("idempresa", IDEMPRESA),
+        fetchAll(() =>
+          supabase
+            .from("vw_seguimiento_integrado")
+            .select(
+              "folio, fase_actual, fecha_s1, fecha_cancelacion, fecha_diseno, cumplimiento_diseno, fecha_aprobacion_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
+            )
+            .eq("idempresa", IDEMPRESA),
+        ),
         // El plan de la semana: lo que el equipo se comprometió a sacar
         supabase
           .from("diseno_programacion")

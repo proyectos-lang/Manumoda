@@ -42,6 +42,7 @@ import * as XLSX from "xlsx"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import { useAuth, useReadOnly } from "@/lib/auth-context"
 import { fmtCurrency } from "@/lib/format"
 import { parseLocalDate } from "@/lib/risk"
@@ -202,13 +203,17 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
     setError(null)
 
     const [maq, serv] = await Promise.all([
-      supabase
-        .from("vw_pago_maquilas")
-        .select("*")
-        .eq("idempresa", IDEMPRESA)
-        .not("maquilero_nombre", "is", null)
-        .order("folio"),
-      supabase.from("vw_servicios_pago").select("*").eq("idempresa", IDEMPRESA).order("folio"),
+      fetchAll(() =>
+        supabase
+          .from("vw_pago_maquilas")
+          .select("*")
+          .eq("idempresa", IDEMPRESA)
+          .not("maquilero_nombre", "is", null)
+          .order("folio"),
+      ),
+      fetchAll(() =>
+        supabase.from("vw_servicios_pago").select("*").eq("idempresa", IDEMPRESA).order("folio"),
+      ),
     ])
 
     setLoading(false)
@@ -1045,11 +1050,13 @@ function LavanderiaTab({ rows, servicios, loading, onRefresh, onGestionar }: Tab
   const cargarPagos = useCallback(async () => {
     const supabase = getSupabase()
     if (!supabase) return
-    const { data } = await supabase
-      .from("servicio_pagos")
-      .select("*")
-      .eq("idempresa", IDEMPRESA)
-      .eq("servicio", "Lavandería")
+    const { data } = await fetchAll(() =>
+      supabase
+        .from("servicio_pagos")
+        .select("*")
+        .eq("idempresa", IDEMPRESA)
+        .eq("servicio", "Lavandería"),
+    )
     setPagos((data as ServicioPago[]) ?? [])
   }, [])
 
@@ -1649,11 +1656,13 @@ function HistorialTab({
     const supabase = getSupabase()
     if (!supabase) return
     setLoading(true)
-    const { data, error } = await supabase
-      .from("vw_historial_pagos")
-      .select("*")
-      .eq("idempresa", IDEMPRESA)
-      .order("fecha", { ascending: false })
+    const { data, error } = await fetchAll(() =>
+      supabase
+        .from("vw_historial_pagos")
+        .select("*")
+        .eq("idempresa", IDEMPRESA)
+        .order("fecha", { ascending: false }),
+    )
     setLoading(false)
     if (error) {
       toast.error("No se pudo cargar el historial", { description: error.message })

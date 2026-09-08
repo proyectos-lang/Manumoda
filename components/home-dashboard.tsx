@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell } from "recharts"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import { daysUntil } from "@/lib/risk"
 import { etapaAtrasada } from "@/lib/lead-times"
 import type { ModuleFilter } from "@/lib/module-filter"
@@ -172,12 +173,14 @@ export function HomeDashboard({
         const porFase = FASES.map((f) => ({ fase: f, total: counts[f] }))
 
         // ── Pendientes de atención (desde la vista integrada) ──────────────
-        const { data: segRows, error: e4 } = await supabase
-          .from("vw_seguimiento_integrado")
-          .select(
-            "folio, fase_actual, riesgo_entrega, fecha_ultima_revision, fecha_diseno, cumplimiento_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
-          )
-          .eq("idempresa", IDEMPRESA)
+        const { data: segRows, error: e4 } = await fetchAll(() =>
+          supabase
+            .from("vw_seguimiento_integrado")
+            .select(
+              "folio, fase_actual, riesgo_entrega, fecha_ultima_revision, fecha_diseno, cumplimiento_diseno, no_requiere_diseno, fecha_corte, cumplimiento_corte, no_requiere_corte, fecha_facturacion",
+            )
+            .eq("idempresa", IDEMPRESA),
+        )
         if (e4) throw e4
 
         const at: Atencion = {

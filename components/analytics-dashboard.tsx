@@ -22,6 +22,7 @@ import { format } from "date-fns"
 import { es } from "date-fns/locale"
 import { toast } from "sonner"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import type { SeguimientoRow } from "@/lib/types"
 import {
   computeProgress,
@@ -415,11 +416,13 @@ export function AnalyticsDashboard({
         return
       }
       try {
-        const ordersRes = await supabase
-          .from("vw_seguimiento_integrado")
-          .select("*")
-          .eq("idempresa", IDEMPRESA)
-          .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
+        const ordersRes = await fetchAll(() =>
+          supabase
+            .from("vw_seguimiento_integrado")
+            .select("*")
+            .eq("idempresa", IDEMPRESA)
+            .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
+        )
         if (cancelled) return
         if (ordersRes.error) throw ordersRes.error
         setOrders((ordersRes.data || []) as SeguimientoRow[])

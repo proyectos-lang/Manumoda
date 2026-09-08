@@ -93,6 +93,7 @@ import { useReadOnly } from "@/lib/auth-context"
 import { fmtCurrencyRedondo as fmtCurrency } from "@/lib/format"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import { BulkMoveWeekBar, RowCheckbox, SelectAllCheckbox } from "@/components/bulk-move-week-bar"
 import { DeadlineAlertBanner } from "@/components/deadline-alert-banner"
 import { EficienciaTrend } from "@/components/eficiencia-trend"
@@ -476,12 +477,14 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
     setLoading(true)
     setError(null)
 
-    const { data, error: e } = await supabase
-      .from("diseno_programacion")
-      .select("*, disenadoras(nombre), costureras(nombre)")
-      .eq("idempresa", IDEMPRESA)
-      .order("semana", { ascending: true })
-      .order("fecha", { ascending: true })
+    const { data, error: e } = await fetchAll(() =>
+      supabase
+        .from("diseno_programacion")
+        .select("*, disenadoras(nombre), costureras(nombre)")
+        .eq("idempresa", IDEMPRESA)
+        .order("semana", { ascending: true })
+        .order("fecha", { ascending: true }),
+    )
 
     if (e) {
       console.error("diseno fetch:", e)
@@ -497,11 +500,13 @@ export function DesignModule({ configMissing, initialFilter = null }: Props) {
     const aprobMap = new Map<string, string | null>()
 
     if (folios.length > 0) {
-      const { data: aprobData, error: aprobError } = await supabase
-        .from("ordenes_produccion")
-        .select("folio, fecha_aprobacion_diseno")
-        .in("folio", folios)
-        .eq("idempresa", IDEMPRESA)
+      const { data: aprobData, error: aprobError } = await fetchAll(() =>
+        supabase
+          .from("ordenes_produccion")
+          .select("folio, fecha_aprobacion_diseno")
+          .in("folio", folios)
+          .eq("idempresa", IDEMPRESA),
+      )
 
       if (aprobError) {
         // No bloquea la tabla: solo faltará la columna de aprobación

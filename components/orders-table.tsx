@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 import type { OrdenProduccion } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
@@ -359,15 +360,17 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
     setError(null)
     // Panel General muestra solo las órdenes pendientes de programar.
     // Los facturados y las que ya están en producción viven en otros módulos.
-    const { data, error } = await supabase
-      .from("ordenes_produccion")
-      .select(
-        "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_aprobacion_diseno, fecha_facturacion",
-      )
-      .eq("idempresa", IDEMPRESA)
-      .eq("fase_actual", "Por Programar")
-      .is("fecha_facturacion", null)
-      .order("fecha_cancelacion", { ascending: true, nullsFirst: false })
+    const { data, error } = await fetchAll(() =>
+      supabase
+        .from("ordenes_produccion")
+        .select(
+          "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_aprobacion_diseno, fecha_facturacion",
+        )
+        .eq("idempresa", IDEMPRESA)
+        .eq("fase_actual", "Por Programar")
+        .is("fecha_facturacion", null)
+        .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
+    )
 
     if (error) {
       console.error("Fetch error:", error)
@@ -381,11 +384,13 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
 
     // El corte cumplido vive en corte_programacion, no en la orden. Se piden
     // solo los folios cumplidos (un puñado) en vez de cruzar los ~300 visibles.
-    const { data: corteData, error: corteError } = await supabase
-      .from("corte_programacion")
-      .select("folio")
-      .eq("idempresa", IDEMPRESA)
-      .eq("cumplimiento_corte", "Si")
+    const { data: corteData, error: corteError } = await fetchAll(() =>
+      supabase
+        .from("corte_programacion")
+        .select("folio")
+        .eq("idempresa", IDEMPRESA)
+        .eq("cumplimiento_corte", "Si"),
+    )
 
     if (corteError) {
       // No bloquea la tabla: solo faltará distinguir "Corte Completado"

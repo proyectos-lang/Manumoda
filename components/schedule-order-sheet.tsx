@@ -88,6 +88,7 @@ export function ScheduleOrderSheet({ ordenId, open, onOpenChange, onScheduled }:
       .eq("idempresa", IDEMPRESA)
       .eq("maquilero", nombre)
       .not("calidad", "is", null)
+      .range(0, 899)
       .then(({ data, error }) => {
         if (cancelled || error || !data || data.length === 0) return
         const vals = (data as { calidad: number }[]).map((r) => r.calidad)
