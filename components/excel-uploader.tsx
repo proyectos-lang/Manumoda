@@ -39,7 +39,8 @@ type UpdateDiff = {
   folio: string
   id: number | string
   payload: Record<string, unknown>
-  cambios: { campo: string; antes: string; despues: string }[]
+  /** `nota` explica cuándo el valor nuevo no cambiará el cálculo. */
+  cambios: { campo: string; antes: string; despues: string; nota?: string }[]
 }
 
 /** Columnas de dinero del Excel, con su etiqueta para el diff. Todas por pieza. */
@@ -129,6 +130,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             fecha_cancelacion: string | null
             fecha_s5: string | null
             piezas_cortadas: number | null
+            piezas_cortadas_ajuste: number | null
             costo_maquila: number | null
             costo_lavanderia: number | null
             costo_estampado: number | null
@@ -146,7 +148,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
           const { data, error } = await supabase
             .from("ordenes_produccion")
             .select(
-              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, fecha_s5, piezas_cortadas, costo_maquila, costo_lavanderia, costo_estampado, costo_bordado, costo_corte_externo, costo_otro, precio_venta, precio_publico",
+              "id, folio, maquilero, cliente, modelo, fecha_cancelacion, fecha_s5, piezas_cortadas, piezas_cortadas_ajuste, costo_maquila, costo_lavanderia, costo_estampado, costo_bordado, costo_corte_externo, costo_otro, precio_venta, precio_publico",
             )
             .eq("idempresa", IDEMPRESA)
             .in("folio", slice)
@@ -165,6 +167,7 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
             fecha_cancelacion: string | null
             fecha_s5: string | null
             piezas_cortadas: number | null
+            piezas_cortadas_ajuste: number | null
             costo_maquila: number | null
             costo_lavanderia: number | null
             costo_estampado: number | null
@@ -266,6 +269,13 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
               campo: "piezas cortadas",
               antes: existing.piezas_cortadas?.toLocaleString("es-MX") ?? "—",
               despues: r.piezas_cortadas.toLocaleString("es-MX"),
+              // El ajuste manual de Pago Maquilas manda sobre el archivo: el
+              // valor nuevo se guarda pero NO mueve el cálculo. Sin este
+              // aviso la previsualización prometería un cambio que no ocurre.
+              nota:
+                existing.piezas_cortadas_ajuste != null
+                  ? `sin efecto: fijadas a mano en ${existing.piezas_cortadas_ajuste.toLocaleString("es-MX")}`
+                  : undefined,
             })
           }
 
@@ -631,7 +641,14 @@ export function ExcelUploader({ onUploaded, configMissing }: Props) {
                               <td className="px-3 py-1 font-mono">{ci === 0 ? u.folio : ""}</td>
                               <td className="px-3 py-1">{c.campo}</td>
                               <td className="px-3 py-1 text-muted-foreground">{c.antes}</td>
-                              <td className="px-3 py-1 font-medium text-blue-700">{c.despues}</td>
+                              <td className="px-3 py-1 font-medium text-blue-700">
+                                {c.despues}
+                                {c.nota && (
+                                  <span className="ml-1.5 font-normal text-amber-600">
+                                    ({c.nota})
+                                  </span>
+                                )}
+                              </td>
                             </tr>
                           )),
                         )}

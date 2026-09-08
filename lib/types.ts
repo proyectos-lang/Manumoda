@@ -207,8 +207,14 @@ export type VwPagoMaquilas = {
   /** true = no hay ninguna parcialidad ni corrección: cuenta como no entregado. */
   sin_entrega: boolean
   piezas_orden: number | null
-  /** Lo que se le entregó al maquilero para confeccionar. */
+  /** Lo que se le entregó al maquilero: ajuste manual > Excel > plan de corte. */
   piezas_cortadas: number
+  /** Lo que dijo el Excel. Referencia para contrastar el ajuste. */
+  piezas_cortadas_excel: number | null
+  /** Valor fijado a mano; null = se usa el del Excel o el plan de corte. */
+  piezas_cortadas_ajuste: number | null
+  /** true = las cortadas se fijaron a mano y el Excel ya no las pisa. */
+  cortadas_ajustadas: boolean
   costo_maquila: number | null
   precio_venta: number | null
   precio_publico: number | null

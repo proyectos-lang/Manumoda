@@ -375,8 +375,31 @@ export function PagoMaquilaDetalle({
           <Tarjeta>
             <Renglon etiqueta="Orden original" valor={`${(row.piezas_orden ?? 0).toLocaleString("es-MX")} pzs`} />
             <Renglon
-              etiqueta="Piezas cortadas"
-              valor={`${row.piezas_cortadas.toLocaleString("es-MX")} pzs`}
+              etiqueta={
+                <>
+                  Piezas cortadas
+                  {row.cortadas_ajustadas && (
+                    <span className="ml-1.5 text-xs text-amber-600">fijadas a mano</span>
+                  )}
+                </>
+              }
+              valor={
+                <PiezasEditable
+                  valor={row.piezas_cortadas}
+                  deOrigen={row.piezas_cortadas_excel}
+                  ajustado={row.cortadas_ajustadas}
+                  disabled={readOnly}
+                  onSave={(v) =>
+                    guardarEnOrden(
+                      "piezas_cortadas_ajuste",
+                      v,
+                      v == null
+                        ? "Vuelven a usarse las piezas cortadas del Excel"
+                        : "Piezas cortadas actualizadas",
+                    )
+                  }
+                />
+              }
             />
             <Renglon
               etiqueta="Piezas recibidas"
@@ -824,8 +847,8 @@ function Renglon({
   tono,
   negrita,
 }: {
-  etiqueta: string
-  valor: string
+  etiqueta: React.ReactNode
+  valor: React.ReactNode
   tono?: string
   negrita?: boolean
 }) {
@@ -925,6 +948,93 @@ function FilaPenalAutomatica({
         {aplica ? `−${fmtCurrency(descuento)}` : "—"}
       </TableCell>
     </TableRow>
+  )
+}
+
+/**
+ * Cantidad de piezas editable en línea.
+ *
+ * Vacío guarda null: el folio vuelve a seguir el valor de origen —el del
+ * Excel o el del plan de corte— en vez de quedar clavado en un número. Es
+ * lo que permite que una recarga del archivo vuelva a mandar.
+ */
+function PiezasEditable({
+  valor,
+  deOrigen,
+  ajustado,
+  disabled,
+  onSave,
+}: {
+  valor: number
+  /** Lo que dice el Excel, para poder contrastar y volver a ello. */
+  deOrigen: number | null
+  ajustado: boolean
+  disabled: boolean
+  onSave: (v: number | null) => void
+}) {
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(String(valor || ""))
+
+  useEffect(() => {
+    if (!editando) setTexto(String(valor || ""))
+  }, [valor, editando])
+
+  const confirmar = () => {
+    setEditando(false)
+    const t = texto.trim()
+    const n = t === "" ? null : Math.trunc(Number(t))
+    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+      setTexto(String(valor || ""))
+      return
+    }
+    // Teclear justo el valor de origen equivale a no tener ajuste: se guarda
+    // null para que el folio siga al archivo si mañana cambia.
+    const limpio = n !== null && n === deOrigen ? null : n
+    if (limpio !== (ajustado ? valor : null)) onSave(limpio)
+  }
+
+  if (disabled) {
+    return <span className="tabular-nums">{valor.toLocaleString("es-MX")} pzs</span>
+  }
+
+  if (editando) {
+    return (
+      <Input
+        autoFocus
+        type="number"
+        min="0"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") confirmar()
+          if (e.key === "Escape") {
+            setTexto(String(valor || ""))
+            setEditando(false)
+          }
+        }}
+        className="ml-auto h-8 w-28 text-right text-sm"
+      />
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditando(true)}
+      title={
+        ajustado
+          ? `Fijadas a mano · el Excel dice ${deOrigen?.toLocaleString("es-MX") ?? "—"}`
+          : "Clic para fijar las piezas cortadas"
+      }
+      className={cn(
+        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors hover:bg-muted",
+        ajustado ? "font-semibold text-amber-700" : "text-foreground",
+      )}
+    >
+      {valor.toLocaleString("es-MX")} pzs
+      <Pencil className="size-3 text-muted-foreground/50" />
+    </button>
   )
 }
 
