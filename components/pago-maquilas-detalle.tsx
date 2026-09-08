@@ -421,7 +421,7 @@ export function PagoMaquilaDetalle({
             onBorrar={(id) => borrarFila("maquila_recepciones", id, "La entrega")}
           />
 
-          <PanelNoEntregadas row={row} />
+          <PanelNoEntregadas row={row} readOnly={readOnly} onGuardar={guardarEnOrden} />
 
           <Tarjeta>
             <Renglon etiqueta="Arranque de maquila (S1)" valor={fmtFecha(row.fecha_s1)} negrita />
@@ -719,7 +719,11 @@ export function PagoMaquilaDetalle({
           <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
             La maquila va sobre las piezas recibidas; cada servicio, sobre las que ese proceso
             trabajó. Clic sobre un costo para cambiarlo; dejarlo vacío hace que ese proceso
-            deje de aplicar.
+            deje de aplicar.{" "}
+            <span className="text-amber-600">
+              Una carga del Excel con estos costos los reemplaza; el cambio se lista antes de
+              aplicarse.
+            </span>
           </p>
         </Bloque>
 
@@ -1263,7 +1267,15 @@ function PanelEntregas({
  * De solo lectura a propósito: si además se pudieran capturar a mano, esas
  * piezas se descontarían dos veces contra el cálculo automático.
  */
-function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
+function PanelNoEntregadas({
+  row,
+  readOnly,
+  onGuardar,
+}: {
+  row: VwPagoMaquilas
+  readOnly: boolean
+  onGuardar: (campo: string, valor: number | null, exito: string) => void
+}) {
   const sinPrecio = row.precio_venta == null
   return (
     <div className="rounded-lg border border-border">
@@ -1281,9 +1293,21 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
         </p>
       </div>
       <div className="space-y-2 p-3">
+        {/*
+          El desglose tiene que mostrar la MISMA base que usa el cálculo. Decía
+          "Orden original" cuando el script 051 ya mide contra lo cortado, así
+          que la resta que se leía aquí no daba el resultado de abajo.
+        */}
         <Renglon
-          etiqueta="Orden original"
-          valor={(row.piezas_orden ?? 0).toLocaleString("es-MX")}
+          etiqueta={
+            <>
+              Piezas cortadas
+              {row.cortadas_ajustadas && (
+                <span className="ml-1.5 text-xs text-amber-600">a mano</span>
+              )}
+            </>
+          }
+          valor={row.piezas_cortadas.toLocaleString("es-MX")}
         />
         <Renglon etiqueta="(−) Recibidas" valor={row.piezas_recibidas.toLocaleString("es-MX")} />
         <div className="border-t border-border pt-2">
@@ -1294,6 +1318,33 @@ function PanelNoEntregadas({ row }: { row: VwPagoMaquilas }) {
             negrita
           />
         </div>
+        {/*
+          El precio de venta se edita aquí y no en otro lado: es el número por
+          el que se multiplican las faltantes, y sin él el folio no descuenta
+          nada. Verlo junto a su efecto evita capturarlo a ciegas.
+        */}
+        <div className="border-t border-border pt-2">
+          <Renglon
+            etiqueta="Precio de venta"
+            valor={
+              <CostoEditable
+                valor={row.precio_venta}
+                disabled={readOnly}
+                vacio="Sin capturar"
+                onSave={(v) =>
+                  onGuardar(
+                    "precio_venta",
+                    v,
+                    v == null
+                      ? "El folio deja de descontar por piezas faltantes"
+                      : `Precio de venta guardado en ${fmtCurrency(v)}`,
+                  )
+                }
+              />
+            }
+          />
+        </div>
+
         {row.piezas_no_entregadas > 0 && (
           <div className="border-t border-border pt-2">
             <Renglon
