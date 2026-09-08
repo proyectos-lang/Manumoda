@@ -358,8 +358,14 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
 
     setLoading(true)
     setError(null)
-    // Panel General muestra solo las órdenes pendientes de programar.
-    // Los facturados y las que ya están en producción viven en otros módulos.
+    // Panel General lista TODAS las órdenes, en cualquier fase.
+    //
+    // Antes se limitaba a "Por Programar" y ocultaba 201 de 552: buscar un
+    // folio que ya estaba en maquila no daba resultado aquí aunque el
+    // buscador global sí lo encontrara. Para trabajar solo lo pendiente
+    // está el filtro `sin-programar` que llega desde Inicio.
+    //
+    // Las facturadas sí se excluyen: cerraron su ciclo.
     const { data, error } = await fetchAll(() =>
       supabase
         .from("ordenes_produccion")
@@ -367,7 +373,6 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
           "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_aprobacion_diseno, fecha_facturacion",
         )
         .eq("idempresa", IDEMPRESA)
-        .eq("fase_actual", "Por Programar")
         .is("fecha_facturacion", null)
         .order("fecha_cancelacion", { ascending: true, nullsFirst: false }),
     )
