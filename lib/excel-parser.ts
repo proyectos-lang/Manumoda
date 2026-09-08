@@ -1,12 +1,21 @@
 import * as XLSX from "xlsx"
 import type { ParsedRow } from "./types"
 
+/**
+ * Normaliza un encabezado del Excel a la clave con que lo buscamos.
+ *
+ * Separadores: espacios, guiones y puntos colapsan al mismo `_`. Antes solo
+ * se trataban los espacios, así que "PIEZAS-CORTADAS" o "PIEZAS.CORTADAS"
+ * no coincidían con `PIEZAS_CORTADAS` y la columna se descartaba en
+ * silencio: sin error, sin aviso, y el folio quedaba sin piezas cortadas.
+ */
 function normalizeKey(k: string): string {
   return k
     .toString()
     .trim()
     .toUpperCase()
-    .replace(/\s+/g, "_")
+    .replace(/[\s\-.]+/g, "_")
+    .replace(/^_+|_+$/g, "")
     .replace(/[ÁÀÂÄ]/g, "A")
     .replace(/[ÉÈÊË]/g, "E")
     .replace(/[ÍÌÎÏ]/g, "I")
