@@ -108,6 +108,7 @@ type FormState = {
   comentarios_generales: string
   fecha_limite_confirmacion: Date | null
   fecha_contra_muestra: Date | null
+  fecha_apartada_entrega: Date | null
 }
 
 const EMPTY_FORM: FormState = {
@@ -124,6 +125,7 @@ const EMPTY_FORM: FormState = {
   comentarios_generales: "",
   fecha_limite_confirmacion: null,
   fecha_contra_muestra: null,
+  fecha_apartada_entrega: null,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -211,7 +213,7 @@ export function ProductionTrackingDashboard({
       supabase
         .from("ordenes_produccion")
         .select(
-          "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra, fecha_facturacion",
+          "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra, fecha_apartada_entrega, fecha_facturacion",
         )
         .eq("idempresa", IDEMPRESA)
         .neq("fase_actual", "Por Programar")
@@ -728,6 +730,7 @@ function UpdateProgressSheet({
       comentarios_generales: order.comentarios_generales ?? "",
       fecha_limite_confirmacion: parseDate(order.fecha_limite_confirmacion),
       fecha_contra_muestra: parseDate(order.fecha_contra_muestra),
+      fecha_apartada_entrega: parseDate(order.fecha_apartada_entrega),
     })
   }, [order])
 
@@ -768,7 +771,8 @@ function UpdateProgressSheet({
       (form.habilitaciones_insumos || null) !== (order.habilitaciones_insumos ?? null) ||
       (form.comentarios_generales || null) !== (order.comentarios_generales ?? null) ||
       toISODate(form.fecha_limite_confirmacion) !== norm(order.fecha_limite_confirmacion) ||
-      toISODate(form.fecha_contra_muestra) !== norm(order.fecha_contra_muestra)
+      toISODate(form.fecha_contra_muestra) !== norm(order.fecha_contra_muestra) ||
+      toISODate(form.fecha_apartada_entrega) !== norm(order.fecha_apartada_entrega)
     )
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, order])
@@ -816,6 +820,7 @@ function UpdateProgressSheet({
       fecha_ultima_revision: new Date().toISOString(),
       fase_actual: detectedPhase,
       fecha_limite_confirmacion: toISODate(form.fecha_limite_confirmacion),
+      fecha_apartada_entrega: toISODate(form.fecha_apartada_entrega),
       fecha_contra_muestra: toISODate(form.fecha_contra_muestra),
     }
 
@@ -1082,7 +1087,7 @@ function UpdateProgressSheet({
                   </span>
                   <h3 className="text-sm font-semibold text-foreground">Confirmación</h3>
                 </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                       Fecha Límite de Confirmación
@@ -1164,6 +1169,51 @@ function UpdateProgressSheet({
                               size="sm"
                               className="text-xs text-muted-foreground"
                               onClick={() => setForm((f) => ({ ...f, fecha_contra_muestra: null }))}
+                            >
+                              Limpiar fecha
+                            </Button>
+                          </div>
+                        )}
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Fecha Apartada de Entrega
+                    </Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-full justify-start text-left text-xs font-normal h-9",
+                            !form.fecha_apartada_entrega && "text-muted-foreground",
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 size-3.5 shrink-0" />
+                          <span className="truncate">
+                            {form.fecha_apartada_entrega
+                              ? format(form.fecha_apartada_entrega, "dd MMM yyyy", { locale: es })
+                              : "Sin fecha"}
+                          </span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={form.fecha_apartada_entrega ?? undefined}
+                          onSelect={(d) => setForm((f) => ({ ...f, fecha_apartada_entrega: d ?? null }))}
+                          locale={es}
+                          initialFocus
+                        />
+                        {form.fecha_apartada_entrega && (
+                          <div className="flex justify-end border-t border-border p-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs text-muted-foreground"
+                              onClick={() => setForm((f) => ({ ...f, fecha_apartada_entrega: null }))}
                             >
                               Limpiar fecha
                             </Button>

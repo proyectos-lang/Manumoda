@@ -37,6 +37,8 @@ export type OrdenProduccion = {
   corte_programado?: boolean | null
   fecha_limite_confirmacion?: string | null
   fecha_contra_muestra?: string | null
+  /** Día que el maquilero aparta para entregar. Se compara contra la entrega real. */
+  fecha_apartada_entrega?: string | null
   /** Si tiene valor, la orden está entregada: no cuenta como vencida ni alerta. */
   fecha_facturacion?: string | null
   // ── Dinero (script 027). Todos POR PIEZA, tal como vienen del Excel ──
@@ -200,6 +202,14 @@ export type VwPagoMaquilas = {
   fecha_entrega_s5: string | null
   /** Corrección manual desde Pago Maquilas; manda sobre la del Excel. */
   fecha_entrega_corregida: string | null
+  /** Día apartado para entregar. NULL = no apartó, y eso penaliza. */
+  fecha_apartada_entrega: string | null
+  /** true = no apartó fecha, o entregó en una distinta a la apartada. */
+  incumple_fecha_apartada: boolean
+  /** Monto del catálogo para esa falta. */
+  monto_apartada: number
+  /** Lo que se descuenta por incumplir la fecha apartada. */
+  valor_fecha_apartada: number
   /** Fecha de la ÚLTIMA parcialidad recibida. */
   fecha_ultima_entrega: string | null
   /** La que manda para la demora: la corregida, si no la última parcialidad. */

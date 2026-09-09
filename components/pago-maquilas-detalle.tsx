@@ -451,6 +451,12 @@ export function PagoMaquilaDetalle({
               valor={fmtFecha(row.fecha_entrega_s5)}
               tono="text-muted-foreground/70"
             />
+            <Renglon
+              etiqueta="Apartado de entrega"
+              valor={fmtFecha(row.fecha_apartada_entrega)}
+              negrita
+              tono={row.incumple_fecha_apartada ? "text-rose-600" : undefined}
+            />
           </Tarjeta>
         </div>
       </Bloque>
@@ -496,6 +502,20 @@ export function PagoMaquilaDetalle({
                   row.precio_venta == null
                     ? "sin precio de venta"
                     : `${row.piezas_no_entregadas} × ${fmtCurrency(num(row.precio_venta))}`
+                }
+              />
+              <FilaPenalAutomatica
+                nombre="Fecha apartada de entrega"
+                aplica={num(row.valor_fecha_apartada) > 0}
+                descuento={num(row.valor_fecha_apartada)}
+                detalle={
+                  row.fecha_apartada_entrega == null
+                    ? "no apartó fecha"
+                    : row.fecha_entrega_maquilero == null
+                      ? `apartó ${fmtFecha(row.fecha_apartada_entrega)}, sin entregar`
+                      : row.incumple_fecha_apartada
+                        ? `apartó ${fmtFecha(row.fecha_apartada_entrega)}, entregó ${fmtFecha(row.fecha_entrega_maquilero)}`
+                        : "entregó el día apartado"
                 }
               />
               <FilaPenalAutomatica

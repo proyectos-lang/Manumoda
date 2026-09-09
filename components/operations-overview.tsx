@@ -84,6 +84,7 @@ type ResumenRow = {
   fecha_cancelacion_original: string | null
   fecha_limite_confirmacion: string | null
   fecha_contra_muestra: string | null
+  fecha_apartada_entrega: string | null
   fecha_ultima_revision: string | null
   calidad: number | null
   familia: string | null
@@ -460,6 +461,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       "Límite de Entrega": r.fecha_cancelacion ?? "",
       "Límite de Entrega Original": r.fecha_cancelacion_original ?? "",
       "Contra Muestra": r.fecha_contra_muestra ?? "",
+      "Apartado de Entrega": r.fecha_apartada_entrega ?? "",
       "Última Revisión": r.fecha_ultima_revision ? String(r.fecha_ultima_revision).slice(0, 10) : "",
       Riesgo: r.riesgo_entrega ?? "",
       Fase: r.fase_actual ?? "",
@@ -1211,7 +1213,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
             <div>
               <h3 className="text-sm font-semibold text-foreground">Master Tracking</h3>
               <p className="text-xs text-muted-foreground">
-                Folio · Cliente · Maquilador · Fechas clave · Riesgo · Calificación · Avance S1–S7
+                Folio · Cliente · Maquilador · Fechas clave · Apartado de entrega · Riesgo · Avance S1–S7
               </p>
             </div>
           </div>
@@ -1245,6 +1247,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead className="w-[110px]">Límite de Confirmación</TableHead>
                 <TableHead className="w-[110px]">Límite de Entrega</TableHead>
                 <TableHead className="w-[110px]">Contra Muestra</TableHead>
+                <TableHead className="w-[110px]">Apartado de Entrega</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
                 <TableHead className="w-[90px] text-center">Calificación</TableHead>
                 <TableHead className="w-[120px]">Última Revisión</TableHead>
@@ -1264,6 +1267,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="mx-auto size-6 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
@@ -1275,7 +1279,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={12} className="py-12 text-center">
+                  <TableCell colSpan={13} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -1326,6 +1330,11 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       <TableCell className="tabular-nums text-sm">
                         {r.fecha_contra_muestra
                           ? formatDate(r.fecha_contra_muestra)
+                          : <span className="text-muted-foreground/60 italic">—</span>}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-sm">
+                        {r.fecha_apartada_entrega
+                          ? formatDate(r.fecha_apartada_entrega)
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
                       <TableCell>
