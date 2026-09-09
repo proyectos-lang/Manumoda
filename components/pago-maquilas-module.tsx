@@ -916,18 +916,52 @@ function RecepcionesTab({ rows, loading, onGestionar }: TabProps) {
 
 // ─── Pestaña 3: Por Maquilero ────────────────────────────────────────────────
 
+/**
+ * Lo que se le debe a cada maquilero.
+ *
+ * Solo suman los folios que YA EMPEZARON A ENTREGAR. Un folio sin entregas
+ * tiene costo generado $0 —nada que pagarle— pero sus piezas faltantes se
+ * penalizan a precio de venta, así que aporta un valor a pagar negativo
+ * enorme: hoy son 176 folios que restan $24.9 millones y hunden el total
+ * de cada maquilero.
+ *
+ * Ese negativo no es una deuda: es una orden que todavía no empieza. Se
+ * cuenta aparte, en "Sin entregas", para que se vea que están ahí sin
+ * contaminar el saldo.
+ */
 function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boolean }) {
   const resumen = useMemo(() => {
     const mapa = new Map<
       string,
-      { folios: number; aPagar: number; pagado: number; demora: number; abiertos: number; sinCosto: number }
+      {
+        folios: number
+        aPagar: number
+        pagado: number
+        demora: number
+        abiertos: number
+        sinCosto: number
+        sinEntregas: number
+      }
     >()
     for (const r of rows) {
       const k = r.beneficiario ?? "Sin asignar"
       const a =
-        mapa.get(k) ?? { folios: 0, aPagar: 0, pagado: 0, demora: 0, abiertos: 0, sinCosto: 0 }
+        mapa.get(k) ?? {
+          folios: 0,
+          aPagar: 0,
+          pagado: 0,
+          demora: 0,
+          abiertos: 0,
+          sinCosto: 0,
+          sinEntregas: 0,
+        }
       a.folios++
-      if (!r.costo_capturado) {
+      if (r.piezas_recibidas === 0) {
+        // Sin entregas no hay cuenta que cobrar todavía. Lo pagado SÍ suma:
+        // si se le adelantó dinero eso es real y no puede desaparecer.
+        a.sinEntregas++
+        a.pagado += num(r.valor_pagado)
+      } else if (!r.costo_capturado) {
         a.sinCosto++
       } else {
         a.aPagar += num(r.valor_a_pagar)
@@ -961,7 +995,7 @@ function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boo
           {loading ? (
             Array.from({ length: 5 }).map((_, i) => (
               <TableRow key={i}>
-                {Array.from({ length: 8 }).map((__, j) => (
+                {Array.from({ length: 9 }).map((__, j) => (
                   <TableCell key={j}>
                     <Skeleton className="h-4 w-full" />
                   </TableCell>
@@ -970,7 +1004,7 @@ function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boo
             ))
           ) : resumen.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="h-24 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">
                 Sin maquileros con órdenes.
               </TableCell>
             </TableRow>
@@ -983,6 +1017,18 @@ function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boo
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-sm">
                   {m.abiertos > 0 ? m.abiertos : <span className="text-muted-foreground/50">—</span>}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm">
+                  {m.sinEntregas > 0 ? (
+                    <span
+                      className="text-slate-500"
+                      title="Folios que aún no reciben ninguna pieza. No suman al valor a pagar."
+                    >
+                      {m.sinEntregas}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground/50">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-sm">
                   {m.sinCosto > 0 ? (
