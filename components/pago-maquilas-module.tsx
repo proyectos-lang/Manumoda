@@ -984,6 +984,7 @@ function MaquilerosTab({ rows, loading }: { rows: VwPagoMaquilas[]; loading: boo
             <TableHead className="font-semibold">Maquilero</TableHead>
             <TableHead className="font-semibold text-right">Folios</TableHead>
             <TableHead className="font-semibold text-right">Con saldo</TableHead>
+            <TableHead className="font-semibold text-right">Sin entregas</TableHead>
             <TableHead className="font-semibold text-right">Sin costo</TableHead>
             <TableHead className="font-semibold text-right">Desc. demora</TableHead>
             <TableHead className="font-semibold text-right">Valor a pagar</TableHead>
