@@ -10,8 +10,8 @@
  *   claves repetidas y ligar 78 proveedores por nombre. Un INSERT
  *   gigante no puede reportar qué renglón falló ni por qué.
  *
- * ES RE-EJECUTABLE: usa upsert por clave, así que correrlo dos veces
- * deja el mismo resultado en vez de duplicar el catálogo.
+ * ES RE-EJECUTABLE: consulta qué claves ya existen y da de alta solo las
+ * nuevas, actualizando las demás. Correrlo dos veces no duplica nada.
  *
  * PREREQUISITO: script 058 ejecutado.
  *
@@ -179,7 +179,10 @@ if (!APLICAR) {
 async function api(path, init) {
   const r = await fetch(`${URL}/rest/v1/${path}`, { ...init, headers: { ...H, ...init?.headers } })
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`)
-  return r.status === 204 ? null : r.json()
+  // `return=minimal` responde 201 con cuerpo vacio: parsearlo como JSON
+  // revienta. Se lee como texto y solo se parsea si trae algo.
+  const cuerpo = await r.text()
+  return cuerpo ? JSON.parse(cuerpo) : null
 }
 
 console.log("\n  Creando proveedores…")
@@ -220,21 +223,49 @@ const registros = telas.map((t) => ({
 }))
 
 console.log("  Cargando telas…")
-// En lotes: un POST con 756 objetos puede exceder el límite del servidor
-// y, si falla, no dice cuál renglón lo rompió.
+// Re-ejecutable sin ON CONFLICT: el indice unico de `articulos` es sobre
+// upper(trim(clave)) —una expresion—, y PostgREST no puede apuntar
+// ON CONFLICT a un indice de expresion nombrando columnas (error 42P10).
+// Se consulta que claves ya estan y se parte en alta y actualizacion.
+const yaEnBase = await api(
+  `articulos?select=id,clave&tipo=eq.Tela&idempresa=eq.${IDEMPRESA}&limit=5000`,
+)
+const idPorClave = new Map(yaEnBase.map((a) => [String(a.clave).trim().toUpperCase(), a.id]))
+
+const nuevasTelas = registros.filter((r) => !idPorClave.has(r.clave))
+const existentesTelas = registros.filter((r) => idPorClave.has(r.clave))
+
+// En lotes: un POST con 756 objetos puede exceder el limite del servidor
+// y, si falla, no dice cual renglon lo rompio.
 const LOTE = 100
 let cargadas = 0
-for (let i = 0; i < registros.length; i += LOTE) {
-  const lote = registros.slice(i, i + LOTE)
-  await api("articulos?on_conflict=idempresa,clave", {
+for (let i = 0; i < nuevasTelas.length; i += LOTE) {
+  const lote = nuevasTelas.slice(i, i + LOTE)
+  await api("articulos", {
     method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    headers: { Prefer: "return=minimal" },
     body: JSON.stringify(lote),
   })
   cargadas += lote.length
-  process.stdout.write(`\r  ${cargadas}/${registros.length}`)
+  process.stdout.write(`
+  altas ${cargadas}/${nuevasTelas.length}`)
 }
-console.log()
+if (nuevasTelas.length) console.log()
+
+let actualizadas = 0
+for (const r of existentesTelas) {
+  const { clave, idempresa, tipo, ...cambios } = r
+  await api(`articulos?id=eq.${idPorClave.get(clave)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(cambios),
+  })
+  actualizadas++
+  process.stdout.write(`
+  actualizadas ${actualizadas}/${existentesTelas.length}`)
+}
+if (existentesTelas.length) console.log()
+console.log(`  ${nuevasTelas.length} nuevas, ${existentesTelas.length} actualizadas`)
 
 // ── 5. Verificar contra la base ─────────────────────────────────────────────
 
