@@ -19,10 +19,11 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { fetchAll } from "@/lib/supabase/fetch-all"
-import type { OrdenProduccion } from "@/lib/types"
+import type { OrdenProduccion, VwOrdenAvance } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
 import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
+import { AvanceEtapas, EtapasOrdenSheet } from "@/components/etapas-orden-sheet"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { RiskBadge } from "@/components/risk-badge"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
@@ -195,6 +196,10 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
   const [savingClienteId, setSavingClienteId] = useState<number | string | null>(null)
   /** Folios cuyo corte ya se registró como cumplido. */
   const [corteCumplido, setCorteCumplido] = useState<Set<string>>(new Set())
+  /** Avance por folio. Una fila por folio, no una por etapa. */
+  const [avance, setAvance] = useState<Map<string, VwOrdenAvance>>(new Map())
+  const [etapasFolio, setEtapasFolio] = useState<string | null>(null)
+  const [etapasOpen, setEtapasOpen] = useState(false)
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget?.id) return
@@ -406,6 +411,20 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       )
     }
 
+    // El avance de las etapas: una fila por folio (`vw_orden_avance`), no
+    // una por etapa. Traer `vw_orden_etapas` completa serían 5,535 renglones
+    // en cada carga de Panel General para pintar un indicador.
+    const { data: avanceData, error: avanceError } = await fetchAll<VwOrdenAvance>(() =>
+      supabase.from("vw_orden_avance").select("*").eq("idempresa", IDEMPRESA),
+    )
+
+    if (avanceError) {
+      // No bloquea la tabla: solo faltará la columna de etapas.
+      console.error("Fetch avance etapas error:", avanceError)
+    } else {
+      setAvance(new Map(avanceData.map((a) => [a.folio, a])))
+    }
+
     setLoading(false)
   }
 
@@ -488,6 +507,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                 <TableHead className="font-semibold">Límite de Entrega</TableHead>
                 <TableHead className="font-semibold">Riesgo</TableHead>
                 <TableHead className="font-semibold">Tipo Pedido</TableHead>
+                <TableHead className="font-semibold">Etapas</TableHead>
                 <TableHead className="font-semibold text-right">Acciones</TableHead>
                 <TableHead className="font-semibold">Fase Maquila</TableHead>
               </TableRow>
@@ -495,19 +515,19 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
             <TableBody>
               {loading && pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={12} className="h-32 text-center text-muted-foreground">
                     <Loader2 className="mx-auto size-5 animate-spin" />
                   </TableCell>
                 </TableRow>
               ) : error ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="h-24 text-center text-destructive">
+                  <TableCell colSpan={12} className="h-24 text-center text-destructive">
                     {error}
                   </TableCell>
                 </TableRow>
               ) : pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={12} className="h-32 text-center text-muted-foreground">
                     {orders.length === 0 ? (
                       <span>
                         Sin órdenes registradas aún.{" "}
@@ -639,6 +659,16 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                       <Badge variant="secondary" className="font-normal">
                         {row.tipo_pedido ?? "-"}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <AvanceEtapas
+                        etapas={avance.get(row.folio)?.etapas_detalle ?? []}
+                        disabled={!row.folio}
+                        onClick={() => {
+                          setEtapasFolio(row.folio)
+                          setEtapasOpen(true)
+                        }}
+                      />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -818,6 +848,16 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
           setScheduleCutId(null)
           void fetchOrders()
         }}
+      />
+
+      <EtapasOrdenSheet
+        folio={etapasFolio}
+        open={etapasOpen}
+        onOpenChange={(o) => {
+          setEtapasOpen(o)
+          if (!o) setEtapasFolio(null)
+        }}
+        onSaved={fetchOrders}
       />
 
       <AlertDialog open={anularTarget !== null} onOpenChange={(o) => { if (!o && !anulando) setAnularTarget(null) }}>

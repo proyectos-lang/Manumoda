@@ -646,3 +646,79 @@ export type VwInventarioMovimiento = {
   capturado_por: string | null
   created_at: string
 }
+
+// ── Etapas de producción ────────────────────────────────────────────────────
+
+/** Los cuatro estados en que puede estar una etapa de un folio. */
+export type EstadoEtapa = "Pendiente" | "En proceso" | "Completada" | "No aplica"
+
+export const ESTADOS_ETAPA: EstadoEtapa[] = [
+  "Pendiente",
+  "En proceso",
+  "Completada",
+  "No aplica",
+]
+
+/** Una etapa del catálogo. Agregar una etapa es insertar aquí, no migrar. */
+export type CatEtapaProduccion = {
+  id: number
+  idempresa: number
+  numero: number
+  clave: string
+  nombre: string
+  descripcion: string | null
+  /** true = se gestiona en su propio módulo, no en el formulario genérico. */
+  gestion_externa: boolean
+  modulo: string | null
+  activo: boolean
+  created_at: string
+}
+
+/** Fila de `vw_orden_etapas`: una etapa de un folio, con su estado. */
+export type VwOrdenEtapa = {
+  idempresa: number
+  folio: string
+  modelo: string | null
+  cliente: string | null
+  fase_actual: string | null
+  idetapa: number
+  numero: number
+  clave: string
+  etapa: string
+  gestion_externa: boolean
+  modulo: string | null
+  estado: EstadoEtapa
+  fecha_completada: string | null
+  fecha_inicio: string | null
+  responsable: string | null
+  notas: string | null
+  /**
+   * Campos propios de la etapa. El esquema de cada una se define en la app:
+   * agregar un campo no es una migración.
+   */
+  datos: Record<string, unknown>
+  capturado_por: string | null
+  updated_at: string | null
+  /** false = nadie la ha tocado; su estado es el que se deriva de la fuente. */
+  tiene_registro: boolean
+}
+
+/** Fila de `vw_orden_avance`: cuánto lleva un folio del proceso completo. */
+export type VwOrdenAvance = {
+  idempresa: number
+  folio: string
+  etapas: number
+  completadas: number
+  en_proceso: number
+  pendientes: number
+  no_aplican: number
+  avance_pct: number
+  /** Número de la primera etapa sin terminar: donde está parada la orden. */
+  etapa_actual: number | null
+  /**
+   * El estado de las nueve etapas, en orden. Viene en la vista de avance
+   * para que Panel General pinte el indicador con una fila por folio en
+   * vez de nueve.
+   */
+  etapas_detalle: { numero: number; etapa: string; estado: EstadoEtapa }[]
+}
