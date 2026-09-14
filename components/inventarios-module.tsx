@@ -10,6 +10,9 @@ import {
   Pencil,
   Plus,
   QrCode,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Download,
   RefreshCw,
   Scissors,
   Search,
@@ -18,6 +21,7 @@ import {
   X as XIcon,
 } from "lucide-react"
 import { format } from "date-fns"
+import * as XLSX from "xlsx"
 import { toast } from "sonner"
 
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
@@ -27,11 +31,11 @@ import { fmtCurrency } from "@/lib/format"
 import { parseLocalDate } from "@/lib/risk"
 import { cn } from "@/lib/utils"
 import {
-  TIPOS_ARTICULO,
   type Articulo,
   type Proveedor,
   type TipoArticulo,
   type VwInventarioArticulo,
+  type VwInventarioMovimiento,
   type VwInventarioRollo,
 } from "@/lib/types"
 
@@ -91,6 +95,7 @@ export function InventariosModule({ configMissing }: { configMissing: boolean })
   const [articulos, setArticulos] = useState<VwInventarioArticulo[]>([])
   const [rollos, setRollos] = useState<VwInventarioRollo[]>([])
   const [proveedores, setProveedores] = useState<Proveedor[]>([])
+  const [movimientos, setMovimientos] = useState<VwInventarioMovimiento[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -101,7 +106,7 @@ export function InventariosModule({ configMissing }: { configMissing: boolean })
     setLoading(true)
     setError(null)
 
-    const [art, rol, prov] = await Promise.all([
+    const [art, rol, prov, mov] = await Promise.all([
       fetchAll<VwInventarioArticulo>(() =>
         supabase
           .from("vw_inventario_articulos")
@@ -124,6 +129,14 @@ export function InventariosModule({ configMissing }: { configMissing: boolean })
           .eq("idempresa", IDEMPRESA)
           .order("nombre"),
       ),
+      fetchAll<VwInventarioMovimiento>(() =>
+        supabase
+          .from("vw_inventario_movimientos")
+          .select("*")
+          .eq("idempresa", IDEMPRESA)
+          .order("fecha", { ascending: false })
+          .order("created_at", { ascending: false }),
+      ),
     ])
 
     setLoading(false)
@@ -134,6 +147,7 @@ export function InventariosModule({ configMissing }: { configMissing: boolean })
     setArticulos(art.data)
     setRollos(rol.data)
     setProveedores(prov.data)
+    setMovimientos(mov.data)
   }, [configMissing])
 
   useEffect(() => {
@@ -171,14 +185,20 @@ export function InventariosModule({ configMissing }: { configMissing: boolean })
         </div>
       )}
 
-      <Tabs defaultValue="habilitaciones" className="w-full">
+      <Tabs defaultValue="saldos" className="w-full">
         <TabsList>
+          <TabsTrigger value="saldos">Saldos</TabsTrigger>
           <TabsTrigger value="habilitaciones">Habilitaciones</TabsTrigger>
           <TabsTrigger value="telas">Telas</TabsTrigger>
           <TabsTrigger value="rollos">Rollos</TabsTrigger>
           <TabsTrigger value="ingresos">Ingresos</TabsTrigger>
+          <TabsTrigger value="movimientos">Movimientos</TabsTrigger>
           <TabsTrigger value="proveedores">Proveedores</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="saldos" className="mt-5">
+          <SaldosTab articulos={articulos} loading={loading} />
+        </TabsContent>
 
         <TabsContent value="habilitaciones" className="mt-5">
           <ArticulosTab
@@ -211,6 +231,10 @@ export function InventariosModule({ configMissing }: { configMissing: boolean })
             loading={loading}
             onRefresh={fetchTodo}
           />
+        </TabsContent>
+
+        <TabsContent value="movimientos" className="mt-5">
+          <MovimientosTab movimientos={movimientos} loading={loading} />
         </TabsContent>
 
         <TabsContent value="proveedores" className="mt-5">
@@ -1609,6 +1633,584 @@ function FormOverlay({
           </Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Saldos ──────────────────────────────────────────────────────────────────
+
+/**
+ * El inventario completo en un solo lugar: habilitaciones y telas juntas,
+ * con su cantidad actual y cuánto vale.
+ *
+ * La valoración usa el costo PROMEDIO de compra, no el de referencia del
+ * artículo: es lo que realmente se pagó. Si nunca se ha comprado, cae al de
+ * referencia para no reportar en cero un inventario que sí existe.
+ */
+function SaldosTab({
+  articulos,
+  loading,
+}: {
+  articulos: VwInventarioArticulo[]
+  loading: boolean
+}) {
+  const [search, setSearch] = useState("")
+  const [filtroTipo, setFiltroTipo] = useState("__all__")
+  const [soloConSaldo, setSoloConSaldo] = useState(false)
+
+  const filtrados = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return articulos.filter((a) => {
+      if (filtroTipo !== "__all__" && a.tipo !== filtroTipo) return false
+      if (soloConSaldo && num(a.existencia) <= 0) return false
+      if (q && !`${a.clave} ${a.nombre} ${a.proveedor ?? ""}`.toLowerCase().includes(q))
+        return false
+      return true
+    })
+  }, [articulos, search, filtroTipo, soloConSaldo])
+
+  /** El costo con que se valoriza: el real de compra, o el de referencia. */
+  const costoDe = (a: VwInventarioArticulo) => num(a.costo_promedio ?? a.costo_unitario)
+
+  const totales = useMemo(() => {
+    let valor = 0
+    let habilitaciones = 0
+    let telas = 0
+    let bajos = 0
+    let sinCosto = 0
+    for (const a of filtrados) {
+      const c = num(a.costo_promedio ?? a.costo_unitario)
+      const v = num(a.existencia) * c
+      valor += v
+      if (a.tipo === "Tela") telas += v
+      else habilitaciones += v
+      if (a.bajo_minimo) bajos++
+      if (c === 0) sinCosto++
+    }
+    return { valor, habilitaciones, telas, bajos, sinCosto }
+  }, [filtrados])
+
+  const exportar = () => {
+    if (filtrados.length === 0) {
+      toast.warning("Nada que exportar con los filtros aplicados.")
+      return
+    }
+    const filas = filtrados.map((a) => ({
+      Tipo: a.tipo,
+      Clave: a.clave,
+      "Artículo": a.nombre,
+      Unidad: a.unidad_medida,
+      Proveedor: a.proveedor ?? "",
+      Ingresado: num(a.total_ingresado),
+      Salidas: num(a.total_salidas),
+      Existencia: num(a.existencia),
+      "Costo unitario": costoDe(a),
+      "Valorización": num(a.existencia) * costoDe(a),
+      "Stock mínimo": a.stock_minimo ?? "",
+      "Bajo mínimo": a.bajo_minimo ? "Sí" : "No",
+    }))
+    const ws = XLSX.utils.json_to_sheet(filas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Saldos")
+    XLSX.writeFile(wb, `saldos_inventario_${hoyISO()}.xlsx`)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard
+          label="Valor del inventario"
+          value={totales.valor}
+          format={fmtCurrency}
+          icon={<Boxes className="size-3.5" />}
+          iconBg="bg-teal-100 ring-teal-200"
+          iconColor="text-teal-600"
+          valueColor="text-teal-700"
+          hint={`${filtrados.length} artículos`}
+        />
+        <KpiCard
+          label="En habilitaciones"
+          value={totales.habilitaciones}
+          format={fmtCurrency}
+          icon={<Package className="size-3.5" />}
+          iconBg="bg-sky-100 ring-sky-200"
+          iconColor="text-sky-600"
+          valueColor="text-sky-700"
+        />
+        <KpiCard
+          label="En telas"
+          value={totales.telas}
+          format={fmtCurrency}
+          icon={<Scissors className="size-3.5" />}
+          iconBg="bg-violet-100 ring-violet-200"
+          iconColor="text-violet-600"
+          valueColor="text-violet-700"
+        />
+        <KpiCard
+          label="Bajo mínimo"
+          value={totales.bajos}
+          icon={<AlertTriangle className="size-3.5" />}
+          iconBg="bg-amber-100 ring-amber-200"
+          iconColor="text-amber-600"
+          valueColor={totales.bajos > 0 ? "text-amber-600" : "text-foreground"}
+          hint={totales.sinCosto > 0 ? `${totales.sinCosto} sin costo` : "Hay que reponer"}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Clave, artículo o proveedor…"
+            className="h-9 w-64 pl-8"
+          />
+        </div>
+        <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+          <SelectTrigger className="h-9 w-48 bg-transparent">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Todos los tipos</SelectItem>
+            <SelectItem value="Habilitación">Habilitaciones</SelectItem>
+            <SelectItem value="Tela">Telas</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
+          size="sm"
+          variant={soloConSaldo ? "default" : "outline"}
+          onClick={() => setSoloConSaldo(!soloConSaldo)}
+          className="h-9"
+        >
+          {soloConSaldo ? "Solo con existencia" : "Todos"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={exportar}
+          disabled={filtrados.length === 0}
+          className="ml-auto h-9 gap-1.5"
+        >
+          <Download className="size-3.5" />
+          Exportar
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead className="font-semibold">Tipo</TableHead>
+              <TableHead className="font-semibold">Clave</TableHead>
+              <TableHead className="font-semibold">Artículo</TableHead>
+              <TableHead className="font-semibold">Unidad</TableHead>
+              <TableHead className="text-right font-semibold">Ingresado</TableHead>
+              <TableHead className="text-right font-semibold">Salidas</TableHead>
+              <TableHead className="text-right font-semibold">Existencia</TableHead>
+              <TableHead className="text-right font-semibold">Costo unitario</TableHead>
+              <TableHead className="text-right font-semibold">Valorización</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 9 }).map((__, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : filtrados.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">
+                  {articulos.length === 0
+                    ? "Todavía no hay artículos registrados."
+                    : "Sin resultados para los filtros aplicados."}
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtrados.map((a) => {
+                const costo = costoDe(a)
+                return (
+                  <TableRow key={a.id} className="hover:bg-muted/30">
+                    <TableCell>
+                      <span
+                        className={cn(
+                          "inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+                          a.tipo === "Tela"
+                            ? "bg-violet-100 text-violet-700 ring-violet-200"
+                            : "bg-sky-100 text-sky-700 ring-sky-200",
+                        )}
+                      >
+                        {a.tipo}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs font-semibold">{a.clave}</TableCell>
+                    <TableCell className="text-sm">{a.nombre}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {a.unidad_medida}
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                      {fmtCant(num(a.total_ingresado))}
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                      {num(a.total_salidas) > 0 ? fmtCant(num(a.total_salidas)) : "—"}
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums">
+                      <span className={cn("font-semibold", a.bajo_minimo && "text-amber-600")}>
+                        {fmtCant(num(a.existencia))}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums">
+                      {costo > 0 ? (
+                        fmtCurrency(costo)
+                      ) : (
+                        <span className="text-amber-600">Sin costo</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-medium tabular-nums">
+                      {fmtCurrency(num(a.existencia) * costo)}
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+          {filtrados.length > 0 && (
+            <TableFooter>
+              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                <TableCell colSpan={8} className="text-sm font-semibold">
+                  Total · {filtrados.length} artículos
+                </TableCell>
+                <TableCell className="text-right text-sm font-bold tabular-nums">
+                  {fmtCurrency(totales.valor)}
+                </TableCell>
+              </TableRow>
+            </TableFooter>
+          )}
+        </Table>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        La existencia sale de <strong>ingresos menos salidas</strong>: no hay un total
+        guardado que pueda desincronizarse. La valorización usa el costo promedio de lo
+        que se compró; si el artículo nunca se ha comprado, el de referencia.
+      </p>
+    </div>
+  )
+}
+
+// ─── Movimientos ─────────────────────────────────────────────────────────────
+
+/**
+ * Cada entrada y cada salida, de habilitaciones y telas, en una sola línea
+ * de tiempo. Es la respuesta a "por qué este artículo tiene esta cantidad".
+ */
+function MovimientosTab({
+  movimientos,
+  loading,
+}: {
+  movimientos: VwInventarioMovimiento[]
+  loading: boolean
+}) {
+  const [search, setSearch] = useState("")
+  const [filtroTipo, setFiltroTipo] = useState("__all__")
+  const [filtroMov, setFiltroMov] = useState("__all__")
+  const [desde, setDesde] = useState("")
+  const [hasta, setHasta] = useState("")
+
+  const filtrados = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return movimientos.filter((m) => {
+      if (filtroTipo !== "__all__" && m.tipo !== filtroTipo) return false
+      if (filtroMov !== "__all__" && m.movimiento !== filtroMov) return false
+      if (desde && m.fecha < desde) return false
+      if (hasta && m.fecha > hasta) return false
+      if (
+        q &&
+        !`${m.articulo_clave} ${m.articulo_nombre} ${m.folio ?? ""} ${m.rollo ?? ""} ${m.referencia ?? ""} ${m.proveedor ?? ""}`
+          .toLowerCase()
+          .includes(q)
+      )
+        return false
+      return true
+    })
+  }, [movimientos, search, filtroTipo, filtroMov, desde, hasta])
+
+  const totales = useMemo(() => {
+    let entradas = 0
+    let salidas = 0
+    let nEntradas = 0
+    let nSalidas = 0
+    for (const m of filtrados) {
+      if (m.movimiento === "Entrada") {
+        entradas += num(m.importe)
+        nEntradas++
+      } else {
+        salidas += num(m.importe)
+        nSalidas++
+      }
+    }
+    return { entradas, salidas, nEntradas, nSalidas }
+  }, [filtrados])
+
+  const exportar = () => {
+    if (filtrados.length === 0) {
+      toast.warning("Nada que exportar con los filtros aplicados.")
+      return
+    }
+    const filas = filtrados.map((m) => ({
+      Fecha: m.fecha,
+      Movimiento: m.movimiento,
+      Tipo: m.tipo,
+      Clave: m.articulo_clave,
+      "Artículo": m.articulo_nombre,
+      Unidad: m.unidad_medida,
+      Cantidad: num(m.cantidad) * m.signo,
+      "Costo unitario": m.costo_unitario ?? "",
+      Importe: num(m.importe),
+      Proveedor: m.proveedor ?? "",
+      "Folio compra": m.referencia ?? "",
+      "Folio producción": m.folio ?? "",
+      Rollo: m.rollo ?? "",
+      Motivo: m.motivo ?? "",
+      "Capturó": m.capturado_por ?? "",
+    }))
+    const ws = XLSX.utils.json_to_sheet(filas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Movimientos")
+    XLSX.writeFile(wb, `movimientos_inventario_${hoyISO()}.xlsx`)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <KpiCard
+          label="Entradas"
+          value={totales.entradas}
+          format={fmtCurrency}
+          icon={<ArrowDownLeft className="size-3.5" />}
+          iconBg="bg-emerald-100 ring-emerald-200"
+          iconColor="text-emerald-600"
+          valueColor="text-emerald-700"
+          hint={`${totales.nEntradas} movimientos`}
+        />
+        <KpiCard
+          label="Salidas"
+          value={totales.salidas}
+          format={fmtCurrency}
+          icon={<ArrowUpRight className="size-3.5" />}
+          iconBg="bg-rose-100 ring-rose-200"
+          iconColor="text-rose-600"
+          valueColor="text-rose-700"
+          hint={`${totales.nSalidas} movimientos`}
+        />
+        <KpiCard
+          label="Movimiento neto"
+          value={totales.entradas - totales.salidas}
+          format={fmtCurrency}
+          icon={<Boxes className="size-3.5" />}
+          iconBg="bg-teal-100 ring-teal-200"
+          iconColor="text-teal-600"
+          valueColor="text-teal-700"
+          hint="Entradas menos salidas"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Artículo, folio o rollo…"
+            className="h-9 w-56 pl-8"
+          />
+        </div>
+        <Select value={filtroMov} onValueChange={setFiltroMov}>
+          <SelectTrigger className="h-9 w-44 bg-transparent">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Entradas y salidas</SelectItem>
+            <SelectItem value="Entrada">Solo entradas</SelectItem>
+            <SelectItem value="Salida">Solo salidas</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+          <SelectTrigger className="h-9 w-44 bg-transparent">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Todos los tipos</SelectItem>
+            <SelectItem value="Habilitación">Habilitaciones</SelectItem>
+            <SelectItem value="Tela">Telas</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="space-y-1">
+          <label className="block text-[11px] text-muted-foreground">Desde</label>
+          <Input
+            type="date"
+            value={desde}
+            onChange={(e) => setDesde(e.target.value)}
+            className="h-9 w-36"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-[11px] text-muted-foreground">Hasta</label>
+          <Input
+            type="date"
+            value={hasta}
+            onChange={(e) => setHasta(e.target.value)}
+            className="h-9 w-36"
+          />
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={exportar}
+          disabled={filtrados.length === 0}
+          className="ml-auto h-9 gap-1.5"
+        >
+          <Download className="size-3.5" />
+          Exportar
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead className="font-semibold">Fecha</TableHead>
+              <TableHead className="font-semibold">Movimiento</TableHead>
+              <TableHead className="font-semibold">Artículo</TableHead>
+              <TableHead className="text-right font-semibold">Cantidad</TableHead>
+              <TableHead className="text-right font-semibold">Costo unitario</TableHead>
+              <TableHead className="text-right font-semibold">Importe</TableHead>
+              <TableHead className="font-semibold">Origen / destino</TableHead>
+              <TableHead className="font-semibold">Capturó</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 8 }).map((__, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : filtrados.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="h-24 text-center text-sm text-muted-foreground">
+                  {movimientos.length === 0
+                    ? "Todavía no hay movimientos de inventario."
+                    : "Sin movimientos para los filtros aplicados."}
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtrados.map((m) => {
+                const esEntrada = m.movimiento === "Entrada"
+                return (
+                  <TableRow key={m.clave} className="hover:bg-muted/30">
+                    <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                      {fmtFecha(m.fecha)}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+                          esEntrada
+                            ? "bg-emerald-100 text-emerald-700 ring-emerald-200"
+                            : "bg-rose-100 text-rose-700 ring-rose-200",
+                        )}
+                      >
+                        {esEntrada ? (
+                          <ArrowDownLeft className="size-3" />
+                        ) : (
+                          <ArrowUpRight className="size-3" />
+                        )}
+                        {m.movimiento}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {m.articulo_nombre}
+                      <span className="ml-1.5 font-mono text-xs text-muted-foreground">
+                        {m.articulo_clave}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-semibold tabular-nums">
+                      <span className={esEntrada ? "text-emerald-700" : "text-rose-600"}>
+                        {esEntrada ? "+" : "−"}
+                        {fmtCant(num(m.cantidad))}
+                      </span>
+                      <span className="ml-1 text-xs font-normal text-muted-foreground">
+                        {m.unidad_medida}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                      {m.costo_unitario != null ? fmtCurrency(num(m.costo_unitario)) : "—"}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-medium tabular-nums">
+                      {fmtCurrency(num(m.importe))}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {esEntrada ? (
+                        <>
+                          {m.proveedor ?? "Sin proveedor"}
+                          {m.referencia && (
+                            <span className="ml-1.5 font-mono">{m.referencia}</span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {m.folio ? (
+                            <span className="font-mono font-medium text-foreground">
+                              {m.folio}
+                            </span>
+                          ) : (
+                            <span className="text-amber-600">Sin folio</span>
+                          )}
+                          {m.rollo && <span className="ml-1.5 font-mono">{m.rollo}</span>}
+                          {m.motivo && <span className="ml-1.5">· {m.motivo}</span>}
+                        </>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {m.capturado_por ?? "—"}
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+          {filtrados.length > 0 && (
+            <TableFooter>
+              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                <TableCell colSpan={5} className="text-sm font-semibold">
+                  {filtrados.length} movimientos · {totales.nEntradas} entradas,{" "}
+                  {totales.nSalidas} salidas
+                </TableCell>
+                <TableCell className="text-right text-sm font-bold tabular-nums">
+                  {fmtCurrency(totales.entradas - totales.salidas)}
+                </TableCell>
+                <TableCell colSpan={2} />
+              </TableRow>
+            </TableFooter>
+          )}
+        </Table>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        Las entradas valen lo que se pagó en esa compra; las salidas, el{" "}
+        <strong>costo promedio</strong> del artículo: si entraron 100 m a un precio y 100 m
+        a otro, los metros que salen no son unos ni otros.
+      </p>
     </div>
   )
 }

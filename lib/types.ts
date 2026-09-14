@@ -613,3 +613,36 @@ export type InventarioSalida = {
   motivo: string | null
   capturado_por: string | null
 }
+
+/**
+ * Vista `vw_inventario_movimientos` (script 055): entradas y salidas de
+ * habilitaciones y telas en una sola línea de tiempo.
+ */
+export type VwInventarioMovimiento = {
+  /** Prefijo E- o S-: los ids de las dos tablas se repiten. */
+  clave: string
+  movimiento: "Entrada" | "Salida"
+  idempresa: number
+  fecha: string
+  idarticulo: number
+  tipo: TipoArticulo
+  articulo_clave: string
+  articulo_nombre: string
+  unidad_medida: string
+  cantidad: number
+  /** +1 entrada, −1 salida. Permite sumar el saldo sin mirar el origen. */
+  signo: number
+  /** Lo pagado en la entrada; el costo promedio en la salida. */
+  costo_unitario: number | null
+  importe: number
+  proveedor: string | null
+  /** Folio de compra, solo en entradas. */
+  referencia: string | null
+  /** Folio de producción, solo en salidas. */
+  folio: string | null
+  /** Código del rollo, solo en salidas de tela. */
+  rollo: string | null
+  motivo: string | null
+  capturado_por: string | null
+  created_at: string
+}
