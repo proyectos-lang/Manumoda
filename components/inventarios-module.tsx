@@ -31,6 +31,7 @@ import { fmtCurrency } from "@/lib/format"
 import { parseLocalDate } from "@/lib/risk"
 import { cn } from "@/lib/utils"
 import {
+  ACABADOS_TELA,
   type Articulo,
   type Proveedor,
   type TipoArticulo,
@@ -274,7 +275,14 @@ function ArticulosTab({
     const q = search.trim().toLowerCase()
     return articulos.filter((a) => {
       if (soloBajos && !a.bajo_minimo) return false
-      if (q && !`${a.clave} ${a.nombre} ${a.proveedor ?? ""}`.toLowerCase().includes(q))
+      if (
+        q &&
+        !`${a.clave} ${a.nombre} ${a.proveedor ?? ""} ${a.tela_familia ?? ""} ${
+          a.categoria ?? ""
+        } ${a.color ?? a.tela_color ?? ""} ${a.material ?? ""} ${a.descripcion ?? ""}`
+          .toLowerCase()
+          .includes(q)
+      )
         return false
       return true
     })
@@ -291,6 +299,17 @@ function ArticulosTab({
   }, [filtrados])
 
   const esTela = tipo === "Tela"
+
+  // Las familias/categorias ya usadas, para sugerirlas en el formulario en
+  // vez de teclearlas de nuevo y acabar con "BOTON" y "BOTON" como dos tipos.
+  const categorias = useMemo(() => {
+    const vistas = new Set<string>()
+    for (const a of articulos) {
+      const v = esTela ? a.tela_familia : a.categoria
+      if (v) vistas.add(v)
+    }
+    return [...vistas].sort()
+  }, [articulos, esTela])
 
   return (
     <div className="space-y-4">
@@ -356,6 +375,9 @@ function ArticulosTab({
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               <TableHead className="font-semibold">Clave</TableHead>
               <TableHead className="font-semibold">Nombre</TableHead>
+              <TableHead className="font-semibold">
+                {esTela ? "Familia / Acabado" : "Categoría"}
+              </TableHead>
               <TableHead className="font-semibold">Unidad</TableHead>
               <TableHead className="font-semibold">Proveedor</TableHead>
               <TableHead className="text-right font-semibold">Costo unitario</TableHead>
@@ -369,7 +391,7 @@ function ArticulosTab({
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: esTela ? 9 : 8 }).map((__, j) => (
+                  {Array.from({ length: esTela ? 10 : 9 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -379,7 +401,7 @@ function ArticulosTab({
             ) : filtrados.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={esTela ? 9 : 8}
+                  colSpan={esTela ? 10 : 9}
                   className="h-24 text-center text-sm text-muted-foreground"
                 >
                   {articulos.length === 0
@@ -394,6 +416,22 @@ function ArticulosTab({
                   <TableRow key={a.id} className={cn("hover:bg-muted/30", !a.activo && "opacity-50")}>
                     <TableCell className="font-mono text-xs font-semibold">{a.clave}</TableCell>
                     <TableCell className="text-sm">{a.nombre}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {esTela ? (
+                        a.tela_familia ? (
+                          <>
+                            {a.tela_familia}
+                            {a.tela_acabado && (
+                              <span className="ml-1 opacity-70">· {a.tela_acabado}</span>
+                            )}
+                          </>
+                        ) : (
+                          "—"
+                        )
+                      ) : (
+                        a.categoria ?? "—"
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{a.unidad_medida}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {a.proveedor ?? "—"}
@@ -446,7 +484,7 @@ function ArticulosTab({
           {filtrados.length > 0 && (
             <TableFooter>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableCell colSpan={esTela ? 7 : 6} className="text-sm font-semibold">
+                <TableCell colSpan={esTela ? 8 : 7} className="text-sm font-semibold">
                   Total · {filtrados.length} artículos
                 </TableCell>
                 <TableCell className="text-right text-sm font-bold tabular-nums">
@@ -464,6 +502,7 @@ function ArticulosTab({
           tipo={tipo}
           articulo={editando}
           proveedores={proveedores}
+          categorias={categorias}
           onClose={() => {
             setCreando(false)
             setEditando(null)
@@ -481,29 +520,82 @@ function ArticulosTab({
 
 // ─── Alta y edición de artículo ──────────────────────────────────────────────
 
+/**
+ * Alta y edición de un artículo del maestro.
+ *
+ * Edita TODOS los campos del catálogo, no solo los básicos: las cargas
+ * oficiales (scripts 058 y 059) trajeron familia, acabado, composición,
+ * categoría, material y medida, y sin esto no habría forma de corregir
+ * un dato mal capturado en el archivo de origen.
+ *
+ * El formulario cambia según el tipo, porque una tela y un botón no
+ * describen lo mismo: la tela tiene composición y acabado; la
+ * habilitación, categoría y material.
+ *
+ * Los atributos propios de cada habilitación (#Hoyos, Talla,
+ * Departamento) se editan como pares clave-valor: son ~60 distintos
+ * repartidos en 38 categorías, así que un formulario fijo no los
+ * cubriría. Las claves que empiezan con "_" las puso la carga para
+ * rastrear de dónde salió un precio y se muestran aparte, en solo
+ * lectura: son procedencia del dato, no atributos del producto.
+ */
 function ArticuloDialog({
   tipo,
   articulo,
   proveedores,
+  categorias,
   onClose,
   onSaved,
 }: {
   tipo: TipoArticulo
   articulo: Articulo | null
   proveedores: Proveedor[]
+  /** Las categorías ya usadas, para sugerir en vez de teclear de nuevo. */
+  categorias: string[]
   onClose: () => void
   onSaved: () => void
 }) {
+  const esTela = tipo === "Tela"
+
+  // Comunes
   const [clave, setClave] = useState(articulo?.clave ?? "")
   const [nombre, setNombre] = useState(articulo?.nombre ?? "")
   const [unidad, setUnidad] = useState(
-    articulo?.unidad_medida ?? (tipo === "Tela" ? "Metros" : "Piezas"),
+    articulo?.unidad_medida ?? (esTela ? "Metros" : "Piezas"),
   )
   const [costo, setCosto] = useState(articulo?.costo_unitario?.toString() ?? "")
   const [idproveedor, setIdproveedor] = useState(
     articulo?.idproveedor ? String(articulo.idproveedor) : "__none__",
   )
   const [minimo, setMinimo] = useState(articulo?.stock_minimo?.toString() ?? "")
+  const [descripcion, setDescripcion] = useState(articulo?.descripcion ?? "")
+  const [claveProv, setClaveProv] = useState(articulo?.clave_proveedor ?? "")
+  const [activo, setActivo] = useState(articulo?.activo ?? true)
+
+  // Telas
+  const [telaFamilia, setTelaFamilia] = useState(articulo?.tela_familia ?? "")
+  const [telaAcabado, setTelaAcabado] = useState<string>(articulo?.tela_acabado ?? "__none__")
+  const [telaNombre, setTelaNombre] = useState(articulo?.tela_nombre ?? "")
+  const [telaColor, setTelaColor] = useState(articulo?.tela_color ?? "")
+  const [telaComposicion, setTelaComposicion] = useState(articulo?.tela_composicion ?? "")
+
+  // Habilitaciones
+  const [categoria, setCategoria] = useState(articulo?.categoria ?? "")
+  const [material, setMaterial] = useState(articulo?.material ?? "")
+  const [color, setColor] = useState(articulo?.color ?? "")
+  const [medida, setMedida] = useState(articulo?.medida ?? "")
+
+  // Los atributos propios, como lista editable de pares.
+  const [atributos, setAtributos] = useState<{ k: string; v: string }[]>(() =>
+    Object.entries(articulo?.atributos ?? {})
+      .filter(([k]) => !k.startsWith("_"))
+      .map(([k, v]) => ({ k, v: String(v) })),
+  )
+  /** Procedencia del precio que puso la carga. Se conserva, no se edita. */
+  const metadatos = Object.entries(articulo?.atributos ?? {}).filter(([k]) =>
+    k.startsWith("_"),
+  )
+
   const [guardando, setGuardando] = useState(false)
 
   const guardar = async () => {
@@ -511,10 +603,26 @@ function ArticuloDialog({
       toast.error("La clave y el nombre son obligatorios")
       return
     }
+    if (costo.trim() !== "" && Number(costo) < 0) {
+      toast.error("El costo no puede ser negativo")
+      return
+    }
     const supabase = getSupabase()
     if (!supabase) return
     setGuardando(true)
-    const payload = {
+
+    // Los atributos con clave vacía se descartan; los metadatos de
+    // procedencia se conservan tal como estaban.
+    const attrs: Record<string, string | number> = {}
+    for (const [k, v] of metadatos) attrs[k] = v as string | number
+    for (const { k, v } of atributos) {
+      const limpia = k.trim()
+      if (!limpia || limpia.startsWith("_")) continue
+      const n = Number(v)
+      attrs[limpia] = v.trim() !== "" && !Number.isNaN(n) ? n : v
+    }
+
+    const payload: Record<string, unknown> = {
       idempresa: IDEMPRESA,
       tipo,
       clave: clave.trim().toUpperCase(),
@@ -523,7 +631,39 @@ function ArticuloDialog({
       costo_unitario: costo.trim() === "" ? null : Number(costo),
       idproveedor: idproveedor === "__none__" ? null : Number(idproveedor),
       stock_minimo: minimo.trim() === "" ? null : Number(minimo),
+      descripcion: descripcion.trim() || null,
+      clave_proveedor: claveProv.trim() || null,
+      activo,
+      // El tipo contrario se limpia: si un artículo se reclasifica de tela
+      // a habilitación, dejar los campos del otro tipo lo haría aparecer
+      // en búsquedas donde ya no pertenece.
+      ...(esTela
+        ? {
+            tela_familia: telaFamilia.trim().toUpperCase() || null,
+            tela_acabado: telaAcabado === "__none__" ? null : telaAcabado,
+            tela_nombre: telaNombre.trim().toUpperCase() || null,
+            tela_color: telaColor.trim().toUpperCase() || null,
+            tela_composicion: telaComposicion.trim() || null,
+            categoria: null,
+            material: null,
+            color: null,
+            medida: null,
+            atributos: {},
+          }
+        : {
+            categoria: categoria.trim().toUpperCase() || null,
+            material: material.trim().toUpperCase() || null,
+            color: color.trim().toUpperCase() || null,
+            medida: medida.trim() || null,
+            atributos: attrs,
+            tela_familia: null,
+            tela_acabado: null,
+            tela_nombre: null,
+            tela_color: null,
+            tela_composicion: null,
+          }),
     }
+
     const { error } = articulo
       ? await supabase.from("articulos").update(payload).eq("id", articulo.id)
       : await supabase.from("articulos").insert(payload)
@@ -552,8 +692,8 @@ function ArticuloDialog({
           <Input
             value={clave}
             onChange={(e) => setClave(e.target.value)}
-            placeholder="TEL-001"
-            className="h-9 font-mono"
+            placeholder={esTela ? "MEZ-RIG-PRA-NEG-DUG-004" : "BOTCUECAF216-001"}
+            className="h-9 font-mono text-xs"
           />
         </Campo>
         <Campo label="Unidad de medida">
@@ -576,17 +716,206 @@ function ArticuloDialog({
         <Input
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
-          placeholder={tipo === "Tela" ? "Mezclilla 12 oz" : "Botón metálico 15 mm"}
+          placeholder={esTela ? "MEZCLILLA PRADA NEGRO" : "BOTON CUERNO CAFE 16 mm"}
           className="h-9"
         />
       </Campo>
 
+      {/* ── Lo propio de cada tipo ── */}
+      {esTela ? (
+        <div className="rounded-lg border border-border bg-muted/30 p-3">
+          <p className="mb-3 text-xs font-semibold text-muted-foreground">
+            Datos de la tela
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Campo label="Familia">
+              <Input
+                value={telaFamilia}
+                onChange={(e) => setTelaFamilia(e.target.value)}
+                placeholder="MEZCLILLA"
+                className="h-9"
+                list="familias-tela"
+              />
+              <datalist id="familias-tela">
+                {categorias.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </Campo>
+            <Campo label="Acabado">
+              <Select value={telaAcabado} onValueChange={setTelaAcabado}>
+                <SelectTrigger className="h-9 bg-transparent">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Sin especificar</SelectItem>
+                  {ACABADOS_TELA.map((a) => (
+                    <SelectItem key={a} value={a}>
+                      {a}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Campo>
+            <Campo label="Nombre comercial">
+              <Input
+                value={telaNombre}
+                onChange={(e) => setTelaNombre(e.target.value)}
+                placeholder="PRADA"
+                className="h-9"
+              />
+            </Campo>
+            <Campo label="Color">
+              <Input
+                value={telaColor}
+                onChange={(e) => setTelaColor(e.target.value)}
+                placeholder="INDIGO"
+                className="h-9"
+              />
+            </Campo>
+          </div>
+          <div className="mt-3">
+            <Campo label="Composición">
+              <Input
+                value={telaComposicion}
+                onChange={(e) => setTelaComposicion(e.target.value)}
+                placeholder="100% ALGODON"
+                className="h-9"
+              />
+            </Campo>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border bg-muted/30 p-3">
+          <p className="mb-3 text-xs font-semibold text-muted-foreground">
+            Datos de la habilitación
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Campo label="Categoría">
+              <Input
+                value={categoria}
+                onChange={(e) => setCategoria(e.target.value)}
+                placeholder="BOTON"
+                className="h-9"
+                list="categorias-hab"
+              />
+              <datalist id="categorias-hab">
+                {categorias.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </Campo>
+            <Campo label="Material">
+              <Input
+                value={material}
+                onChange={(e) => setMaterial(e.target.value)}
+                placeholder="METAL"
+                className="h-9"
+              />
+            </Campo>
+            <Campo label="Color">
+              <Input
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                placeholder="NIQUEL"
+                className="h-9"
+              />
+            </Campo>
+            <Campo label="Medida">
+              <Input
+                value={medida}
+                onChange={(e) => setMedida(e.target.value)}
+                placeholder="16 mm"
+                className="h-9"
+              />
+            </Campo>
+          </div>
+
+          {/* Atributos propios de la categoría */}
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold text-muted-foreground">
+                Atributos propios
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 text-xs"
+                onClick={() => setAtributos((a) => [...a, { k: "", v: "" }])}
+              >
+                <Plus className="size-3" />
+                Agregar
+              </Button>
+            </div>
+            {atributos.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Sin atributos. Aquí van los datos que solo aplican a esta categoría:
+                hoyos en botones, talla en talleros, departamento en etiquetas.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {atributos.map((a, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={a.k}
+                      onChange={(e) =>
+                        setAtributos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)),
+                        )
+                      }
+                      placeholder="atributo"
+                      className="h-8 flex-1 text-xs"
+                    />
+                    <Input
+                      value={a.v}
+                      onChange={(e) =>
+                        setAtributos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)),
+                        )
+                      }
+                      placeholder="valor"
+                      className="h-8 flex-1 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="size-8 shrink-0 p-0"
+                      onClick={() =>
+                        setAtributos((prev) => prev.filter((_, j) => j !== i))
+                      }
+                    >
+                      <Trash2 className="size-3.5 text-muted-foreground" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {metadatos.length > 0 && (
+              <div className="mt-3 rounded border border-border bg-background px-2.5 py-2">
+                <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                  Procedencia del precio (de la carga inicial)
+                </p>
+                {metadatos.map(([k, v]) => (
+                  <p key={k} className="text-[11px] text-muted-foreground">
+                    <span className="font-mono">{k.replace(/^_/, "")}</span>: {String(v)}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Costos y proveedor ── */}
       <div className="grid gap-3 sm:grid-cols-2">
-        <Campo label="Costo unitario (referencia)">
+        <Campo label={esTela ? "Costo por metro" : "Costo unitario"}>
           <Input
             type="number"
             min="0"
-            step="0.01"
+            step="0.0001"
             value={costo}
             onChange={(e) => setCosto(e.target.value)}
             placeholder="0.00"
@@ -606,21 +935,53 @@ function ArticuloDialog({
         </Campo>
       </div>
 
-      <Campo label="Proveedor">
-        <Select value={idproveedor} onValueChange={setIdproveedor}>
-          <SelectTrigger className="h-9 bg-transparent">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">Sin asignar</SelectItem>
-            {proveedores.map((p) => (
-              <SelectItem key={p.id} value={String(p.id)}>
-                {p.nombre}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Campo label="Proveedor">
+          <Select value={idproveedor} onValueChange={setIdproveedor}>
+            <SelectTrigger className="h-9 bg-transparent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Sin asignar</SelectItem>
+              {proveedores.map((p) => (
+                <SelectItem key={p.id} value={String(p.id)}>
+                  {p.nombre}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Campo>
+        <Campo label="Clave del proveedor">
+          <Input
+            value={claveProv}
+            onChange={(e) => setClaveProv(e.target.value)}
+            placeholder="La que usa el proveedor"
+            className="h-9 font-mono text-xs"
+          />
+        </Campo>
+      </div>
+
+      <Campo label="Descripción">
+        <Input
+          value={descripcion}
+          onChange={(e) => setDescripcion(e.target.value)}
+          placeholder="Descripción larga, la que lee quien compra"
+          className="h-9"
+        />
       </Campo>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={activo}
+          onChange={(e) => setActivo(e.target.checked)}
+          className="size-4"
+        />
+        Activo
+        <span className="text-xs text-muted-foreground">
+          — al desactivarlo deja de ofrecerse, pero su historial se conserva
+        </span>
+      </label>
 
       <p className="text-xs text-muted-foreground">
         El costo unitario es una referencia para cotizar. El que valoriza el inventario es

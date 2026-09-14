@@ -538,7 +538,42 @@ export type Articulo = {
   /** Bajo este saldo el artículo se marca en alerta. */
   stock_minimo: number | null
   activo: boolean
+
+  // ── Campos del catálogo oficial (scripts 058 y 059) ──
+  /** Descripción larga, la que lee quien compra. */
+  descripcion: string | null
+  /** Consecutivo del archivo oficial: permite rastrear el origen. */
+  consecutivo: number | null
+  /** La clave con que el proveedor identifica el producto. */
+  clave_proveedor: string | null
+
+  // Telas
+  /** Familia: MEZCLILLA, RIB, GABARDINA… */
+  tela_familia: string | null
+  tela_acabado: AcabadoTela | null
+  /** Nombre comercial: PRADA, GRECIA, LEBRON… */
+  tela_nombre: string | null
+  tela_color: string | null
+  tela_composicion: string | null
+
+  // Habilitaciones
+  /** Tipo de habilitación: BOTON, CIERRE, GANCHO… */
+  categoria: string | null
+  color: string | null
+  medida: string | null
+  material: string | null
+  /**
+   * Lo propio de cada tipo (#Hoyos, Talla, Departamento). Las claves que
+   * empiezan con "_" las puso la carga para poder rastrear de dónde salió
+   * un precio; no son atributos del producto.
+   */
+  atributos: Record<string, string | number> | null
 }
+
+/** Los tres acabados que acepta el dominio `acabado_tela`. */
+export type AcabadoTela = "Rigida" | "Stretch" | "Circular"
+
+export const ACABADOS_TELA: AcabadoTela[] = ["Rigida", "Stretch", "Circular"]
 
 /** Vista `vw_inventario_articulos`: la existencia sale de los movimientos. */
 export type VwInventarioArticulo = Articulo & {
