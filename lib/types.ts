@@ -775,7 +775,13 @@ export type FichaTalla = {
   orden: number
   /** Cantidad por talla: {"CH":100,"M":200}. Las tallas cambian por cliente. */
   cantidades: Record<string, number>
+  /** Proporción del renglón de color: la columna a la derecha en la ficha. */
   proporcion: number | null
+  /**
+   * Proporción del tendido POR TALLA: {"0X":1,"1X":1}. Es el renglón
+   * "Proporcion" bajo los encabezados, distinto de `proporcion`.
+   */
+  proporciones: Record<string, number> | null
   created_at: string
 }
 

@@ -241,6 +241,10 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       color,
       orden: tallas.filter((t) => t.bloque === bloque).length + 1,
       cantidades: Object.fromEntries(columnasTalla.map((c) => [c, 0])),
+      // La proporción se hereda del primer renglón del bloque: es del
+      // tendido, la misma para todos los colores.
+      proporciones:
+        tallas.find((t) => t.bloque === bloque)?.proporciones ?? {},
     })
     if (error) {
       toast.error("No se pudo agregar el renglón", { description: error.message })
@@ -258,6 +262,34 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       .from("ficha_tallas")
       .update({ cantidades })
       .eq("id", fila.id)
+    if (error) toast.error("No se pudo guardar", { description: error.message })
+  }
+
+  /**
+   * La proporcion del tendido se guarda en el PRIMER renglon del bloque:
+   * es una sola por bloque, no una por color, y asi el PDF la encuentra
+   * donde la espera.
+   */
+  async function guardarProporcion(
+    bloque: "Especificacion" | "Cortadas",
+    talla: string,
+    valor: number,
+  ) {
+    const supabase = getSupabase()
+    if (!supabase) return
+    const primera = tallas.find((t) => t.bloque === bloque)
+    if (!primera) {
+      toast.error("Agrega primero un renglon de color")
+      return
+    }
+    const proporciones = { ...(primera.proporciones ?? {}), [talla]: valor }
+    setTallas((prev) =>
+      prev.map((t) => (t.id === primera.id ? { ...t, proporciones } : t)),
+    )
+    const { error } = await supabase
+      .from("ficha_tallas")
+      .update({ proporciones })
+      .eq("id", primera.id)
     if (error) toast.error("No se pudo guardar", { description: error.message })
   }
 
@@ -464,6 +496,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 readOnly={readOnly}
                 onAgregar={() => agregarTalla("Especificacion")}
                 onCambiar={guardarTalla}
+                onCambiarProporcion={(talla, v) =>
+                  guardarProporcion("Especificacion", talla, v)
+                }
                 onBorrar={borrarTalla}
               />
 
@@ -474,6 +509,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 readOnly={readOnly}
                 onAgregar={() => agregarTalla("Cortadas")}
                 onCambiar={guardarTalla}
+                onCambiarProporcion={(talla, v) =>
+                  guardarProporcion("Cortadas", talla, v)
+                }
                 onBorrar={borrarTalla}
               />
 
@@ -596,7 +634,7 @@ function Derivado({ label, value, sufijo }: { label: string; value: number | nul
 }
 
 function CuadroTallas({
-  titulo, filas, columnas, readOnly, onAgregar, onCambiar, onBorrar,
+  titulo, filas, columnas, readOnly, onAgregar, onCambiar, onCambiarProporcion, onBorrar,
 }: {
   titulo: string
   filas: FichaTalla[]
@@ -604,6 +642,7 @@ function CuadroTallas({
   readOnly: boolean
   onAgregar: () => void
   onCambiar: (fila: FichaTalla, talla: string, valor: number) => void
+  onCambiarProporcion: (talla: string, valor: number) => void
   onBorrar: (id: number) => void
 }) {
   const total = filas.reduce(
@@ -631,6 +670,35 @@ function CuadroTallas({
               <th className="px-3 py-1.5 text-right font-medium">Total</th>
               <th className="w-10" />
             </tr>
+            {/*
+              La proporción del tendido: un valor por talla, no por color.
+              Se guarda en el primer renglón del bloque, que es donde la
+              busca el PDF.
+            */}
+            {filas.length > 0 && (
+              <tr className="border-t border-border">
+                <td className="px-3 py-1 text-xs font-medium text-muted-foreground">
+                  Proporción
+                </td>
+                {columnas.map((c) => (
+                  <td key={c} className="px-1 py-1">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      disabled={readOnly}
+                      defaultValue={String(filas[0]?.proporciones?.[c] ?? "")}
+                      onBlur={(e) =>
+                        onCambiarProporcion(c, Number(e.target.value) || 0)
+                      }
+                      className="h-7 w-full min-w-[60px] text-center text-xs tabular-nums"
+                    />
+                  </td>
+                ))}
+                <td />
+                <td />
+              </tr>
+            )}
           </thead>
           <tbody>
             {filas.length === 0 ? (

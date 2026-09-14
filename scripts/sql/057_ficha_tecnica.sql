@@ -309,19 +309,21 @@ SELECT folio, precio_venta, costo_neto, margen_pct
 FROM manumoda.vw_ficha_tecnica
 WHERE idempresa = 1 AND margen_pct > 100;
 
--- 4. Prueba con los números de la ficha de ejemplo (modelo 696).
---    Costo fijo 9.50 + habilitación 6.46 = 15.96 = Costo Neto de la ficha.
---    Margen sobre precio de venta 70.00 = 77.2%.
---    NOTA: la ficha impresa dice "90.77" en Margen, que NO es el
---    porcentaje: (70 − 15.96) / 70 = 77.2%. El 90.77 parece ser otra
---    cuenta del sistema anterior (posiblemente margen sobre precio
---    público, o un valor absoluto). Conviene confirmarlo con operación
---    antes de dar el margen por bueno.
+-- 4. Prueba con los números de una ficha real (modelo 2058).
+--
+--    CONFIRMADO contra el sistema anterior: las tres cuentas dan exacto.
+--      tela        1.61 m × $40.00                      = $ 64.40
+--      Costo Neto  9.50 (fijo) + 64.40 (tela) + 7.25    = $ 81.15
+--      Margen      (121.00 − 81.15) / 121.00 × 100      =   32.93
+--
+--    La fórmula del margen es sobre PRECIO DE VENTA. Una ficha anterior
+--    (modelo 696) imprimía 90.77 donde la fórmula da 77.20: ese registro
+--    tenía el dato mal, no era otra fórmula.
 SELECT
-  ROUND(9.50 + 6.46, 2)                        AS costo_neto_calculado,
-  15.96                                         AS costo_neto_ficha,
-  ROUND(100.0 * (70.00 - 15.96) / 70.00, 2)    AS margen_calculado_pct,
-  90.77                                         AS margen_impreso_en_ficha;
+  ROUND(9.50 + 64.40 + 7.25, 2)                  AS costo_neto_calculado,
+  81.15                                          AS costo_neto_ficha,
+  ROUND(100.0 * (121.00 - 81.15) / 121.00, 2)    AS margen_calculado,
+  32.93                                          AS margen_en_ficha;
 
 -- 5. Nadie debe tener tallas capturadas todavía. Esperado: 0.
 SELECT COUNT(*) AS tallas, (SELECT COUNT(*) FROM manumoda.ficha_materiales) AS materiales

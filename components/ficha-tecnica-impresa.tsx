@@ -26,6 +26,18 @@ function money(v: number | null | undefined): string {
   return `$ ${Number(v).toFixed(2)}`
 }
 
+/**
+ * Fecha en el formato de la ficha: 24/07/2026.
+ *
+ * Se parte la cadena en vez de usar Date: `new Date("2026-07-24")` se
+ * interpreta como UTC y en México imprimiría el día anterior.
+ */
+function fmtFecha(iso: string | null | undefined): string {
+  if (!iso) return ""
+  const [a, m, d] = iso.slice(0, 10).split("-")
+  return `${d}/${m}/${a}`
+}
+
 function sumaFila(f: FichaTalla): number {
   return Object.values(f.cantidades ?? {}).reduce((a, b) => a + Number(b || 0), 0)
 }
@@ -84,9 +96,16 @@ export function FichaTecnicaImpresa({
 
         {/* ── La hoja ── */}
         <div className="p-6 text-[11px] text-black print:p-0">
-          <h1 className="mb-3 text-2xl font-bold tracking-tight text-purple-900">
-            MANUFACTURAS DE LA MODA
-          </h1>
+          {/* El logo a la izquierda y el título centrado, como el original */}
+          <div className="mb-3 flex items-start justify-between">
+            <h1 className="text-xl font-bold leading-none tracking-tight text-purple-900">
+              MANUFACTURAS
+              <br />
+              DE LA MODA
+            </h1>
+            <span className="pr-24 pt-2 text-sm font-bold">FICHA TECNICA</span>
+            <span />
+          </div>
 
           {/* Datos generales + foto */}
           <div className="flex gap-4">
@@ -127,20 +146,40 @@ export function FichaTecnicaImpresa({
           <CuadroTallasImpreso titulo="Piezas Cortadas" filas={cortadas}
                                columnas={columnasTalla} />
 
-          {/* Costos */}
-          <div className="mt-3 grid grid-cols-6 border border-black/50 text-center">
-            <Celda titulo="Fecha confirmacion" valor={ficha.fecha_confirmacion ?? ""} />
-            <Celda titulo="Fecha Cancelacion" valor={ficha.fecha_cancelacion ?? ""} />
+          {/*
+            Las dos fechas van en su propio renglón, arriba de los costos,
+            como en la ficha original: son del pedido, no del costeo.
+          */}
+          <div className="mt-3 grid grid-cols-2 gap-8">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold">Fecha confirmacion</span>
+              <span className="flex-1 border border-black/50 px-1 py-0.5 text-center font-medium">
+                {fmtFecha(ficha.fecha_confirmacion)}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold">Fecha Cancelacion</span>
+              <span className="flex-1 border border-black/50 px-1 py-0.5 text-center font-medium">
+                {fmtFecha(ficha.fecha_cancelacion)}
+              </span>
+            </div>
+          </div>
+
+          {/*
+            La franja de costeo, con el Margen como una columna más: es como
+            se lee en la ficha original, entre Precio Venta y Precio Publico.
+          */}
+          <div className="mt-1 grid grid-cols-5 border border-black/50 text-center">
             <Celda titulo="Costo Fijo" valor={money(ficha.costo_fijo)} />
             <Celda titulo="Costo Neto" valor={money(ficha.costo_neto)} />
             <Celda titulo="Precio Venta" valor={money(ficha.precio_venta)} />
+            <Celda
+              titulo="Margen"
+              valor={
+                ficha.margen_pct == null ? "" : Number(ficha.margen_pct).toFixed(2)
+              }
+            />
             <Celda titulo="Precio Publico" valor={money(ficha.precio_publico)} />
-          </div>
-          <div className="border-x border-b border-black/50 px-2 py-0.5 text-right text-[10px]">
-            Margen:{" "}
-            <span className="font-bold">
-              {ficha.margen_pct == null ? "—" : `${Number(ficha.margen_pct).toFixed(2)}%`}
-            </span>
           </div>
 
           {/* Materiales */}
@@ -226,6 +265,26 @@ function CuadroTallasImpreso({
             ))}
             <th className="border border-black/50 px-1 py-0.5 text-center">Total</th>
             <th className="border border-black/50 px-1 py-0.5 text-center">Proporcion</th>
+          </tr>
+          {/*
+            La proporción del tendido, una por talla. Va como renglón bajo los
+            encabezados, igual que en la ficha original. Se toma del primer
+            color capturado: la proporción es del tendido, no del color.
+          */}
+          <tr>
+            <td className="border border-black/50 px-1 py-0.5 text-[10px] font-bold">
+              Proporcion
+            </td>
+            {columnas.map((c) => (
+              <td
+                key={c}
+                className="border border-black/50 px-1 py-0.5 text-center tabular-nums"
+              >
+                {filas[0]?.proporciones?.[c] ?? ""}
+              </td>
+            ))}
+            <td className="border border-black/50" />
+            <td className="border border-black/50" />
           </tr>
         </thead>
         <tbody>
