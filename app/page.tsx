@@ -15,6 +15,7 @@ import { DesignModule } from "@/components/design-module"
 import { CorteModule } from "@/components/corte-module"
 import { ColaboradoresModule } from "@/components/colaboradores-module"
 import { PagoMaquilasModule } from "@/components/pago-maquilas-module"
+import { InventariosModule } from "@/components/inventarios-module"
 import { LoginScreen } from "@/components/login-screen"
 import { FolioDetailProvider } from "@/components/folio-detail-drawer"
 import type { ModuleFilter } from "@/lib/module-filter"
@@ -32,6 +33,7 @@ const TITLES: Record<ModuleKey, string> = {
   riesgos: "Seguimiento de Ordenes",
   colaboradores: "Registro de Colaboradores",
   pagos: "Pago Maquilas",
+  inventarios: "Inventarios",
   configuracion: "Configuración",
 }
 
@@ -270,6 +272,8 @@ export default function Page() {
           )}
 
           {active === "pagos" && <PagoMaquilasModule configMissing={configMissing} />}
+
+          {active === "inventarios" && <InventariosModule configMissing={configMissing} />}
 
           {active === "configuracion" && (
             <div className="space-y-6">

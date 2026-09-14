@@ -1,7 +1,7 @@
 "use client"
 
 import Image from "next/image"
-import { Home, Upload, KanbanSquare, Scissors, Settings, User, BarChart3, Activity, Banknote, Eye, Palette, Users, LogOut } from "lucide-react"
+import { Home, Upload, KanbanSquare, Scissors, Settings, User, BarChart3, Activity, Banknote, Boxes, Eye, Palette, Users, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { SessionUser } from "@/lib/types"
 
@@ -12,6 +12,7 @@ export type ModuleKey =
   | "corte"
   | "seguimiento"
   | "pagos"
+  | "inventarios"
   | "operacion"
   | "riesgos"
   | "colaboradores"
@@ -48,6 +49,12 @@ export const NAV: {
     label: "Pago Maquilas",
     icon: Banknote,
     color: "text-emerald-400",
+  },
+  {
+    key: "inventarios",
+    label: "Inventarios",
+    icon: Boxes,
+    color: "text-teal-400",
   },
   {
     key: "operacion",

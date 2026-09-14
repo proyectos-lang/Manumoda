@@ -507,3 +507,109 @@ export type ParsedRow = Pick<
    *  en la columna de texto `maquilero`. */
   maquilero_nombre: string | null
 }
+
+// ─── Inventarios (script 054) ────────────────────────────────────────────────
+
+/** Los dos inventarios: insumos y telas. */
+export type TipoArticulo = "Habilitación" | "Tela"
+
+export const TIPOS_ARTICULO: TipoArticulo[] = ["Habilitación", "Tela"]
+
+export type Proveedor = {
+  id: number
+  idempresa: number
+  nombre: string
+  contacto: string | null
+  telefono: string | null
+  notas: string | null
+  activo: boolean
+}
+
+export type Articulo = {
+  id: number
+  idempresa: number
+  tipo: TipoArticulo
+  clave: string
+  nombre: string
+  unidad_medida: string
+  /** Costo de referencia. El que valoriza es el de cada ingreso. */
+  costo_unitario: number | null
+  idproveedor: number | null
+  /** Bajo este saldo el artículo se marca en alerta. */
+  stock_minimo: number | null
+  activo: boolean
+}
+
+/** Vista `vw_inventario_articulos`: la existencia sale de los movimientos. */
+export type VwInventarioArticulo = Articulo & {
+  proveedor: string | null
+  total_ingresado: number
+  total_salidas: number
+  existencia: number
+  importe_ingresado: number
+  /** Importe ingresado / cantidad. Null si nunca se ha comprado. */
+  costo_promedio: number | null
+  bajo_minimo: boolean
+  /** Solo para telas. */
+  rollos: number
+  rollos_disponibles: number
+}
+
+export type InventarioIngreso = {
+  id: number
+  idempresa: number
+  folio_compra: string | null
+  fecha: string
+  idproveedor: number | null
+  comentarios: string | null
+  capturado_por: string | null
+}
+
+export type InventarioIngresoDetalle = {
+  id: number
+  idempresa: number
+  idingreso: number
+  idarticulo: number
+  cantidad: number
+  /** Lo que se pagó en ESTA compra. No se recalcula. */
+  costo_unitario: number
+}
+
+/** Vista `vw_inventario_rollos`: cada rollo con su saldo de metros. */
+export type VwInventarioRollo = {
+  id: number
+  idempresa: number
+  idarticulo: number
+  articulo_clave: string
+  articulo_nombre: string
+  unidad_medida: string
+  proveedor: string | null
+  /** Lo que va impreso en la etiqueta y codifica el QR. */
+  codigo: string
+  metros_inicial: number
+  metros_usados: number
+  metros_disponibles: number
+  agotado: boolean
+  ubicacion: string | null
+  comentarios: string | null
+  created_at: string
+  costo_compra: number | null
+  fecha_ingreso: string | null
+  folio_compra: string | null
+  salidas: number | null
+  /** Folios en los que se consumió, separados por coma. */
+  folios: string | null
+}
+
+export type InventarioSalida = {
+  id: number
+  idempresa: number
+  idarticulo: number
+  /** Solo para telas. */
+  idrollo: number | null
+  folio: string | null
+  fecha: string
+  cantidad: number
+  motivo: string | null
+  capturado_por: string | null
+}
