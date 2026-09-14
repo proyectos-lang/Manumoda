@@ -722,3 +722,76 @@ export type VwOrdenAvance = {
    */
   etapas_detalle: { numero: number; etapa: string; estado: EstadoEtapa }[]
 }
+
+// ── Ficha técnica (etapa 1 · Pre orden) ─────────────────────────────────────
+
+/** Los dos cuadros de tallas de la ficha. */
+export type BloqueTallas = "Especificacion" | "Cortadas"
+
+/** Los dos cuadros de materiales. */
+export type TipoMaterialFicha = "Tela" | "Habilitacion"
+
+export type FichaTalla = {
+  id: number
+  idempresa: number
+  folio: string
+  bloque: BloqueTallas
+  color: string
+  orden: number
+  /** Cantidad por talla: {"CH":100,"M":200}. Las tallas cambian por cliente. */
+  cantidades: Record<string, number>
+  proporcion: number | null
+  created_at: string
+}
+
+export type FichaMaterial = {
+  id: number
+  idempresa: number
+  folio: string
+  tipo: TipoMaterialFicha
+  orden: number
+  clave: string | null
+  descripcion: string
+  color: string | null
+  cantidad: number
+  costo: number
+  /** Vínculo opcional al catálogo de Inventarios. */
+  idarticulo: number | null
+  created_at: string
+}
+
+/** Fila de `vw_ficha_tecnica`: la ficha con Costo Neto y Margen ya calculados. */
+export type VwFichaTecnica = {
+  idempresa: number
+  folio: string
+  razon_social: string | null
+  marca: string | null
+  compradora: string | null
+  cliente: string | null
+  num_pedido: string | null
+  modelo: string | null
+  modelo_cliente: string | null
+  descripcion_completa: string | null
+  categoria: string | null
+  familia: string | null
+  /** Ruta en Storage, no URL: se resuelve al mostrarla. */
+  foto_path: string | null
+  fecha_confirmacion: string | null
+  fecha_cancelacion: string | null
+  /** Las piezas del Excel. Puede no coincidir con las capturadas en la ficha. */
+  piezas_orden: number | null
+  piezas_totales: number
+  piezas_cortadas_ficha: number
+  piezas_cortadas: number | null
+  costo_tela: number
+  costo_habilitacion: number
+  costo_fijo: number | null
+  costo_maquila: number | null
+  costo_lavanderia: number | null
+  /** Derivado: fijo + maquila + lavandería + tela + habilitación. */
+  costo_neto: number
+  precio_venta: number | null
+  precio_publico: number | null
+  /** Derivado sobre precio de venta. Null si no hay precio. */
+  margen_pct: number | null
+}

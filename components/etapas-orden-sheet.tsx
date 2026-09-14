@@ -27,6 +27,7 @@ import { fetchAll } from "@/lib/supabase/fetch-all"
 import { useAuth, useReadOnly } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
 import { ESTADOS_ETAPA, type EstadoEtapa, type VwOrdenEtapa } from "@/lib/types"
+import { FichaTecnicaDialog } from "@/components/ficha-tecnica-dialog"
 
 /**
  * Las nueve etapas de un folio, con su estado y su captura.
@@ -85,6 +86,8 @@ export function EtapasOrdenSheet({
   const [loading, setLoading] = useState(false)
   const [guardando, setGuardando] = useState<number | null>(null)
   const [abierta, setAbierta] = useState<number | null>(null)
+  /** La etapa 1 se captura en la ficha técnica, no en el formulario genérico. */
+  const [fichaOpen, setFichaOpen] = useState(false)
   const readOnly = useReadOnly()
   const { user } = useAuth()
 
@@ -237,6 +240,22 @@ export function EtapasOrdenSheet({
                           <span className="font-medium">{e.modulo}</span>; aquí solo
                           se consulta.
                         </p>
+                      ) : e.clave === "pre_orden" ? (
+                        /*
+                         * La etapa 1 no usa el formulario genérico: su captura
+                         * es la ficha técnica completa, con tallas, materiales
+                         * y foto, y se imprime como PDF.
+                         */
+                        <div className="mt-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={readOnly}
+                            onClick={() => setFichaOpen(true)}
+                          >
+                            Abrir ficha técnica
+                          </Button>
+                        </div>
                       ) : (
                         <div className="mt-2">
                           {!expandida ? (
@@ -269,6 +288,16 @@ export function EtapasOrdenSheet({
           </div>
         )}
       </SheetContent>
+
+      <FichaTecnicaDialog
+        folio={folio}
+        open={fichaOpen}
+        onOpenChange={setFichaOpen}
+        onSaved={() => {
+          void cargar()
+          onSaved?.()
+        }}
+      />
     </Sheet>
   )
 }
