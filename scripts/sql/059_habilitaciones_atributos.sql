@@ -123,7 +123,7 @@ SELECT
     a.idproveedor
 FROM manumoda.articulos a
 LEFT JOIN manumoda.proveedores p ON p.id = a.idproveedor
-WHERE a.tipo = 'Habilitacion';
+WHERE a.tipo = 'Habilitación';
 
 COMMENT ON VIEW manumoda.vw_habilitaciones IS
   'El catálogo de habilitaciones con su proveedor resuelto. `atributos` trae '
@@ -146,7 +146,7 @@ SELECT
     ROUND(MAX(costo_unitario), 4)                 AS precio_max,
     ROUND(AVG(costo_unitario), 4)                 AS precio_promedio
 FROM manumoda.articulos
-WHERE tipo = 'Habilitacion' AND categoria IS NOT NULL
+WHERE tipo = 'Habilitación' AND categoria IS NOT NULL
 GROUP BY idempresa, categoria;
 
 COMMENT ON VIEW manumoda.vw_habilitaciones_categorias IS

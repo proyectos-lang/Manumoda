@@ -312,7 +312,7 @@ console.log(`  proveedores: ${nuevosProv.length} nuevos, ${provExistentes.length
 
 const registros = finales.map((t) => ({
   idempresa: IDEMPRESA,
-  tipo: "Habilitacion",
+  tipo: "Habilitación",
   clave: t.clave,
   nombre: [t.categoria, t.material, t.color, t.medida].filter(Boolean).join(" ") || t.clave,
   unidad_medida: "Pieza",
@@ -333,7 +333,7 @@ console.log("  Cargando habilitaciones…")
 // Sin ON CONFLICT: el índice único es sobre upper(trim(clave)), una
 // expresión, y PostgREST no puede apuntarle nombrando columnas (42P10).
 const yaEnBase = await api(
-  `articulos?select=id,clave&tipo=eq.Habilitacion&idempresa=eq.${IDEMPRESA}&limit=5000`,
+  `articulos?select=id,clave&tipo=eq.Habilitación&idempresa=eq.${IDEMPRESA}&limit=5000`,
 )
 const idPorClave = new Map(yaEnBase.map((a) => [String(a.clave).trim().toUpperCase(), a.id]))
 
@@ -369,10 +369,10 @@ if (existentes.length) console.log()
 // ── 4. Verificar ────────────────────────────────────────────────────────────
 
 const enBase = await api(
-  `articulos?select=id&tipo=eq.Habilitacion&idempresa=eq.${IDEMPRESA}&limit=5000`,
+  `articulos?select=id&tipo=eq.Habilitación&idempresa=eq.${IDEMPRESA}&limit=5000`,
 )
 const sinPrecio = await api(
-  `articulos?select=clave&tipo=eq.Habilitacion&idempresa=eq.${IDEMPRESA}&costo_unitario=is.null`,
+  `articulos?select=clave&tipo=eq.Habilitación&idempresa=eq.${IDEMPRESA}&costo_unitario=is.null`,
 )
 const telas = await api(`articulos?select=id&tipo=eq.Tela&idempresa=eq.${IDEMPRESA}&limit=5000`)
 
