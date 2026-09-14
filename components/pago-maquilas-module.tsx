@@ -208,7 +208,16 @@ export function PagoMaquilasModule({ configMissing }: { configMissing: boolean }
           .from("vw_pago_maquilas")
           .select("*")
           .eq("idempresa", IDEMPRESA)
-          .not("maquilero_nombre", "is", null)
+          // Entra todo lo que tenga ALGO de maquila: el maquilero asignado, un
+          // costo capturado o entregas registradas. Filtrar solo por el nombre
+          // dejaba fuera folios reales cuyo Excel viene sin maquilero —con sus
+          // piezas cortadas y su costo por pieza— y no había forma de pagarlos.
+          //
+          // Las que no tienen ninguna de las tres no se listan: son órdenes que
+          // todavía no empiezan y llenarían la cobranza sin nada que cobrar.
+          .or(
+            "maquilero_nombre.not.is.null,costo_maquila.not.is.null,piezas_recibidas.gt.0",
+          )
           .order("folio"),
       ),
       fetchAll(() =>
