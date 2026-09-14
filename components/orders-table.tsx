@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw, ClipboardList } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,8 @@ import { cn } from "@/lib/utils"
 import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
 import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import { AvanceEtapas, EtapasOrdenSheet } from "@/components/etapas-orden-sheet"
+import { EtapasTablero } from "@/components/etapas-tablero"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { RiskBadge } from "@/components/risk-badge"
 import { IncomingFilterChip } from "@/components/incoming-filter-chip"
@@ -457,6 +459,13 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
 
   return (
     <div className="space-y-4">
+      <Tabs defaultValue="ordenes" className="w-full">
+        <TabsList>
+          <TabsTrigger value="ordenes">Órdenes</TabsTrigger>
+          <TabsTrigger value="etapas">Etapas por folio</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="ordenes" className="mt-4 space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 md:flex-1">
           <FilterInput
@@ -700,6 +709,22 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                           }}
                         />
 
+                        {/* ── Registro de etapas ── */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          title="Registrar el avance de las nueve etapas"
+                          className="gap-1.5"
+                          disabled={readOnly || !row.folio}
+                          onClick={() => {
+                            setEtapasFolio(row.folio)
+                            setEtapasOpen(true)
+                          }}
+                        >
+                          <ClipboardList className="size-3.5" />
+                          Etapas
+                        </Button>
+
                         {/* ── Menú de opciones adicionales ── */}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -825,6 +850,17 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
           </Button>
         </div>
       </div>
+        </TabsContent>
+
+        {/*
+          El tablero extendido carga `vw_orden_etapas` completa (9 filas por
+          folio) porque necesita la fecha de cada etapa. Vive en su propia
+          pestaña para que ese costo se pague solo cuando alguien la abre.
+        */}
+        <TabsContent value="etapas" className="mt-4">
+          <EtapasTablero configMissing={configMissing} />
+        </TabsContent>
+      </Tabs>
 
       <ScheduleDesignSheet
         ordenId={scheduleId}
