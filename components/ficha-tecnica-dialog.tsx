@@ -233,7 +233,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    * otro panel modal, y el boton parecia no hacer nada.
    */
   async function agregarTalla(bloque: "Especificacion" | "Cortadas", color: string) {
-    if (!folio) return
+    // DIAGNOSTICO TEMPORAL: reporta en pantalla cada punto de salida, para
+    // localizar donde se corta el flujo en produccion.
+    toast.info(`[diag] clic recibido · folio=${folio ?? "NULO"} · color="${color}"`)
+    if (!folio) {
+      toast.error("[diag] se corta: el folio llego vacio")
+      return
+    }
     const limpio = color.trim().toUpperCase()
     if (!limpio) {
       toast.error("Escribe el color del renglon")
@@ -246,7 +252,10 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       return
     }
     const supabase = getSupabase()
-    if (!supabase) return
+    if (!supabase) {
+      toast.error("[diag] se corta: no hay cliente de Supabase")
+      return
+    }
 
     const { error } = await supabase.from("ficha_tallas").insert({
       idempresa: IDEMPRESA,
@@ -264,6 +273,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       toast.error("No se pudo agregar el renglón", { description: error.message })
       return
     }
+    toast.success("[diag] insertado, recargando…")
     await cargar()
   }
 
@@ -321,9 +331,16 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   // ── Materiales ────────────────────────────────────────────────────────────
 
   async function agregarMaterial(tipo: TipoMaterialFicha) {
-    if (!folio) return
+    toast.info(`[diag] clic en linea · folio=${folio ?? "NULO"} · tipo=${tipo}`)
+    if (!folio) {
+      toast.error("[diag] se corta: el folio llego vacio")
+      return
+    }
     const supabase = getSupabase()
-    if (!supabase) return
+    if (!supabase) {
+      toast.error("[diag] se corta: no hay cliente de Supabase")
+      return
+    }
     const { error } = await supabase.from("ficha_materiales").insert({
       idempresa: IDEMPRESA,
       folio,
