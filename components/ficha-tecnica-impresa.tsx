@@ -78,7 +78,13 @@ export function FichaTecnicaImpresa({
     (s, m) => s + Number(m.cantidad || 0) * Number(m.costo || 0), 0)
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 print:static print:overflow-visible print:bg-transparent print:p-0">
+    /*
+      z-[70]: encima de la ficha (60) y del Sheet de etapas (50). Los
+      paneles de Radix se montan en un portal al final del <body>, así que
+      con el mismo z-index ganarían por orden en el DOM y taparían esta
+      hoja.
+    */
+    <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/40 p-4 print:static print:overflow-visible print:bg-transparent print:p-0">
       <div className="mx-auto w-full max-w-5xl rounded-xl border border-border bg-white shadow-xl print:max-w-none print:rounded-none print:border-0 print:shadow-none">
         {/* Barra de acciones: no sale en el papel */}
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3 print:hidden">

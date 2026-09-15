@@ -387,7 +387,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    /*
+      z-[60], por encima del z-50 del Sheet de etapas. El Sheet de Radix se
+      monta en un portal al final del <body>, asi que con el mismo z-index
+      GANA por orden en el DOM y su overlay se traga los clics de la ficha:
+      los botones "+ Color" y "+ Linea" no respondian.
+    */
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[94vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card shadow-xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
           <div>
