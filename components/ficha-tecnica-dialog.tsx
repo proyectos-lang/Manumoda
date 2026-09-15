@@ -227,18 +227,32 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
 
   // ── Tallas ────────────────────────────────────────────────────────────────
 
-  async function agregarTalla(bloque: "Especificacion" | "Cortadas") {
+  /**
+   * El color se captura en la propia tabla, no con window.prompt: el
+   * prompt del navegador queda bloqueado cuando la ficha se abre sobre
+   * otro panel modal, y el boton parecia no hacer nada.
+   */
+  async function agregarTalla(bloque: "Especificacion" | "Cortadas", color: string) {
     if (!folio) return
+    const limpio = color.trim().toUpperCase()
+    if (!limpio) {
+      toast.error("Escribe el color del renglon")
+      return
+    }
+    // La clave unica es (folio, bloque, color): avisar antes es mas claro
+    // que dejar que la base rechace con un error tecnico.
+    if (tallas.some((t) => t.bloque === bloque && t.color.toUpperCase() === limpio)) {
+      toast.error(`Ya hay un renglon para ${limpio} en este bloque`)
+      return
+    }
     const supabase = getSupabase()
     if (!supabase) return
-    const color = window.prompt("Color del renglón:")?.trim()
-    if (!color) return
 
     const { error } = await supabase.from("ficha_tallas").insert({
       idempresa: IDEMPRESA,
       folio,
       bloque,
-      color,
+      color: limpio,
       orden: tallas.filter((t) => t.bloque === bloque).length + 1,
       cantidades: Object.fromEntries(columnasTalla.map((c) => [c, 0])),
       // La proporción se hereda del primer renglón del bloque: es del
@@ -323,6 +337,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       toast.error("No se pudo agregar la línea", { description: error.message })
       return
     }
+    // La línea nace vacía; sin aviso, agregarla se siente como que no pasó
+    // nada hasta que uno mira el final de la tabla.
+    toast.success("Línea agregada — captura clave, descripción y costo")
     await cargar()
   }
 
@@ -372,7 +389,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[94vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card shadow-xl">
-        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
           <div>
             <h2 className="text-lg font-semibold">Ficha técnica · folio {folio}</h2>
             <p className="text-xs text-muted-foreground">
@@ -410,7 +427,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
             No se encontró el folio.
           </div>
         ) : (
-          <div className="overflow-y-auto p-5">
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
             <div className="space-y-6">
               {/* ── Datos generales + foto ── */}
               <section className="grid gap-5 md:grid-cols-[220px_1fr]">
@@ -494,7 +511,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 filas={espec}
                 columnas={columnasTalla}
                 readOnly={readOnly}
-                onAgregar={() => agregarTalla("Especificacion")}
+                onAgregar={(color) => agregarTalla("Especificacion", color)}
                 onCambiar={guardarTalla}
                 onCambiarProporcion={(talla, v) =>
                   guardarProporcion("Especificacion", talla, v)
@@ -507,7 +524,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 filas={cortadas}
                 columnas={columnasTalla}
                 readOnly={readOnly}
-                onAgregar={() => agregarTalla("Cortadas")}
+                onAgregar={(color) => agregarTalla("Cortadas", color)}
                 onCambiar={guardarTalla}
                 onCambiarProporcion={(talla, v) =>
                   guardarProporcion("Cortadas", talla, v)
@@ -640,24 +657,53 @@ function CuadroTallas({
   filas: FichaTalla[]
   columnas: string[]
   readOnly: boolean
-  onAgregar: () => void
+  onAgregar: (color: string) => void
   onCambiar: (fila: FichaTalla, talla: string, valor: number) => void
   onCambiarProporcion: (talla: string, valor: number) => void
   onBorrar: (id: number) => void
 }) {
+  const [nuevoColor, setNuevoColor] = useState("")
   const total = filas.reduce(
     (s, f) => s + Object.values(f.cantidades ?? {}).reduce((a, b) => a + Number(b || 0), 0),
     0,
   )
   return (
     <section>
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{titulo}</h3>
-        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs"
-          disabled={readOnly} onClick={onAgregar}>
-          <Plus className="size-3" />
-          Color
-        </Button>
+        {/*
+          El color se teclea aqui mismo. Antes lo pedia window.prompt, que
+          el navegador bloquea cuando la ficha se abre sobre otro panel
+          modal: el boton parecia no hacer nada.
+        */}
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={nuevoColor}
+            onChange={(e) => setNuevoColor(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && nuevoColor.trim()) {
+                onAgregar(nuevoColor)
+                setNuevoColor("")
+              }
+            }}
+            placeholder="Color…"
+            disabled={readOnly}
+            className="h-7 w-36 text-xs"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 text-xs"
+            disabled={readOnly || !nuevoColor.trim()}
+            onClick={() => {
+              onAgregar(nuevoColor)
+              setNuevoColor("")
+            }}
+          >
+            <Plus className="size-3" />
+            Color
+          </Button>
+        </div>
       </div>
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">

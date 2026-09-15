@@ -180,6 +180,7 @@ export function EtapasOrdenSheet({
   }
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
@@ -329,7 +330,14 @@ export function EtapasOrdenSheet({
           </div>
         )}
       </SheetContent>
+    </Sheet>
 
+      {/*
+        FUERA del <Sheet> a proposito. Radix hace modal el Sheet y atrapa el
+        foco dentro de el: montada adentro, la ficha recibia los clics pero
+        no podia abrir nada encima, y sus botones "+ Color" y "+ Linea" no
+        respondian.
+      */}
       <FichaTecnicaDialog
         folio={folio}
         open={fichaOpen}
@@ -339,7 +347,7 @@ export function EtapasOrdenSheet({
           onSaved?.()
         }}
       />
-    </Sheet>
+    </>
   )
 }
 
