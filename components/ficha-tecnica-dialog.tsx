@@ -124,13 +124,24 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     // bloque (se lee del primer renglon); la de color, de cada renglon.
     const espec = filasTalla.filter((x) => x.bloque === "Especificacion")
     const colores: Record<string, number> = {}
-    for (const x of espec) colores[x.color] = Number(x.proporcion ?? 1)
+    for (const x of espec) colores[x.color] = Number(x.proporcion ?? 0)
+    // Si lo guardado no venia en porcentaje (fichas capturadas antes del
+    // cambio, o con la proporcion vacia), se normaliza a 100 para que la
+    // pantalla arranque cuadrada en vez de con un aviso falso.
+    const sumaC = Object.values(colores).reduce((a, b) => a + b, 0)
+    if (espec.length > 0 && Math.abs(sumaC - 100) > 0.05) {
+      const parejo = 100 / espec.length
+      for (const k of Object.keys(colores)) {
+        colores[k] = Math.round(parejo * 100) / 100
+      }
+    }
     setProporciones({
       total:
         (f.data as VwFichaTecnica | null)?.piezas_ficha ??
         (f.data as VwFichaTecnica | null)?.piezas_orden ??
         null,
       tallas: (espec[0]?.proporciones as Record<string, number>) ?? {},
+      // la proporcion de talla ya se guarda en porcentaje desde el 064
       colores,
     })
 

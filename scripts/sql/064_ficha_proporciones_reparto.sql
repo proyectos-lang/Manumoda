@@ -113,14 +113,13 @@ COMMENT ON COLUMN manumoda.ordenes_produccion.piezas_ficha IS
 -- ════════════════════════════════════════════════════════════════════════════
 
 COMMENT ON COLUMN manumoda.ficha_tallas.proporcion IS
-  'Proporción de ESTE color sobre el total del pedido. Con dos colores 2 y '
-  '1, el primero se lleva dos tercios. Es relativa, no un porcentaje: no '
-  'tiene que sumar 100.';
+  'PORCENTAJE de este color sobre el total del pedido: 60 = 60%. Los '
+  'colores de un bloque deben sumar 100.';
 
 COMMENT ON COLUMN manumoda.ficha_tallas.proporciones IS
-  'Proporción por TALLA, del tendido: {"S":1,"M":2,"L":2}. Es la misma para '
-  'todos los colores del bloque, por eso se lee del primer renglón. '
-  'Relativa, no porcentaje.';
+  'PORCENTAJE por talla, del tendido: {"S":25,"M":50,"L":25}. Es el mismo '
+  'para todos los colores del bloque, por eso se lee del primer renglón. '
+  'Debe sumar 100.';
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- 4. vw_ficha_reparto — lo calculado junto a lo capturado

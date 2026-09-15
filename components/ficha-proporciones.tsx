@@ -14,12 +14,14 @@ import { TALLAS_ESTANDAR } from "@/lib/types"
  * EL MODELO:
  *   Se capturan tres cosas y las unidades de cada celda se derivan:
  *
- *     piezas(color, talla) = total
- *                          × prop_color / suma(prop_color)
- *                          × prop_talla / suma(prop_talla)
+ *     piezas(color, talla) = total × %color × %talla
+ *
+ *   Los dos son PORCENTAJES y cada juego debe sumar 100. La pantalla
+ *   avisa cuando no lo hace, pero no lo impide: a media captura es
+ *   normal que todavía no cierre, y bloquearlo estorbaría.
  *
  *   Verificado contra dos fichas reales: el modelo 696 (600 piezas,
- *   proporción de talla 1-2-2-1) da 100/200/200/100 exacto.
+ *   tallas 16.67/33.33/33.33/16.67) da 100/200/200/100 exacto.
  *
  * EL CÁLCULO LLENA, NO PISA:
  *   Aplicar el reparto escribe las cantidades, pero después se pueden
@@ -31,27 +33,39 @@ import { TALLAS_ESTANDAR } from "@/lib/types"
 export type ProporcionesState = {
   /** Piezas totales del pedido, la base del reparto. */
   total: number | null
-  /** Proporción por talla: {"S":1,"M":2,"L":2}. Relativa, no porcentaje. */
+  /** Porcentaje por talla: {"S":25,"M":50,"L":25}. Debe sumar 100. */
   tallas: Record<string, number>
-  /** Proporción por color: {"BLANCO":2,"NEGRO":1}. Relativa. */
+  /** Porcentaje por color: {"BLANCO":60,"NEGRO":40}. Debe sumar 100. */
   colores: Record<string, number>
 }
 
 /** El reparto que resulta de las tres cosas capturadas. */
 export function calcularReparto(p: ProporcionesState): Record<string, Record<string, number>> {
   const total = p.total ?? 0
-  const sumaT = Object.values(p.tallas).reduce((a, b) => a + (Number(b) || 0), 0)
-  const sumaC = Object.values(p.colores).reduce((a, b) => a + (Number(b) || 0), 0)
   const out: Record<string, Record<string, number>> = {}
-  if (total <= 0 || sumaT <= 0 || sumaC <= 0) return out
+  if (total <= 0) return out
 
   for (const [color, pc] of Object.entries(p.colores)) {
-    const delColor = (total * (Number(pc) || 0)) / sumaC
+    const delColor = (total * (Number(pc) || 0)) / 100
     out[color] = {}
     for (const [talla, pt] of Object.entries(p.tallas)) {
-      out[color][talla] = Math.round((delColor * (Number(pt) || 0)) / sumaT)
+      out[color][talla] = Math.round((delColor * (Number(pt) || 0)) / 100)
     }
   }
+  return out
+}
+
+/** Reparte 100% en partes iguales, cuadrando el último para que sume exacto. */
+export function repartirParejo(claves: string[]): Record<string, number> {
+  const n = claves.length
+  if (n === 0) return {}
+  // Dos decimales, y el último absorbe el residuo: 3 tallas dan
+  // 33.33 + 33.33 + 33.34 = 100 exacto.
+  const base = Math.floor((10000 / n)) / 100
+  const out: Record<string, number> = {}
+  claves.forEach((c, i) => {
+    out[c] = i === n - 1 ? Math.round((100 - base * (n - 1)) * 100) / 100 : base
+  })
   return out
 }
 
@@ -88,14 +102,14 @@ export function FichaProporciones({
   }
   function quitarTalla(t: string) {
     const { [t]: _, ...resto } = valor.tallas
-    onChange({ ...valor, tallas: resto })
+    onChange({ ...valor, tallas: repartirParejo(Object.keys(resto)) })
   }
   function setColor(c: string, v: number) {
     onChange({ ...valor, colores: { ...valor.colores, [c]: v } })
   }
   function quitarColor(c: string) {
     const { [c]: _, ...resto } = valor.colores
-    onChange({ ...valor, colores: resto })
+    onChange({ ...valor, colores: repartirParejo(Object.keys(resto)) })
   }
 
   function agregarColor() {
@@ -105,7 +119,12 @@ export function FichaProporciones({
       toast.error(`${c} ya está en la lista`)
       return
     }
-    onChange({ ...valor, colores: { ...valor.colores, [c]: 1 } })
+    // Se reparte 100% entre todos los colores: asi la suma cierra sola
+    // y quien captura solo ajusta si quiere otra distribucion.
+    onChange({
+      ...valor,
+      colores: repartirParejo([...Object.keys(valor.colores), c]),
+    })
     setNuevoColor("")
   }
 
@@ -116,7 +135,10 @@ export function FichaProporciones({
       toast.error(`La talla ${clave} ya está`)
       return
     }
-    onChange({ ...valor, tallas: { ...valor.tallas, [clave]: 1 } })
+    onChange({
+      ...valor,
+      tallas: repartirParejo([...Object.keys(valor.tallas), clave]),
+    })
     setNuevaTalla("")
   }
 
@@ -125,8 +147,8 @@ export function FichaProporciones({
       <div className="mb-3">
         <h3 className="text-sm font-semibold">Proporciones del pedido</h3>
         <p className="text-xs text-muted-foreground">
-          Las unidades de cada talla y color salen de aquí: total × proporción de
-          color × proporción de talla.
+          Las unidades de cada celda salen de aquí: piezas totales × % del color
+          × % de la talla. Cada juego de porcentajes debe sumar 100.
         </p>
       </div>
 
@@ -156,11 +178,26 @@ export function FichaProporciones({
       <div className="grid gap-4 lg:grid-cols-2">
         {/* ── Proporción por talla ── */}
         <div className="rounded-lg border border-border bg-card p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs font-semibold">Proporción por talla</p>
-            <span className="text-[11px] text-muted-foreground">
-              suma {sumaT || "—"}
-            </span>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold">Porcentaje por talla</p>
+            <div className="flex items-center gap-2">
+              {tallasUsadas.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={readOnly}
+                  className="h-6 px-2 text-[11px]"
+                  title="Repartir 100% en partes iguales"
+                  onClick={() =>
+                    onChange({ ...valor, tallas: repartirParejo(tallasUsadas) })
+                  }
+                >
+                  Parejo
+                </Button>
+              )}
+              <SumaBadge suma={sumaT} vacia={tallasUsadas.length === 0} />
+            </div>
           </div>
 
           {/* Las siete estándar, para marcarlas de un clic */}
@@ -185,7 +222,8 @@ export function FichaProporciones({
 
           {tallasUsadas.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Elige las tallas que usa este folio.
+              Elige las tallas que usa este folio. Al agregarlas se reparte
+              100% en partes iguales.
             </p>
           ) : (
             <div className="space-y-1.5">
@@ -201,11 +239,7 @@ export function FichaProporciones({
                     onChange={(e) => setTalla(t, Number(e.target.value) || 0)}
                     className="h-7 w-24 text-right text-xs tabular-nums"
                   />
-                  <span className="text-[11px] text-muted-foreground">
-                    {sumaT > 0
-                      ? `${Math.round((100 * valor.tallas[t]) / sumaT)}%`
-                      : ""}
-                  </span>
+                  <span className="text-[11px] text-muted-foreground">%</span>
                   <Button
                     type="button"
                     size="sm"
@@ -248,17 +282,31 @@ export function FichaProporciones({
 
         {/* ── Proporción por color ── */}
         <div className="rounded-lg border border-border bg-card p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs font-semibold">Proporción por color</p>
-            <span className="text-[11px] text-muted-foreground">
-              suma {sumaC || "—"}
-            </span>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold">Porcentaje por color</p>
+            <div className="flex items-center gap-2">
+              {coloresUsados.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={readOnly}
+                  className="h-6 px-2 text-[11px]"
+                  title="Repartir 100% en partes iguales"
+                  onClick={() =>
+                    onChange({ ...valor, colores: repartirParejo(coloresUsados) })
+                  }
+                >
+                  Parejo
+                </Button>
+              )}
+              <SumaBadge suma={sumaC} vacia={coloresUsados.length === 0} />
+            </div>
           </div>
 
           {coloresUsados.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Agrega los colores del pedido. Con un solo color, la proporción no
-              importa: se lleva todo.
+              Agrega los colores del pedido. Con uno solo se lleva el 100%.
             </p>
           ) : (
             <div className="space-y-1.5">
@@ -276,9 +324,9 @@ export function FichaProporciones({
                     onChange={(e) => setColor(c, Number(e.target.value) || 0)}
                     className="h-7 w-24 text-right text-xs tabular-nums"
                   />
-                  <span className="w-20 text-right text-[11px] text-muted-foreground">
-                    {sumaC > 0 && valor.total
-                      ? `${Math.round((valor.total * valor.colores[c]) / sumaC)} pz`
+                  <span className="w-24 text-right text-[11px] text-muted-foreground">
+                    %{valor.total
+                      ? ` · ${Math.round((valor.total * valor.colores[c]) / 100)} pz`
                       : ""}
                   </span>
                   <Button
@@ -402,5 +450,28 @@ export function FichaProporciones({
         </div>
       )}
     </section>
+  )
+}
+
+/**
+ * Cuánto suman los porcentajes. Avisa cuando no cierran en 100, pero no
+ * bloquea: a media captura es normal que todavía no cuadre.
+ */
+function SumaBadge({ suma, vacia }: { suma: number; vacia: boolean }) {
+  if (vacia) return <span className="text-[11px] text-muted-foreground">—</span>
+  // Tolerancia por el redondeo a dos decimales (33.33 × 3 = 99.99).
+  const cierra = Math.abs(suma - 100) < 0.05
+  return (
+    <span
+      className={cn(
+        "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
+        cierra
+          ? "bg-emerald-50 text-emerald-700"
+          : "bg-amber-50 text-amber-700",
+      )}
+      title={cierra ? "Los porcentajes cierran en 100%" : "Deberían sumar 100%"}
+    >
+      {Math.round(suma * 100) / 100}%
+    </span>
   )
 }
