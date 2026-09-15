@@ -44,6 +44,14 @@ const TALLAS_DEFAULT = ["CH", "M", "G", "XG"]
 
 const BUCKET_FOTOS = "fichas"
 
+/** El costo fijo de la empresa. Editable, pero este es el de partida. */
+const COSTO_FIJO_DEFAULT = 9.5
+
+/** Importe corto para las explicaciones de la franja de costeo. */
+function fmt(v: number | null | undefined): string {
+  return v == null ? "$0.00" : `$${Number(v).toFixed(2)}`
+}
+
 type Props = {
   folio: string | null
   open: boolean
@@ -122,7 +130,14 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       return
     }
     const filasTalla = (t.data as FichaTalla[]) ?? []
-    setFicha((f.data as VwFichaTecnica) ?? null)
+    // 9.50 por omisión: es el costo fijo de la empresa y venía en blanco
+    // en las fichas anteriores al script 066.
+    const datos = f.data as VwFichaTecnica | null
+    setFicha(
+      datos
+        ? { ...datos, costo_fijo: datos.costo_fijo ?? COSTO_FIJO_DEFAULT }
+        : null,
+    )
     setTallas(filasTalla)
     setMateriales((m.data as FichaMaterial[]) ?? [])
 
@@ -774,10 +789,27 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     />
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Costo Neto y Margen se calculan solos: Costo Neto = fijo + maquila +
-                  lavandería + tela + habilitación.
-                </p>
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <p>
+                    <span className="font-medium">Costo Neto</span> y{" "}
+                    <span className="font-medium">Margen</span> se calculan solos; los
+                    demás se capturan aquí y quedan informativos.
+                  </p>
+                  <p className="tabular-nums">
+                    Costo Neto = costo fijo {fmt(ficha.costo_fijo)} + tela{" "}
+                    {fmt(ficha.costo_tela)} + habilitación {fmt(ficha.costo_habilitacion)}{" "}
+                    = <span className="font-semibold">{fmt(ficha.costo_neto)}</span>
+                  </p>
+                  {ficha.margen_pct != null && (
+                    <p className="tabular-nums">
+                      Margen = (venta {fmt(ficha.precio_venta)} − neto{" "}
+                      {fmt(ficha.costo_neto)}) ÷ venta ={" "}
+                      <span className="font-semibold">
+                        {Number(ficha.margen_pct).toFixed(2)}%
+                      </span>
+                    </p>
+                  )}
+                </div>
               </section>
 
               {/* ── Materiales ── */}
