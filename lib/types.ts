@@ -836,3 +836,36 @@ export type VwFichaTecnica = {
   /** Derivado sobre precio de venta. Null si no hay precio. */
   margen_pct: number | null
 }
+
+/** Cómo está un folio respecto de una etapa, según su etapa anterior. */
+export type SituacionEtapa =
+  | "Lista"
+  | "En proceso"
+  | "Bloqueada"
+  | "Completada"
+  | "No aplica"
+
+/** Fila de `vw_etapas_cola`: qué puede trabajar cada etapa hoy. */
+export type VwEtapaCola = {
+  idempresa: number
+  folio: string
+  modelo: string | null
+  cliente: string | null
+  piezas: number | null
+  numero: number
+  clave: string
+  etapa: string
+  gestion_externa: boolean
+  modulo: string | null
+  estado: EstadoEtapa
+  responsable: string | null
+  notas: string | null
+  fecha_pedido: string | null
+  fecha_cancelacion: string | null
+  /** Días desde que se pidió, no desde que la etapa quedó lista. */
+  dias_espera: number | null
+  etapa_previa_numero: number | null
+  etapa_previa: string | null
+  etapa_previa_estado: EstadoEtapa | null
+  situacion: SituacionEtapa
+}

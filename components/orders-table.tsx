@@ -25,6 +25,7 @@ import { ScheduleDesignSheet } from "@/components/schedule-design-sheet"
 import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import { AvanceEtapas, EtapasOrdenSheet } from "@/components/etapas-orden-sheet"
 import { EtapasTablero } from "@/components/etapas-tablero"
+import { EtapasCola } from "@/components/etapas-cola"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { RiskBadge } from "@/components/risk-badge"
@@ -382,6 +383,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
         <TabsList>
           <TabsTrigger value="ordenes">Órdenes</TabsTrigger>
           <TabsTrigger value="etapas">Etapas por folio</TabsTrigger>
+          <TabsTrigger value="cola">Folios por etapa</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ordenes" className="mt-4 space-y-4">
@@ -750,6 +752,15 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
         */}
         <TabsContent value="etapas" className="mt-4">
           <EtapasTablero configMissing={configMissing} />
+        </TabsContent>
+
+        {/*
+          La vista inversa del tablero: en vez de «en que punto va este
+          folio», responde «que le toca a esta etapa». Es para repartir
+          trabajo, no para seguir una orden.
+        */}
+        <TabsContent value="cola" className="mt-4">
+          <EtapasCola configMissing={configMissing} />
         </TabsContent>
       </Tabs>
 
