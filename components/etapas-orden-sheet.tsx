@@ -100,8 +100,17 @@ export function EtapasOrdenSheet({
   const [loading, setLoading] = useState(false)
   const [guardando, setGuardando] = useState<number | null>(null)
   const [abierta, setAbierta] = useState<number | null>(null)
-  /** La etapa 1 se captura en la ficha técnica, no en el formulario genérico. */
+  /**
+   * La etapa 1 se captura en la ficha técnica, no en el formulario genérico.
+   *
+   * Se guarda el folio APARTE en vez de leer el prop: la ficha se dibuja
+   * encima del Sheet pero fuera de él, así que un clic dentro de la ficha
+   * cuenta como clic "fuera" del Sheet y lo cierra. Al cerrarse, quien lo
+   * abrió pone su folio en null y la ficha se quedaba sin folio a media
+   * captura: los botones salían con "el folio llegó vacío".
+   */
   const [fichaOpen, setFichaOpen] = useState(false)
+  const [fichaFolio, setFichaFolio] = useState<string | null>(null)
   const readOnly = useReadOnly()
   const { user } = useAuth()
 
@@ -182,7 +191,24 @@ export function EtapasOrdenSheet({
   return (
     <>
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent
+        className="w-full overflow-y-auto sm:max-w-xl"
+        /*
+          Con la ficha abierta, los clics dentro de ella cuentan como clics
+          "fuera" del Sheet —se dibuja encima pero fuera de su árbol— y lo
+          cerrarían a media captura. Mientras la ficha esté abierta, el
+          Sheet ignora esos eventos.
+        */
+        onPointerDownOutside={(e) => {
+          if (fichaOpen) e.preventDefault()
+        }}
+        onInteractOutside={(e) => {
+          if (fichaOpen) e.preventDefault()
+        }}
+        onEscapeKeyDown={(e) => {
+          if (fichaOpen) e.preventDefault()
+        }}
+      >
         <SheetHeader>
           <SheetTitle>Etapas del folio {folio}</SheetTitle>
           <SheetDescription>
@@ -293,7 +319,10 @@ export function EtapasOrdenSheet({
                             size="sm"
                             variant="outline"
                             disabled={readOnly}
-                            onClick={() => setFichaOpen(true)}
+                            onClick={() => {
+                              setFichaFolio(folio)
+                              setFichaOpen(true)
+                            }}
                           >
                             Abrir ficha técnica
                           </Button>
@@ -339,9 +368,12 @@ export function EtapasOrdenSheet({
         respondian.
       */}
       <FichaTecnicaDialog
-        folio={folio}
+        folio={fichaFolio}
         open={fichaOpen}
-        onOpenChange={setFichaOpen}
+        onOpenChange={(o) => {
+          setFichaOpen(o)
+          if (!o) setFichaFolio(null)
+        }}
         onSaved={() => {
           void cargar()
           onSaved?.()
