@@ -16,6 +16,10 @@ import type {
   VwFichaTecnica,
 } from "@/lib/types"
 import { FichaTecnicaImpresa } from "@/components/ficha-tecnica-impresa"
+import {
+  FichaProporciones,
+  type ProporcionesState,
+} from "@/components/ficha-proporciones"
 
 /**
  * La ficha técnica de la etapa 1 (Pre orden).
@@ -54,15 +58,27 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   const [subiendo, setSubiendo] = useState(false)
   const [fotoUrl, setFotoUrl] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  /**
+   * Las proporciones del pedido. Se reconstruyen de lo guardado al cargar:
+   * la de talla vive en el primer renglon del bloque `proporciones`, la de
+   * color en `proporcion` de cada renglon.
+   */
+  const [proporciones, setProporciones] = useState<ProporcionesState>({
+    total: null,
+    tallas: {},
+    colores: {},
+  })
   const readOnly = useReadOnly()
   const { user } = useAuth()
 
   /** Los encabezados de talla salen de lo capturado; si no hay, los default. */
   const columnasTalla = useMemo(() => {
     const vistas = new Set<string>()
+    // Primero las de la proporcion: son las que definio quien captura.
+    for (const t of Object.keys(proporciones.tallas)) vistas.add(t)
     for (const t of tallas) for (const k of Object.keys(t.cantidades ?? {})) vistas.add(k)
     return vistas.size > 0 ? [...vistas] : TALLAS_DEFAULT
-  }, [tallas])
+  }, [tallas, proporciones])
 
   const cargar = useCallback(async () => {
     if (!folio) return
@@ -99,9 +115,24 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       toast.error("No se pudo cargar la ficha", { description: f.error.message })
       return
     }
+    const filasTalla = (t.data as FichaTalla[]) ?? []
     setFicha((f.data as VwFichaTecnica) ?? null)
-    setTallas((t.data as FichaTalla[]) ?? [])
+    setTallas(filasTalla)
     setMateriales((m.data as FichaMaterial[]) ?? [])
+
+    // Reconstruir las proporciones de lo guardado. La de talla es del
+    // bloque (se lee del primer renglon); la de color, de cada renglon.
+    const espec = filasTalla.filter((x) => x.bloque === "Especificacion")
+    const colores: Record<string, number> = {}
+    for (const x of espec) colores[x.color] = Number(x.proporcion ?? 1)
+    setProporciones({
+      total:
+        (f.data as VwFichaTecnica | null)?.piezas_ficha ??
+        (f.data as VwFichaTecnica | null)?.piezas_orden ??
+        null,
+      tallas: (espec[0]?.proporciones as Record<string, number>) ?? {},
+      colores,
+    })
 
     // La foto se guarda como ruta, no como URL: si el bucket cambia de
     // política, la ruta sigue sirviendo y solo cambia cómo se resuelve.
@@ -142,6 +173,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         precio_venta: ficha.precio_venta,
         precio_publico: ficha.precio_publico,
         fecha_confirmacion: ficha.fecha_confirmacion,
+        piezas_ficha: proporciones.total,
       })
       .eq("idempresa", IDEMPRESA)
       .eq("folio", folio)
@@ -222,6 +254,54 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       return
     }
     toast.success("Foto actualizada")
+    await cargar()
+  }
+
+  /**
+   * Escribe el reparto calculado en el cuadro de Especificacion: da de alta
+   * los colores que falten y actualiza cantidades y proporciones.
+   *
+   * Solo toca ese bloque. "Piezas cortadas" es lo que REALMENTE salio del
+   * corte y no se deduce de un plan.
+   */
+  async function aplicarReparto(reparto: Record<string, Record<string, number>>) {
+    if (!folio) return
+    const supabase = getSupabase()
+    if (!supabase) return
+
+    const sumaC = Object.values(proporciones.colores).reduce(
+      (a, b) => a + (Number(b) || 0), 0)
+    const existentes = new Map(
+      tallas.filter((t) => t.bloque === "Especificacion").map((t) => [t.color, t]),
+    )
+
+    let orden = 0
+    for (const [color, fila] of Object.entries(reparto)) {
+      orden++
+      const comun = {
+        cantidades: fila,
+        proporciones: proporciones.tallas,
+        proporcion: sumaC > 0 ? proporciones.colores[color] ?? 1 : null,
+      }
+      const previo = existentes.get(color)
+      const { error } = previo
+        ? await supabase.from("ficha_tallas").update(comun).eq("id", previo.id)
+        : await supabase.from("ficha_tallas").insert({
+            idempresa: IDEMPRESA,
+            folio,
+            bloque: "Especificacion",
+            color,
+            orden,
+            ...comun,
+          })
+      if (error) {
+        toast.error(`No se pudo aplicar el reparto a ${color}`, {
+          description: error.message,
+        })
+        return
+      }
+    }
+    toast.success("Reparto aplicado — ya puedes ajustar tallas a mano")
     await cargar()
   }
 
@@ -526,6 +606,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               </section>
 
               {/* ── Tallas ── */}
+              <FichaProporciones
+                valor={proporciones}
+                onChange={setProporciones}
+                onAplicar={aplicarReparto}
+                readOnly={readOnly}
+              />
+
               <CuadroTallas
                 titulo="Especificación de Talla"
                 filas={espec}

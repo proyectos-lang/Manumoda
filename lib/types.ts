@@ -821,6 +821,8 @@ export type VwFichaTecnica = {
   fecha_cancelacion: string | null
   /** Las piezas del Excel. Puede no coincidir con las capturadas en la ficha. */
   piezas_orden: number | null
+  /** Piezas totales capturadas en la ficha: la base del reparto. */
+  piezas_ficha: number | null
   piezas_totales: number
   piezas_cortadas_ficha: number
   piezas_cortadas: number | null
@@ -869,3 +871,16 @@ export type VwEtapaCola = {
   etapa_previa_estado: EstadoEtapa | null
   situacion: SituacionEtapa
 }
+
+/** Una talla del catálogo. El orden es el del cuerpo, no el alfabético. */
+export type CatTalla = {
+  id: number
+  idempresa: number
+  clave: string
+  orden: number
+  activo: boolean
+  created_at: string
+}
+
+/** Las siete tallas estándar, en el orden en que se leen. */
+export const TALLAS_ESTANDAR = ["XXS", "XS", "S", "M", "L", "XL", "XXL"]
