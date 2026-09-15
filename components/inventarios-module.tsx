@@ -369,10 +369,17 @@ function ArticulosTab({
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border">
+      {/*
+        Alto fijo con scroll y encabezado pegajoso: con 1,683 articulos
+        cargados la tabla crecia hasta empujar el pie de pagina fuera de
+        la vista. `overflow-auto` en el hijo y no en el padre para que el
+        sticky del encabezado tenga contra que pegarse.
+      */}
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="max-h-[65vh] overflow-auto">
         <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50 hover:bg-muted/50">
+          <TableHeader className="sticky top-0 z-10">
+            <TableRow className="bg-muted hover:bg-muted">
               <TableHead className="font-semibold">Clave</TableHead>
               <TableHead className="font-semibold">Nombre</TableHead>
               <TableHead className="font-semibold">
@@ -495,6 +502,7 @@ function ArticulosTab({
             </TableFooter>
           )}
         </Table>
+      </div>
       </div>
 
       {(creando || editando) && (
@@ -2158,10 +2166,17 @@ function SaldosTab({
         </Button>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border">
+      {/*
+        Alto fijo con scroll y encabezado pegajoso: con 1,683 articulos
+        cargados la tabla crecia hasta empujar el pie de pagina fuera de
+        la vista. `overflow-auto` en el hijo y no en el padre para que el
+        sticky del encabezado tenga contra que pegarse.
+      */}
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="max-h-[65vh] overflow-auto">
         <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50 hover:bg-muted/50">
+          <TableHeader className="sticky top-0 z-10">
+            <TableRow className="bg-muted hover:bg-muted">
               <TableHead className="font-semibold">Tipo</TableHead>
               <TableHead className="font-semibold">Clave</TableHead>
               <TableHead className="font-semibold">Artículo</TableHead>
@@ -2253,6 +2268,7 @@ function SaldosTab({
             </TableFooter>
           )}
         </Table>
+      </div>
       </div>
 
       <p className="text-[11px] text-muted-foreground">
