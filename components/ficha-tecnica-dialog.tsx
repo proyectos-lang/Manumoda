@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Loader2, Plus, Printer, Trash2, Upload } from "lucide-react"
+import { ArrowLeft, Copy, Loader2, Plus, Printer, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -55,8 +55,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   const [ficha, setFicha] = useState<VwFichaTecnica | null>(null)
   const [tallas, setTallas] = useState<FichaTalla[]>([])
   const [materiales, setMateriales] = useState<FichaMaterial[]>([])
-  /** El catálogo de telas de Inventarios, para el buscador por clave. */
+  /** Los catálogos de Inventarios, para los buscadores por clave. */
   const [catalogoTelas, setCatalogoTelas] = useState<VwInventarioArticulo[]>([])
+  const [catalogoHab, setCatalogoHab] = useState<VwInventarioArticulo[]>([])
   const [loading, setLoading] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
@@ -174,16 +175,28 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     const supabase = getSupabase()
     if (!supabase) return
     void (async () => {
-      const { data } = await fetchAll<VwInventarioArticulo>(() =>
-        supabase
-          .from("vw_inventario_articulos")
-          .select("*")
-          .eq("idempresa", IDEMPRESA)
-          .eq("tipo", "Tela")
-          .eq("activo", true)
-          .order("clave"),
-      )
-      setCatalogoTelas(data)
+      const [tel, hab] = await Promise.all([
+        fetchAll<VwInventarioArticulo>(() =>
+          supabase
+            .from("vw_inventario_articulos")
+            .select("*")
+            .eq("idempresa", IDEMPRESA)
+            .eq("tipo", "Tela")
+            .eq("activo", true)
+            .order("clave"),
+        ),
+        fetchAll<VwInventarioArticulo>(() =>
+          supabase
+            .from("vw_inventario_articulos")
+            .select("*")
+            .eq("idempresa", IDEMPRESA)
+            .eq("tipo", "Habilitación")
+            .eq("activo", true)
+            .order("clave"),
+        ),
+      ])
+      setCatalogoTelas(tel.data)
+      setCatalogoHab(hab.data)
     })()
   }, [open, catalogoTelas.length])
 
@@ -340,6 +353,58 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       }
     }
     toast.success("Reparto aplicado — ya puedes ajustar tallas a mano")
+    await cargar()
+  }
+
+  /**
+   * Copia la estructura del plan al cuadro de resultado de corte: los
+   * mismos colores y tallas, pero EN CEROS.
+   *
+   * En ceros a proposito: lo que salio del corte es un hecho que se mide,
+   * no algo que se deduzca del plan. Precargarlo con las cantidades
+   * planeadas haria que un corte sin capturar pareciera cumplido.
+   */
+  async function replicarPlanEnCorte() {
+    if (!folio) return
+    const supabase = getSupabase()
+    if (!supabase) return
+
+    const plan = tallas.filter((t) => t.bloque === "Especificacion")
+    if (plan.length === 0) {
+      toast.error("Primero aplica el reparto: de ahi sale la estructura")
+      return
+    }
+    const yaEsta = new Set(
+      tallas.filter((t) => t.bloque === "Cortadas").map((t) => t.color),
+    )
+    const nuevos = plan.filter((p) => !yaEsta.has(p.color))
+    if (nuevos.length === 0) {
+      toast.info("El resultado de corte ya tiene todos los colores del plan")
+      return
+    }
+
+    const { error } = await supabase.from("ficha_tallas").insert(
+      nuevos.map((p, i) => ({
+        idempresa: IDEMPRESA,
+        folio,
+        bloque: "Cortadas",
+        color: p.color,
+        orden: i + 1,
+        // Las mismas tallas del plan, todas en cero.
+        cantidades: Object.fromEntries(
+          Object.keys(p.cantidades ?? {}).map((t) => [t, 0]),
+        ),
+        proporciones: p.proporciones ?? {},
+        proporcion: p.proporcion,
+      })),
+    )
+    if (error) {
+      toast.error("No se pudo preparar el resultado de corte", {
+        description: error.message,
+      })
+      return
+    }
+    toast.success(`${nuevos.length} colores listos para capturar el corte`)
     await cargar()
   }
 
@@ -658,21 +723,19 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 readOnly={readOnly}
               />
 
-              <CuadroTallas
-                titulo="Especificación de Talla"
-                filas={espec}
-                columnas={columnasTalla}
-                readOnly={readOnly}
-                onAgregar={(color) => agregarTalla("Especificacion", color)}
-                onCambiar={guardarTalla}
-                onCambiarProporcion={(talla, v) =>
-                  guardarProporcion("Especificacion", talla, v)
-                }
-                onBorrar={borrarTalla}
-              />
+              {/*
+                La Especificacion de Talla ya no se captura: sale del
+                reparto de arriba, que escribe ese bloque. Mostrar el
+                mismo dato dos veces, uno editable y otro calculado,
+                invitaba a que se contradijeran.
 
+                Piezas Cortadas si se queda: es el RESULTADO real del
+                corte. Nace en blanco con los mismos colores y tallas del
+                plan, y se llena mas adelante desde Corte.
+              */}
               <CuadroTallas
-                titulo="Piezas Cortadas"
+                titulo="Resultado de corte"
+                subtitulo="Se llena en Corte, cuando se sepa lo que realmente salió."
                 filas={cortadas}
                 columnas={columnasTalla}
                 readOnly={readOnly}
@@ -682,6 +745,8 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   guardarProporcion("Cortadas", talla, v)
                 }
                 onBorrar={borrarTalla}
+                onReplicarPlan={replicarPlanEnCorte}
+                puedeReplicar={espec.length > 0}
               />
 
               {/* ── Costos ── */}
@@ -732,6 +797,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 titulo="Habilitación"
                 filas={habilitacion}
                 readOnly={readOnly}
+                catalogoTelas={catalogoHab}
                 onAgregar={() => agregarMaterial("Habilitacion")}
                 onCambiar={guardarMaterial}
                 onBorrar={borrarMaterial}
@@ -805,7 +871,8 @@ function Derivado({ label, value, sufijo }: { label: string; value: number | nul
 }
 
 function CuadroTallas({
-  titulo, filas, columnas, readOnly, onAgregar, onCambiar, onCambiarProporcion, onBorrar,
+  titulo, filas, columnas, readOnly, onAgregar, onCambiar, onCambiarProporcion,
+  onBorrar, subtitulo, onReplicarPlan, puedeReplicar,
 }: {
   titulo: string
   filas: FichaTalla[]
@@ -815,6 +882,10 @@ function CuadroTallas({
   onCambiar: (fila: FichaTalla, talla: string, valor: number) => void
   onCambiarProporcion: (talla: string, valor: number) => void
   onBorrar: (id: number) => void
+  subtitulo?: string
+  /** Copia los colores y tallas del plan, en ceros. */
+  onReplicarPlan?: () => void
+  puedeReplicar?: boolean
 }) {
   const [nuevoColor, setNuevoColor] = useState("")
   const total = filas.reduce(
@@ -823,14 +894,32 @@ function CuadroTallas({
   )
   return (
     <section>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">{titulo}</h3>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">{titulo}</h3>
+          {subtitulo && (
+            <p className="text-xs text-muted-foreground">{subtitulo}</p>
+          )}
+        </div>
         {/*
           El color se teclea aqui mismo. Antes lo pedia window.prompt, que
           el navegador bloquea cuando la ficha se abre sobre otro panel
           modal: el boton parecia no hacer nada.
         */}
         <div className="flex items-center gap-1.5">
+          {onReplicarPlan && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 text-xs"
+              disabled={readOnly || !puedeReplicar}
+              title="Copia los colores y tallas del plan, en ceros"
+              onClick={onReplicarPlan}
+            >
+              <Copy className="size-3" />
+              Copiar del plan
+            </Button>
+          )}
           <Input
             value={nuevoColor}
             onChange={(e) => setNuevoColor(e.target.value)}
@@ -997,38 +1086,36 @@ function CuadroMateriales({
               <th className="px-2 py-1.5 text-left font-medium">Clave</th>
               {esTela && <th className="px-2 py-1.5 text-left font-medium">Tipo</th>}
               <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
-              <th className="px-2 py-1.5 text-right font-medium">Cantidad</th>
-              <th className="px-2 py-1.5 text-right font-medium">Costo</th>
-              <th className="px-2 py-1.5 text-right font-medium">Total</th>
+              {/* Ancho fijo para que el encabezado caiga sobre su campo */}
+              <th className="w-[110px] px-2 py-1.5 text-right font-medium">Cantidad</th>
+              <th className="w-[110px] px-2 py-1.5 text-right font-medium">Costo</th>
+              <th className="w-[100px] px-2 py-1.5 text-right font-medium">Total</th>
               <th className="w-10" />
             </tr>
           </thead>
           <tbody>
-            {filas.length === 0 ? (
-              <tr>
-                <td colSpan={esTela ? 7 : 6}
-                  className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  Sin líneas.
-                </td>
-              </tr>
-            ) : (
-              filas.map((f) => (
+            {filas.map((f) => (
                 <tr key={f.id} className="border-t border-border">
                   <td className="px-1 py-1">
-                    {esTela ? (
+                    {/*
+                      Buscador en los dos cuadros: telas (756) y
+                      habilitaciones (927). Si el catalogo no cargo, cae a
+                      texto libre para no bloquear la captura.
+                    */}
+                    {(catalogoTelas?.length ?? 0) > 0 ? (
                       <BuscadorTela
                         valor={f.clave}
                         telas={catalogoTelas ?? []}
                         disabled={readOnly}
-                        onSelect={(tela, claveManual) =>
+                        onSelect={(art, claveManual) =>
                           // Al elegir del catálogo se traen también nombre y
                           // costo: son el dato bueno, y retecleárlos solo
                           // introduce diferencias con Inventarios.
                           onCambiar(f, {
                             clave: claveManual || null,
-                            idarticulo: tela?.id ?? null,
-                            descripcion: tela?.nombre ?? f.descripcion,
-                            costo: tela?.costo_unitario ?? f.costo,
+                            idarticulo: art?.id ?? null,
+                            descripcion: art?.nombre ?? f.descripcion,
+                            costo: art?.costo_unitario ?? f.costo,
                           })
                         }
                       />
@@ -1061,13 +1148,13 @@ function CuadroMateriales({
                     <Input type="number" step="0.0001" min="0" disabled={readOnly}
                       defaultValue={String(f.cantidad ?? 0)}
                       onBlur={(e) => onCambiar(f, { cantidad: Number(e.target.value) || 0 })}
-                      className="h-7 w-[90px] text-right text-xs tabular-nums" />
+                      className="h-7 w-full text-right text-xs tabular-nums" />
                   </td>
                   <td className="px-1 py-1">
                     <Input type="number" step="0.0001" min="0" disabled={readOnly}
                       defaultValue={String(f.costo ?? 0)}
                       onBlur={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
-                      className="h-7 w-[90px] text-right text-xs tabular-nums" />
+                      className="h-7 w-full text-right text-xs tabular-nums" />
                   </td>
                   <td className="px-2 py-1 text-right text-xs tabular-nums">
                     ${(Number(f.cantidad || 0) * Number(f.costo || 0)).toFixed(2)}
@@ -1079,8 +1166,28 @@ function CuadroMateriales({
                     </Button>
                   </td>
                 </tr>
-              ))
-            )}
+              ))}
+            {/*
+              Hasta completar 7 renglones. Son visuales: no se escriben
+              filas vacias en la base, que dejarian basura si nadie las
+              llena. Al hacer clic se da de alta la linea de verdad.
+            */}
+            {Array.from({ length: Math.max(0, 7 - filas.length) }).map((_, i) => (
+              <tr
+                key={`vacia-${i}`}
+                className="border-t border-border"
+                onClick={() => !readOnly && onAgregar()}
+              >
+                <td
+                  colSpan={esTela ? 7 : 6}
+                  className="cursor-text px-3 py-2 text-xs text-muted-foreground/40 hover:bg-muted/30"
+                >
+                  {i === 0 && filas.length === 0
+                    ? "Haz clic para capturar la primera línea"
+                    : " "}
+                </td>
+              </tr>
+            ))}
           </tbody>
           {filas.length > 0 && (
             <tfoot className="border-t-2 border-border bg-muted/50">

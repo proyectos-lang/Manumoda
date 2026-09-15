@@ -7,12 +7,15 @@ import { cn } from "@/lib/utils"
 import type { VwInventarioArticulo } from "@/lib/types"
 
 /**
- * Buscador de telas del catálogo, por clave o por nombre.
+ * Buscador de artículos del catálogo, por clave o por nombre.
+ *
+ * Sirve para telas (756) y habilitaciones (927): en ambos casos el
+ * problema es el mismo.
  *
  * POR QUÉ NO UN <Select> NORMAL:
- *   Son 756 telas. Una lista desplegable simple obliga a recorrerlas
- *   todas con la rueda del ratón; lo único práctico es teclear parte de
- *   la clave y filtrar.
+ *   Con cientos de opciones, una lista desplegable obliga a recorrerlas
+ *   con la rueda del ratón; lo único práctico es teclear parte de la
+ *   clave y filtrar.
  *
  *   Tampoco se cargan las 756 en el DOM: se muestran las primeras 50
  *   coincidencias. Pintar cientos de renglones hace lento el teclear, y
@@ -61,7 +64,11 @@ export function BuscadorTela({
     if (!q) return telas.slice(0, 50)
     return telas
       .filter((t) =>
-        `${t.clave} ${t.nombre} ${t.tela_familia ?? ""} ${t.tela_color ?? ""}`
+        // Los campos de tela y los de habilitación: el mismo buscador
+        // sirve para los dos catálogos.
+        `${t.clave} ${t.nombre} ${t.tela_familia ?? ""} ${t.tela_color ?? ""} ${
+          t.categoria ?? ""
+        } ${t.color ?? ""} ${t.material ?? ""}`
           .toLowerCase()
           .includes(q),
       )
@@ -89,13 +96,13 @@ export function BuscadorTela({
         title={elegida ? elegida.nombre : valor ?? "Sin tela"}
       >
         <span className={cn("flex-1 truncate font-mono", !valor && "text-muted-foreground")}>
-          {valor || "Elegir tela…"}
+          {valor || "Elegir…"}
         </span>
         {valor && !disabled && (
           <span
             role="button"
             tabIndex={-1}
-            aria-label="Quitar la tela"
+            aria-label="Quitar"
             className="shrink-0 rounded p-0.5 hover:bg-muted"
             onClick={(e) => {
               e.stopPropagation()
@@ -136,7 +143,7 @@ export function BuscadorTela({
             {resultados.length === 0 ? (
               <div className="p-3 text-center">
                 <p className="text-xs text-muted-foreground">
-                  Ninguna tela coincide.
+                  Ningún artículo coincide.
                 </p>
                 {busqueda.trim() && (
                   <button
