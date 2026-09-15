@@ -37,12 +37,15 @@ import { FichaTecnicaDialog } from "@/components/ficha-tecnica-dialog"
  *   nueve botones más en la misma fila la desbordaría en cualquier
  *   pantalla. La fila muestra el avance; el detalle vive aquí.
  *
- * LAS TRES QUE YA EXISTEN NO SE CAPTURAN AQUÍ:
- *   Diseño, Corte y Entrega S1 se gestionan en sus propios módulos y su
- *   estado se LEE de ahí. Esta hoja las muestra para que se vean las
- *   nueve juntas, pero su botón lleva al módulo que manda: si se
- *   pudieran editar en los dos lados, tarde o temprano dirían cosas
- *   distintas.
+ * LAS NUEVE SE GESTIONAN AQUÍ:
+ *   Diseño y Corte se programaban con botones al costado de la tabla;
+ *   se movieron a esta hoja para que las nueve etapas se gestionen en
+ *   un solo lugar. Siguen guardando en `diseno_programacion` y
+ *   `corte_programacion` —su módulo es el que manda sobre esos datos—,
+ *   solo cambió desde dónde se abre el programador.
+ *
+ *   Entrega S1 es la excepción: se deriva de la fase de maquila y se
+ *   consulta, no se captura.
  */
 
 const ICONO_ESTADO: Record<EstadoEtapa, typeof Circle> = {
@@ -72,15 +75,26 @@ function hoy(): string {
 
 export function EtapasOrdenSheet({
   folio,
+  idOrden,
   open,
   onOpenChange,
   onSaved,
+  onProgramarDiseno,
+  onProgramarCorte,
 }: {
   folio: string | null
+  /**
+   * El id de la orden. Diseno y Corte se programan por id, no por folio,
+   * porque asi lo esperan sus dialogos.
+   */
+  idOrden?: number | null
   open: boolean
   onOpenChange: (v: boolean) => void
   /** Se llama tras guardar, para que la tabla refresque el avance. */
   onSaved?: () => void
+  /** Abren los programadores de Diseno y Corte, que viven en la tabla. */
+  onProgramarDiseno?: () => void
+  onProgramarCorte?: () => void
 }) {
   const [etapas, setEtapas] = useState<VwOrdenEtapa[]>([])
   const [loading, setLoading] = useState(false)
@@ -234,7 +248,34 @@ export function EtapasOrdenSheet({
                         </p>
                       )}
 
-                      {e.gestion_externa ? (
+                      {e.clave === "diseno" || e.clave === "corte" ? (
+                        /*
+                         * Diseño y Corte se programan aquí mismo, con su propio
+                         * diálogo. Antes vivían como botones al costado de la
+                         * tabla: se movieron para que las nueve etapas se
+                         * gestionen en un solo lugar.
+                         *
+                         * Siguen guardando en `diseno_programacion` y
+                         * `corte_programacion`, que es donde su módulo las
+                         * espera. Solo cambió desde dónde se abren.
+                         */
+                        <div className="mt-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={readOnly || idOrden == null}
+                            onClick={() =>
+                              e.clave === "diseno"
+                                ? onProgramarDiseno?.()
+                                : onProgramarCorte?.()
+                            }
+                          >
+                            {e.estado === "Pendiente"
+                              ? `Programar ${e.etapa.toLowerCase()}`
+                              : `Reprogramar ${e.etapa.toLowerCase()}`}
+                          </Button>
+                        </div>
+                      ) : e.gestion_externa ? (
                         <p className="mt-2 text-xs text-muted-foreground">
                           Esta etapa se gestiona en el módulo de{" "}
                           <span className="font-medium">{e.modulo}</span>; aquí solo

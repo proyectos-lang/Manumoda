@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, CalendarIcon, RefreshCw, CheckCircle2, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw, ClipboardList } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw, ClipboardList } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -82,87 +82,6 @@ function FaseBadge({ fase }: { fase: string | null | undefined }) {
   )
 }
 
-/**
- * Botón de etapa (Diseño / Corte) en la columna de acciones.
- *
- * Cuatro estados, en este orden de prioridad:
- *
- * · `completado` — hay evidencia de que la etapa ocurrió (aprobación del
- *   cliente en diseño, cumplimiento registrado en corte). Gana sobre
- *   "omitida": si quedó constancia, la etapa se hizo.
- * · `omitida`    — se marcó que la orden no la requiere.
- * · `programado` — ya tiene semana asignada; se puede reprogramar.
- * · sin programar.
- *
- * Completado sigue siendo clicable: una etapa cumplida todavía se puede
- * reprogramar, igual que en el módulo de Diseño.
- */
-function StageActionButton({
-  etapa,
-  completado,
-  omitida,
-  programado,
-  onClick,
-  disabled,
-}: {
-  etapa: "Diseño" | "Corte"
-  completado: boolean
-  omitida: boolean
-  programado: boolean
-  onClick: () => void
-  disabled: boolean
-}) {
-  if (completado) {
-    const motivo =
-      etapa === "Diseño"
-        ? "Aprobado por el cliente — clic para reprogramar"
-        : "Corte registrado como cumplido — clic para reprogramar"
-    return (
-      <Button
-        size="sm"
-        title={motivo}
-        className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
-        onClick={onClick}
-        disabled={disabled}
-      >
-        <CheckCircle2 className="size-3.5" />
-        {etapa} Completado
-      </Button>
-    )
-  }
-
-  if (omitida) {
-    return (
-      <Button size="sm" disabled variant="ghost" className="cursor-default gap-1.5 text-muted-foreground line-through opacity-60">
-        <Ban className="size-3.5" />
-        Omitió {etapa}
-      </Button>
-    )
-  }
-
-  if (programado) {
-    return (
-      <Button
-        size="sm"
-        variant="outline"
-        className="gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-        onClick={onClick}
-        disabled={disabled}
-      >
-        <Pencil className="size-3.5" />
-        Reprogramar {etapa}
-      </Button>
-    )
-  }
-
-  return (
-    <Button size="sm" variant="outline" onClick={onClick} disabled={disabled}>
-      Programar en {etapa}
-    </Button>
-  )
-}
-
-/** Columnas `date`: se leen como medianoche local para no mostrar el día anterior. */
 function formatDate(iso: string | null): string {
   if (!iso) return "-"
   const d = parseLocalDate(iso)
@@ -681,34 +600,6 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {/* ── Botón Diseño ── */}
-                        <StageActionButton
-                          etapa="Diseño"
-                          completado={Boolean(row.fecha_aprobacion_diseno)}
-                          omitida={Boolean(row.no_requiere_diseno)}
-                          programado={Boolean(row.diseno_programado)}
-                          disabled={readOnly || row.id == null}
-                          onClick={() => {
-                            if (row.id == null) return
-                            setScheduleId(row.id)
-                            setScheduleOpen(true)
-                          }}
-                        />
-
-                        {/* ── Botón Corte ── */}
-                        <StageActionButton
-                          etapa="Corte"
-                          completado={corteCumplido.has(row.folio)}
-                          omitida={Boolean(row.no_requiere_corte)}
-                          programado={Boolean(row.corte_programado)}
-                          disabled={readOnly || row.id == null}
-                          onClick={() => {
-                            if (row.id == null) return
-                            setScheduleCutId(row.id)
-                            setScheduleCutOpen(true)
-                          }}
-                        />
-
                         {/* ── Registro de etapas ── */}
                         <Button
                           size="sm"
@@ -888,6 +779,19 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
 
       <EtapasOrdenSheet
         folio={etapasFolio}
+        idOrden={Number(orders.find((o) => o.folio === etapasFolio)?.id) || null}
+        onProgramarDiseno={() => {
+          const o = orders.find((x) => x.folio === etapasFolio)
+          if (o?.id == null) return
+          setScheduleId(o.id)
+          setScheduleOpen(true)
+        }}
+        onProgramarCorte={() => {
+          const o = orders.find((x) => x.folio === etapasFolio)
+          if (o?.id == null) return
+          setScheduleCutId(o.id)
+          setScheduleCutOpen(true)
+        }}
         open={etapasOpen}
         onOpenChange={(o) => {
           setEtapasOpen(o)
