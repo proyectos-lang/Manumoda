@@ -27,7 +27,7 @@ import { fetchAll } from "@/lib/supabase/fetch-all"
 import { useAuth, useReadOnly } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
 import { ESTADOS_ETAPA, type EstadoEtapa, type VwOrdenEtapa } from "@/lib/types"
-import { FichaTecnicaDialog } from "@/components/ficha-tecnica-dialog"
+import { useFichaTecnica } from "@/components/ficha-tecnica-provider"
 
 /**
  * Las nueve etapas de un folio, con su estado y su captura.
@@ -101,16 +101,11 @@ export function EtapasOrdenSheet({
   const [guardando, setGuardando] = useState<number | null>(null)
   const [abierta, setAbierta] = useState<number | null>(null)
   /**
-   * La etapa 1 se captura en la ficha técnica, no en el formulario genérico.
-   *
-   * Se guarda el folio APARTE en vez de leer el prop: la ficha se dibuja
-   * encima del Sheet pero fuera de él, así que un clic dentro de la ficha
-   * cuenta como clic "fuera" del Sheet y lo cierra. Al cerrarse, quien lo
-   * abrió pone su folio en null y la ficha se quedaba sin folio a media
-   * captura: los botones salían con "el folio llegó vacío".
+   * La etapa 1 se captura en la ficha técnica, que ocupa la pantalla
+   * completa y vive en la raíz de la app, no dentro de esta hoja: apilarla
+   * sobre un panel modal daba clics interceptados y folios perdidos.
    */
-  const [fichaOpen, setFichaOpen] = useState(false)
-  const [fichaFolio, setFichaFolio] = useState<string | null>(null)
+  const ficha = useFichaTecnica()
   const readOnly = useReadOnly()
   const { user } = useAuth()
 
@@ -189,26 +184,8 @@ export function EtapasOrdenSheet({
   }
 
   return (
-    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        className="w-full overflow-y-auto sm:max-w-xl"
-        /*
-          Con la ficha abierta, los clics dentro de ella cuentan como clics
-          "fuera" del Sheet —se dibuja encima pero fuera de su árbol— y lo
-          cerrarían a media captura. Mientras la ficha esté abierta, el
-          Sheet ignora esos eventos.
-        */
-        onPointerDownOutside={(e) => {
-          if (fichaOpen) e.preventDefault()
-        }}
-        onInteractOutside={(e) => {
-          if (fichaOpen) e.preventDefault()
-        }}
-        onEscapeKeyDown={(e) => {
-          if (fichaOpen) e.preventDefault()
-        }}
-      >
+      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>Etapas del folio {folio}</SheetTitle>
           <SheetDescription>
@@ -320,8 +297,16 @@ export function EtapasOrdenSheet({
                             variant="outline"
                             disabled={readOnly}
                             onClick={() => {
-                              setFichaFolio(folio)
-                              setFichaOpen(true)
+                              if (!folio) return
+                              // Se registra el refresco ANTES de abrir, para
+                              // que al guardar la ficha esta hoja se entere.
+                              ficha.registrarRefresco(() => {
+                                void cargar()
+                                onSaved?.()
+                              })
+                              ficha.abrir(folio)
+                              // La hoja se cierra: la ficha ocupa la pantalla.
+                              onOpenChange(false)
                             }}
                           >
                             Abrir ficha técnica
@@ -360,26 +345,6 @@ export function EtapasOrdenSheet({
         )}
       </SheetContent>
     </Sheet>
-
-      {/*
-        FUERA del <Sheet> a proposito. Radix hace modal el Sheet y atrapa el
-        foco dentro de el: montada adentro, la ficha recibia los clics pero
-        no podia abrir nada encima, y sus botones "+ Color" y "+ Linea" no
-        respondian.
-      */}
-      <FichaTecnicaDialog
-        folio={fichaFolio}
-        open={fichaOpen}
-        onOpenChange={(o) => {
-          setFichaOpen(o)
-          if (!o) setFichaFolio(null)
-        }}
-        onSaved={() => {
-          void cargar()
-          onSaved?.()
-        }}
-      />
-    </>
   )
 }
 

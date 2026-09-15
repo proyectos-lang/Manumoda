@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Loader2, Plus, Printer, Trash2, Upload, X } from "lucide-react"
+import { ArrowLeft, Loader2, Plus, Printer, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -393,21 +393,30 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     )
   }
 
+  /*
+    Vista completa, no modal. Como modal se apilaba sobre la hoja de etapas
+    —otro panel modal— y eso dio tres fallos seguidos: el prompt bloqueado,
+    el overlay tragandose los clics y el folio perdido al cerrarse el panel
+    de abajo. Una pantalla de este tamano no cabe en un modal.
+  */
   return (
-    /*
-      z-[60], por encima del z-50 del Sheet de etapas. El Sheet de Radix se
-      monta en un portal al final del <body>, asi que con el mismo z-index
-      GANA por orden en el DOM y su overlay se traga los clics de la ficha:
-      los botones "+ Color" y "+ Linea" no respondian.
-    */
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[94vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card shadow-xl">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
-          <div>
-            <h2 className="text-lg font-semibold">Ficha técnica · folio {folio}</h2>
-            <p className="text-xs text-muted-foreground">
-              Etapa 1 · Pre orden
-            </p>
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <div className="flex items-center gap-3">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5"
+              onClick={() => onOpenChange(false)}
+            >
+              <ArrowLeft className="size-4" />
+              Volver
+            </Button>
+            <div>
+              <h2 className="text-lg font-semibold">Ficha técnica · folio {folio}</h2>
+              <p className="text-xs text-muted-foreground">Etapa 1 · Pre orden</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -424,9 +433,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               {guardando && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
               Guardar
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-              <X className="size-4" />
-            </Button>
+
           </div>
         </div>
 
@@ -440,7 +447,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
             No se encontró el folio.
           </div>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="p-5">
             <div className="space-y-6">
               {/* ── Datos generales + foto ── */}
               <section className="grid gap-5 md:grid-cols-[220px_1fr]">

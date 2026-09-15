@@ -18,6 +18,11 @@ import { PagoMaquilasModule } from "@/components/pago-maquilas-module"
 import { InventariosModule } from "@/components/inventarios-module"
 import { LoginScreen } from "@/components/login-screen"
 import { FolioDetailProvider } from "@/components/folio-detail-drawer"
+import {
+  FichaTecnicaProvider,
+  useFichaTecnica,
+} from "@/components/ficha-tecnica-provider"
+import { FichaTecnicaDialog } from "@/components/ficha-tecnica-dialog"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Toaster } from "@/components/ui/sonner"
@@ -74,6 +79,7 @@ export default function Page() {
 
   return (
     <FolioDetailProvider>
+    <FichaTecnicaProvider>
     <main className="content-cmyk-gradient min-h-screen">
       <AppSidebar active={active} onChange={handleSidebarChange} user={user} onLogout={logout} />
 
@@ -83,6 +89,15 @@ export default function Page() {
         <div className="mx-auto max-w-[1400px] space-y-6 px-4 py-8 sm:px-6 lg:px-8">
           <ReadOnlyBanner />
 
+          {/*
+            La ficha tecnica ocupa la pantalla completa en lugar del modulo.
+            Vive aqui, en la raiz, y no dentro de la hoja de etapas: apilarla
+            sobre otro panel modal dio tres fallos seguidos (prompt
+            bloqueado, clics interceptados, folio perdido).
+          */}
+          <VistaFichaTecnica />
+
+          <ContenidoModulo>
           {active === "inicio" && (
             <HomeDashboard
               configMissing={configMissing}
@@ -306,11 +321,39 @@ export default function Page() {
               </section>
             </div>
           )}
+          </ContenidoModulo>
         </div>
       </div>
 
       <Toaster richColors position="top-right" />
     </main>
+    </FichaTecnicaProvider>
     </FolioDetailProvider>
   )
+}
+
+/**
+ * La ficha tecnica a pantalla completa. Se dibuja en lugar del modulo
+ * cuando hay un folio abierto.
+ */
+function VistaFichaTecnica() {
+  const { folio, cerrar, notificarGuardado } = useFichaTecnica()
+  if (!folio) return null
+  return (
+    <FichaTecnicaDialog
+      folio={folio}
+      open
+      onOpenChange={(o) => {
+        if (!o) cerrar()
+      }}
+      onSaved={notificarGuardado}
+    />
+  )
+}
+
+/** Oculta el modulo mientras la ficha tecnica ocupa la pantalla. */
+function ContenidoModulo({ children }: { children: React.ReactNode }) {
+  const { folio } = useFichaTecnica()
+  if (folio) return null
+  return <>{children}</>
 }
