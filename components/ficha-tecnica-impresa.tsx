@@ -189,8 +189,8 @@ export function FichaTecnicaImpresa({
           </div>
 
           {/* Materiales */}
-          <CuadroMaterialesImpreso titulo="Composicion por Color y Tela" filas={telas}
-                                   total={totalTela} conColor />
+          <CuadroMaterialesImpreso titulo="Composicion de Tela" filas={telas}
+                                   total={totalTela} esTela />
           <CuadroMaterialesImpreso titulo="Habilitacion" filas={habilitacion}
                                    total={totalHab} />
         </div>
@@ -338,12 +338,12 @@ function CuadroTallasImpreso({
 }
 
 function CuadroMaterialesImpreso({
-  titulo, filas, total, conColor,
+  titulo, filas, total, esTela,
 }: {
   titulo: string
   filas: FichaMaterial[]
   total: number
-  conColor?: boolean
+  esTela?: boolean
 }) {
   return (
     <div className="mt-3 print:break-inside-avoid">
@@ -352,7 +352,7 @@ function CuadroMaterialesImpreso({
         <thead>
           <tr className="bg-black/5">
             <th className="border border-black/50 px-1 py-0.5 text-left">CLAVE</th>
-            {conColor && <th className="border border-black/50 px-1 py-0.5 text-left">COLOR</th>}
+            {esTela && <th className="border border-black/50 px-1 py-0.5 text-left">TIPO</th>}
             <th className="border border-black/50 px-1 py-0.5 text-left">DESCRIPCION</th>
             <th className="border border-black/50 px-1 py-0.5 text-right">CANTIDAD</th>
             <th className="border border-black/50 px-1 py-0.5 text-right">COSTO</th>
@@ -362,7 +362,7 @@ function CuadroMaterialesImpreso({
         <tbody>
           {filas.length === 0 ? (
             <tr>
-              <td colSpan={conColor ? 6 : 5}
+              <td colSpan={esTela ? 6 : 5}
                   className="border border-black/50 px-1 py-2 text-center text-black/40">
                 Sin captura
               </td>
@@ -371,8 +371,8 @@ function CuadroMaterialesImpreso({
             filas.map((m) => (
               <tr key={m.id}>
                 <td className="border border-black/50 px-1 py-0.5">{m.clave ?? ""}</td>
-                {conColor && (
-                  <td className="border border-black/50 px-1 py-0.5">{m.color ?? ""}</td>
+                {esTela && (
+                  <td className="border border-black/50 px-1 py-0.5">{m.uso ?? ""}</td>
                 )}
                 <td className="border border-black/50 px-1 py-0.5">{m.descripcion}</td>
                 <td className="border border-black/50 px-1 py-0.5 text-right tabular-nums">
@@ -390,7 +390,7 @@ function CuadroMaterialesImpreso({
         </tbody>
         <tfoot>
           <tr className="bg-black/5">
-            <td colSpan={conColor ? 5 : 4}
+            <td colSpan={esTela ? 5 : 4}
                 className="border border-black/50 px-1 py-0.5 text-right font-bold">
               Total
             </td>

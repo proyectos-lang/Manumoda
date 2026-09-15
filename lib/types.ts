@@ -798,6 +798,11 @@ export type FichaMaterial = {
   costo: number
   /** Vínculo opcional al catálogo de Inventarios. */
   idarticulo: number | null
+  /**
+   * Para qué va esta tela en la prenda: FORRO, ENTRETELA, PRINCIPAL…
+   * Texto libre: los usos los define operación, no el esquema.
+   */
+  uso: string | null
   created_at: string
 }
 

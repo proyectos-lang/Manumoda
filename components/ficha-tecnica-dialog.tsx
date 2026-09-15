@@ -14,12 +14,15 @@ import type {
   FichaTalla,
   TipoMaterialFicha,
   VwFichaTecnica,
+  VwInventarioArticulo,
 } from "@/lib/types"
 import { FichaTecnicaImpresa } from "@/components/ficha-tecnica-impresa"
 import {
   FichaProporciones,
   type ProporcionesState,
 } from "@/components/ficha-proporciones"
+import { BuscadorTela } from "@/components/buscador-tela"
+import { fetchAll } from "@/lib/supabase/fetch-all"
 
 /**
  * La ficha técnica de la etapa 1 (Pre orden).
@@ -52,6 +55,8 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   const [ficha, setFicha] = useState<VwFichaTecnica | null>(null)
   const [tallas, setTallas] = useState<FichaTalla[]>([])
   const [materiales, setMateriales] = useState<FichaMaterial[]>([])
+  /** El catálogo de telas de Inventarios, para el buscador por clave. */
+  const [catalogoTelas, setCatalogoTelas] = useState<VwInventarioArticulo[]>([])
   const [loading, setLoading] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
@@ -159,6 +164,28 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   useEffect(() => {
     if (open && folio) void cargar()
   }, [open, folio, cargar])
+
+  /**
+   * El catálogo de telas se trae una vez al abrir la ficha, no en cada
+   * `cargar()`: son 756 renglones que no cambian mientras se captura.
+   */
+  useEffect(() => {
+    if (!open || catalogoTelas.length > 0) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    void (async () => {
+      const { data } = await fetchAll<VwInventarioArticulo>(() =>
+        supabase
+          .from("vw_inventario_articulos")
+          .select("*")
+          .eq("idempresa", IDEMPRESA)
+          .eq("tipo", "Tela")
+          .eq("activo", true)
+          .order("clave"),
+      )
+      setCatalogoTelas(data)
+    })()
+  }, [open, catalogoTelas.length])
 
   function campo<K extends keyof VwFichaTecnica>(k: K, v: VwFichaTecnica[K]) {
     setFicha((prev) => (prev ? { ...prev, [k]: v } : prev))
@@ -468,6 +495,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   const espec = tallas.filter((t) => t.bloque === "Especificacion")
   const cortadas = tallas.filter((t) => t.bloque === "Cortadas")
   const telas = materiales.filter((m) => m.tipo === "Tela")
+  /** Los usos ya escritos en esta ficha, como sugerencia al capturar. */
+  const usosSugeridos = [
+    ...new Set(
+      [...materiales.map((m) => m.uso), "PRINCIPAL", "FORRO", "ENTRETELA", "VISTA"]
+        .filter((u): u is string => Boolean(u)),
+    ),
+  ]
   const habilitacion = materiales.filter((m) => m.tipo === "Habilitacion")
 
   // Al imprimir se monta solo la hoja: el formulario no debe salir en el PDF.
@@ -683,10 +717,12 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
 
               {/* ── Materiales ── */}
               <CuadroMateriales
-                titulo="Composición por Color y Tela"
+                titulo="Composición de Tela"
                 filas={telas}
                 readOnly={readOnly}
-                conColor
+                esTela
+                catalogoTelas={catalogoTelas}
+                usosSugeridos={usosSugeridos}
                 onAgregar={() => agregarMaterial("Tela")}
                 onCambiar={guardarMaterial}
                 onBorrar={borrarMaterial}
@@ -921,12 +957,17 @@ function CuadroTallas({
 }
 
 function CuadroMateriales({
-  titulo, filas, readOnly, conColor, onAgregar, onCambiar, onBorrar,
+  titulo, filas, readOnly, esTela, catalogoTelas, usosSugeridos,
+  onAgregar, onCambiar, onBorrar,
 }: {
   titulo: string
   filas: FichaMaterial[]
   readOnly: boolean
-  conColor?: boolean
+  /** Las telas traen buscador de catálogo y uso; las habilitaciones no. */
+  esTela?: boolean
+  catalogoTelas?: VwInventarioArticulo[]
+  /** Usos ya capturados, para no teclear "FORRO" cada vez. */
+  usosSugeridos?: string[]
   onAgregar: () => void
   onCambiar: (fila: FichaMaterial, cambios: Partial<FichaMaterial>) => void
   onBorrar: (id: number) => void
@@ -942,12 +983,19 @@ function CuadroMateriales({
           Línea
         </Button>
       </div>
+      {esTela && (
+        <datalist id="usos-tela">
+          {(usosSugeridos ?? []).map((u) => (
+            <option key={u} value={u} />
+          ))}
+        </datalist>
+      )}
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead className="bg-muted">
             <tr>
               <th className="px-2 py-1.5 text-left font-medium">Clave</th>
-              {conColor && <th className="px-2 py-1.5 text-left font-medium">Color</th>}
+              {esTela && <th className="px-2 py-1.5 text-left font-medium">Tipo</th>}
               <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
               <th className="px-2 py-1.5 text-right font-medium">Cantidad</th>
               <th className="px-2 py-1.5 text-right font-medium">Costo</th>
@@ -958,7 +1006,7 @@ function CuadroMateriales({
           <tbody>
             {filas.length === 0 ? (
               <tr>
-                <td colSpan={conColor ? 7 : 6}
+                <td colSpan={esTela ? 7 : 6}
                   className="px-3 py-4 text-center text-xs text-muted-foreground">
                   Sin líneas.
                 </td>
@@ -967,15 +1015,41 @@ function CuadroMateriales({
               filas.map((f) => (
                 <tr key={f.id} className="border-t border-border">
                   <td className="px-1 py-1">
-                    <Input disabled={readOnly} defaultValue={f.clave ?? ""}
-                      onBlur={(e) => onCambiar(f, { clave: e.target.value })}
-                      className="h-7 min-w-[130px] text-xs" />
+                    {esTela ? (
+                      <BuscadorTela
+                        valor={f.clave}
+                        telas={catalogoTelas ?? []}
+                        disabled={readOnly}
+                        onSelect={(tela, claveManual) =>
+                          // Al elegir del catálogo se traen también nombre y
+                          // costo: son el dato bueno, y retecleárlos solo
+                          // introduce diferencias con Inventarios.
+                          onCambiar(f, {
+                            clave: claveManual || null,
+                            idarticulo: tela?.id ?? null,
+                            descripcion: tela?.nombre ?? f.descripcion,
+                            costo: tela?.costo_unitario ?? f.costo,
+                          })
+                        }
+                      />
+                    ) : (
+                      <Input disabled={readOnly} defaultValue={f.clave ?? ""}
+                        onBlur={(e) => onCambiar(f, { clave: e.target.value })}
+                        className="h-7 min-w-[130px] text-xs" />
+                    )}
                   </td>
-                  {conColor && (
+                  {esTela && (
                     <td className="px-1 py-1">
-                      <Input disabled={readOnly} defaultValue={f.color ?? ""}
-                        onBlur={(e) => onCambiar(f, { color: e.target.value })}
-                        className="h-7 min-w-[90px] text-xs" />
+                      <Input
+                        disabled={readOnly}
+                        defaultValue={f.uso ?? ""}
+                        onBlur={(e) =>
+                          onCambiar(f, { uso: e.target.value.toUpperCase() || null })
+                        }
+                        placeholder="Forro, entretela…"
+                        list="usos-tela"
+                        className="h-7 min-w-[110px] text-xs"
+                      />
                     </td>
                   )}
                   <td className="px-1 py-1">
@@ -1011,7 +1085,7 @@ function CuadroMateriales({
           {filas.length > 0 && (
             <tfoot className="border-t-2 border-border bg-muted/50">
               <tr>
-                <td colSpan={conColor ? 5 : 4} className="px-3 py-1.5 text-right font-semibold">
+                <td colSpan={esTela ? 5 : 4} className="px-3 py-1.5 text-right font-semibold">
                   Total
                 </td>
                 <td className="px-2 py-1.5 text-right font-semibold tabular-nums">
