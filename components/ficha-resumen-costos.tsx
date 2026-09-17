@@ -13,14 +13,19 @@ import type { VwFichaTecnica } from "@/lib/types"
  *   tiene su número.
  *
  * DOS COSTOS DISTINTOS, A PROPÓSITO:
- *   · Costo Neto  — costo fijo + materiales. Es el de la ficha impresa
- *     y el que manda el margen que se cotiza.
- *   · Costo total — además todo el proceso: maquila, lavandería y
- *     servicios. Es lo que cuesta producir la pieza de verdad.
+ *   · Costo Neto  — costo fijo + materiales + maquila + lavandería.
+ *     Es lo que cuesta la prenda terminada, y sobre él va el margen.
+ *   · Costo total — además los servicios externos: estampado, bordado,
+ *     corte externo y otros.
  *
- *   Se muestran separados porque responden preguntas distintas, y
- *   mezclarlos haría que el margen de la ficha dejara de coincidir con
- *   el sistema anterior.
+ *   Los servicios van aparte porque se contratan por fuera y no todos
+ *   los folios los llevan; meterlos en el neto haría que el margen de
+ *   una prenda simple y una bordada no fueran comparables.
+ *
+ * LA UTILIDAD DEL PEDIDO VA SOBRE LAS PIEZAS CORTADAS:
+ *   Se produce y se cobra lo que salió del corte, no lo que se planeó.
+ *   Sin corte capturado no se muestra: multiplicar por el plan daría una
+ *   cifra que nadie produjo todavía.
  */
 
 function money(v: number | null | undefined): string {
@@ -35,7 +40,8 @@ export function FichaResumenCostos({
   costoNeto,
   costoServicios,
   costoTotalPieza,
-  piezas,
+  piezasCortadas,
+  piezasPlan,
 }: {
   ficha: VwFichaTecnica
   /**
@@ -48,8 +54,13 @@ export function FichaResumenCostos({
   costoNeto: number
   costoServicios: number
   costoTotalPieza: number
-  /** Piezas del pedido, para el total de la orden. */
-  piezas: number | null
+  /**
+   * Las piezas que salieron del corte. La utilidad del pedido va sobre
+   * estas: se produce y se cobra lo que salió, no lo planeado.
+   */
+  piezasCortadas: number
+  /** Lo planeado, para avisar si el corte todavía no se captura. */
+  piezasPlan: number | null
 }) {
   const venta = Number(ficha.precio_venta ?? 0)
   const neto = costoNeto
@@ -94,8 +105,8 @@ export function FichaResumenCostos({
     <section>
       <h3 className="mb-1 text-sm font-semibold">Resumen de costos</h3>
       <p className="mb-2 text-xs text-muted-foreground">
-        Todo por pieza. El Costo Neto es el de la ficha impresa; el total suma
-        además el proceso.
+        Todo por pieza. El Costo Neto incluye materiales, maquila y
+        lavandería; el total suma además los servicios externos.
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -106,10 +117,10 @@ export function FichaResumenCostos({
               <Fila concepto="Costo fijo" valor={ficha.costo_fijo} />
               <Fila concepto="Tela" valor={costoTela} />
               <Fila concepto="Habilitación" valor={costoHabilitacion} />
-              <Fila concepto="Costo Neto" valor={neto} fuerte nota="ficha impresa" />
+              <Fila concepto="Maquila" valor={ficha.costo_maquila} />
+              <Fila concepto="Lavandería" valor={ficha.costo_lavanderia} />
+              <Fila concepto="Costo Neto" valor={neto} fuerte />
 
-              <Fila concepto="Maquila" valor={ficha.costo_maquila} sangria />
-              <Fila concepto="Lavandería" valor={ficha.costo_lavanderia} sangria />
               {costoServicios > 0 && (
                 <Fila
                   concepto="Servicios externos"
@@ -118,7 +129,12 @@ export function FichaResumenCostos({
                   nota="estampado, bordado, corte, otros"
                 />
               )}
-              <Fila concepto="Costo total por pieza" valor={costoTotalPieza} fuerte />
+              <Fila
+                concepto="Costo total por pieza"
+                valor={costoTotalPieza}
+                fuerte
+                nota={costoServicios > 0 ? undefined : "sin servicios externos"}
+              />
             </tbody>
           </table>
         </div>
@@ -176,12 +192,12 @@ export function FichaResumenCostos({
                   </td>
                 </tr>
               )}
-              {hayVenta && piezas != null && piezas > 0 && (
+              {hayVenta && piezasCortadas > 0 && (
                 <tr className="border-t border-border">
                   <td className="px-3 py-1.5 font-medium">
                     Utilidad del pedido
                     <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
-                      {piezas} piezas
+                      {piezasCortadas} piezas cortadas
                     </span>
                   </td>
                   <td
@@ -191,7 +207,26 @@ export function FichaResumenCostos({
                       utilidad > 0 && "text-emerald-700",
                     )}
                   >
-                    {money(utilidad * piezas)}
+                    {money(utilidad * piezasCortadas)}
+                  </td>
+                </tr>
+              )}
+              {/*
+                Sin corte capturado no hay utilidad del pedido: multiplicar
+                por lo planeado daría una cifra que nadie produjo todavía.
+              */}
+              {hayVenta && piezasCortadas === 0 && (
+                <tr className="border-t border-border">
+                  <td
+                    className="px-3 py-1.5 text-xs text-muted-foreground"
+                    colSpan={2}
+                  >
+                    La utilidad del pedido sale al capturar el resultado de
+                    corte
+                    {piezasPlan != null && piezasPlan > 0 && (
+                      <> — el plan son {piezasPlan} piezas</>
+                    )}
+                    .
                   </td>
                 </tr>
               )}

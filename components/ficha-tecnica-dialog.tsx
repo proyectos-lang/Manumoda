@@ -670,10 +670,21 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   const costoHabilitacion = materiales
     .filter((m) => m.tipo === "Habilitacion")
     .reduce((s, m) => s + Number(m.cantidad || 0) * Number(m.costo || 0), 0)
-  /** Costo Neto = costo fijo + materiales. La misma fórmula de la vista. */
+  /**
+   * Costo Neto = costo fijo + materiales + maquila + lavandería.
+   *
+   * Regla de operación (17-sep-2026). Los servicios externos quedan
+   * fuera: se contratan por fuera y no todos los folios los llevan.
+   * Ellos suman al costo TOTAL, que es otra cuenta.
+   */
   const costoNeto =
     Math.round(
-      (Number(ficha?.costo_fijo ?? 0) + costoTela + costoHabilitacion) * 100,
+      (Number(ficha?.costo_fijo ?? 0) +
+        costoTela +
+        costoHabilitacion +
+        Number(ficha?.costo_maquila ?? 0) +
+        Number(ficha?.costo_lavanderia ?? 0)) *
+        100,
     ) / 100
 
   /** Margen sobre el precio de venta, con el neto de la pantalla. */
@@ -696,11 +707,21 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     Number(ficha?.costo_bordado ?? 0) +
     Number(ficha?.costo_corte_externo ?? 0) +
     Number(ficha?.costo_otro ?? 0)
-  const costoTotalPieza =
-    costoNeto +
-    Number(ficha?.costo_maquila ?? 0) +
-    Number(ficha?.costo_lavanderia ?? 0) +
-    costoServicios
+  // El neto ya trae maquila y lavandería: aquí solo faltan los servicios.
+  const costoTotalPieza = Math.round((costoNeto + costoServicios) * 100) / 100
+
+  /**
+   * Las piezas que realmente salieron del corte. La utilidad del pedido
+   * se calcula sobre estas y no sobre las planeadas: se produce —y se
+   * cobra— lo que salió, no lo que se pensaba cortar.
+   */
+  const piezasCortadas = tallas
+    .filter((t) => t.bloque === "Cortadas")
+    .reduce(
+      (s, t) =>
+        s + Object.values(t.cantidades ?? {}).reduce((a, b) => a + Number(b || 0), 0),
+      0,
+    )
 
   const espec = tallas.filter((t) => t.bloque === "Especificacion")
   const cortadas = tallas.filter((t) => t.bloque === "Cortadas")
@@ -1128,7 +1149,8 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 costoNeto={costoNeto}
                 costoServicios={costoServicios}
                 costoTotalPieza={costoTotalPieza}
-                piezas={proporciones.total ?? ficha.piezas_totales ?? null}
+                piezasCortadas={piezasCortadas}
+                piezasPlan={proporciones.total ?? ficha.piezas_totales ?? null}
               />
             </div>
           </div>
