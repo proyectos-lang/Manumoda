@@ -31,6 +31,18 @@ import { fetchAll } from "@/lib/supabase/fetch-all"
  * cuadros de tallas, los dos de materiales, la foto de la prenda, y el
  * botón de imprimir que genera el mismo PDF.
  *
+ * NADA SE GUARDA SOLO:
+ *   Todo lo que se teclea vive en memoria hasta que alguien presiona
+ *   Guardar (pedido de operación, 15-sep-2026). Antes, cada campo
+ *   escribía a la base al salir del foco: ocho caminos distintos, y no
+ *   había forma de arrepentirse.
+ *
+ *   Las filas nuevas llevan id negativo mientras viven en memoria; al
+ *   guardar, id < 0 significa insertar y id > 0 actualizar.
+ *
+ *   La excepción es la foto: el archivo ya subió a Storage y no se puede
+ *   deshacer descartando.
+ *
  * SOBRE EL PDF:
  *   Se usa `window.print()` con CSS `@media print`, el mismo patrón que
  *   las etiquetas de rollos. No se agrega una librería de PDF: el
@@ -46,6 +58,17 @@ const BUCKET_FOTOS = "fichas"
 
 /** El costo fijo de la empresa. Editable, pero este es el de partida. */
 const COSTO_FIJO_DEFAULT = 9.5
+
+/**
+ * Id temporal para una fila que todavia no existe en la base.
+ *
+ * Negativo a proposito: al guardar, un id < 0 significa "esta es nueva,
+ * hay que insertarla"; uno positivo, "ya existe, hay que actualizarla".
+ */
+let siguienteIdTemporal = -1
+function idTemporal(): number {
+  return siguienteIdTemporal--
+}
 
 /** Importe corto para las explicaciones de la franja de costeo. */
 function fmt(v: number | null | undefined): string {
@@ -82,6 +105,19 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     tallas: {},
     colores: {},
   })
+  /**
+   * Una copia de lo que se cargó de la base, para comparar contra lo que
+   * hay en pantalla y saber si quedaron cambios sin guardar.
+   *
+   * La ficha es informacion sensible: nada se escribe hasta que alguien
+   * presiona Guardar (pedido de operacion, 15-sep-2026). Todo lo que se
+   * teclea vive aqui en memoria mientras tanto.
+   */
+  const [original, setOriginal] = useState<string>("")
+  const [confirmarSalida, setConfirmarSalida] = useState(false)
+  /** Filas que ya existen en la base y se borrarán al guardar. */
+  const [borradosTallas, setBorradosTallas] = useState<number[]>([])
+  const [borradosMateriales, setBorradosMateriales] = useState<number[]>([])
   const readOnly = useReadOnly()
   const { user } = useAuth()
 
@@ -165,6 +201,16 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       // la proporcion de talla ya se guarda en porcentaje desde el 064
       colores,
     })
+
+    // La huella de lo recién cargado. Compararla contra el estado actual
+    // dice si hay cambios sin guardar, sin tener que rastrear cada campo.
+    setOriginal(
+      JSON.stringify({
+        f: datos,
+        t: filasTalla,
+        m: (m.data as FichaMaterial[]) ?? [],
+      }),
+    )
 
     // La foto se guarda como ruta, no como URL: si el bucket cambia de
     // política, la ruta sigue sirviendo y solo cambia cómo se resuelve.
@@ -272,10 +318,98 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       )
     }
 
+    // ── Las tallas y los materiales, que se editaron en memoria ──
+    //
+    // Se guardan DESPUES de la orden: si algo falla aqui, al menos los
+    // campos simples quedaron. El orden inverso dejaria tallas huerfanas
+    // de una ficha que no se guardo.
+    for (const id of borradosTallas) {
+      await supabase.from("ficha_tallas").delete().eq("id", id)
+    }
+    for (const id of borradosMateriales) {
+      await supabase.from("ficha_materiales").delete().eq("id", id)
+    }
+
+    // Id negativo = fila nueva; positivo = ya existe.
+    const nuevasT = tallas.filter((t) => t.id < 0)
+    const previasT = tallas.filter((t) => t.id > 0)
+    if (nuevasT.length > 0) {
+      const { error: e } = await supabase.from("ficha_tallas").insert(
+        nuevasT.map(({ id, created_at, ...resto }) => resto),
+      )
+      if (e) {
+        setGuardando(false)
+        toast.error("No se pudieron guardar las tallas", { description: e.message })
+        return
+      }
+    }
+    for (const t of previasT) {
+      await supabase
+        .from("ficha_tallas")
+        .update({
+          color: t.color,
+          orden: t.orden,
+          cantidades: t.cantidades,
+          proporciones: t.proporciones,
+          proporcion: t.proporcion,
+        })
+        .eq("id", t.id)
+    }
+
+    const nuevasM = materiales.filter((m) => m.id < 0)
+    const previasM = materiales.filter((m) => m.id > 0)
+    if (nuevasM.length > 0) {
+      const { error: e } = await supabase.from("ficha_materiales").insert(
+        nuevasM.map(({ id, created_at, ...resto }) => resto),
+      )
+      if (e) {
+        setGuardando(false)
+        toast.error("No se pudieron guardar los materiales", { description: e.message })
+        return
+      }
+    }
+    for (const m of previasM) {
+      await supabase
+        .from("ficha_materiales")
+        .update({
+          clave: m.clave,
+          descripcion: m.descripcion,
+          cantidad: m.cantidad,
+          costo: m.costo,
+          idarticulo: m.idarticulo,
+          uso: m.uso,
+          orden: m.orden,
+        })
+        .eq("id", m.id)
+    }
+
+    setBorradosTallas([])
+    setBorradosMateriales([])
     setGuardando(false)
     toast.success("Ficha técnica guardada")
     await cargar()
     onSaved?.()
+  }
+
+  /**
+   * Si hay algo tecleado que aun no se guardo.
+   *
+   * Se compara la huella de lo cargado contra el estado actual, en vez de
+   * rastrear campo por campo: un campo nuevo se cubre solo.
+   */
+  const hayCambios =
+    original !== "" &&
+    (original !== JSON.stringify({ f: ficha, t: tallas, m: materiales }) ||
+      borradosTallas.length > 0 ||
+      borradosMateriales.length > 0)
+
+  /** Volver al módulo. Si quedan cambios, primero pregunta. */
+  function intentarSalir() {
+    if (hayCambios) {
+      setConfirmarSalida(true)
+      return
+    }
+    onOpenChange(false)
   }
 
   async function subirFoto(file: File) {
@@ -308,6 +442,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       return
     }
 
+    // La UNICA escritura que no pasa por Guardar, a proposito: el archivo
+    // ya subio a Storage, asi que "descartar" no podria deshacerlo.
+    // Asociarlo de inmediato evita que quede un archivo huerfano.
     const { error: dbErr } = await supabase
       .from("ordenes_produccion")
       .update({ foto_path: path })
@@ -330,46 +467,39 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    * Solo toca ese bloque. "Piezas cortadas" es lo que REALMENTE salio del
    * corte y no se deduce de un plan.
    */
-  async function aplicarReparto(reparto: Record<string, Record<string, number>>) {
+  function aplicarReparto(reparto: Record<string, Record<string, number>>) {
     if (!folio) return
-    const supabase = getSupabase()
-    if (!supabase) return
-
     const sumaC = Object.values(proporciones.colores).reduce(
       (a, b) => a + (Number(b) || 0), 0)
-    const existentes = new Map(
-      tallas.filter((t) => t.bloque === "Especificacion").map((t) => [t.color, t]),
-    )
 
-    let orden = 0
-    for (const [color, fila] of Object.entries(reparto)) {
-      orden++
-      const comun = {
-        cantidades: fila,
-        proporciones: proporciones.tallas,
-        proporcion: sumaC > 0 ? proporciones.colores[color] ?? 1 : null,
-      }
-      const previo = existentes.get(color)
-      const { error } = previo
-        ? await supabase.from("ficha_tallas").update(comun).eq("id", previo.id)
-        : await supabase.from("ficha_tallas").insert({
+    // Solo en memoria: se escribe al presionar Guardar.
+    setTallas((prev) => {
+      const otros = prev.filter((t) => t.bloque !== "Especificacion")
+      const previos = prev.filter((t) => t.bloque === "Especificacion")
+      let orden = 0
+      const nuevos = Object.entries(reparto).map(([color, fila]) => {
+        orden++
+        const previo = previos.find((t) => t.color === color)
+        return {
+          ...(previo ?? {
+            id: idTemporal(),
             idempresa: IDEMPRESA,
             folio,
-            bloque: "Especificacion",
+            bloque: "Especificacion" as const,
             color,
-            orden,
-            ...comun,
-          })
-      if (error) {
-        toast.error(`No se pudo aplicar el reparto a ${color}`, {
-          description: error.message,
-        })
-        return
-      }
-    }
-    toast.success("Reparto aplicado — ya puedes ajustar tallas a mano")
-    await cargar()
+            created_at: new Date().toISOString(),
+          }),
+          orden,
+          cantidades: fila,
+          proporciones: proporciones.tallas,
+          proporcion: sumaC > 0 ? proporciones.colores[color] ?? 1 : null,
+        } as FichaTalla
+      })
+      return [...otros, ...nuevos]
+    })
+    toast.success("Reparto aplicado — presiona Guardar para conservarlo")
   }
+
 
   /**
    * Copia la estructura del plan al cuadro de resultado de corte: los
@@ -379,14 +509,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    * no algo que se deduzca del plan. Precargarlo con las cantidades
    * planeadas haria que un corte sin capturar pareciera cumplido.
    */
-  async function replicarPlanEnCorte() {
+  function replicarPlanEnCorte() {
     if (!folio) return
-    const supabase = getSupabase()
-    if (!supabase) return
-
     const plan = tallas.filter((t) => t.bloque === "Especificacion")
     if (plan.length === 0) {
-      toast.error("Primero aplica el reparto: de ahi sale la estructura")
+      toast.error("Primero aplica el reparto: de ahí sale la estructura")
       return
     }
     const yaEsta = new Set(
@@ -397,31 +524,24 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       toast.info("El resultado de corte ya tiene todos los colores del plan")
       return
     }
-
-    const { error } = await supabase.from("ficha_tallas").insert(
-      nuevos.map((p, i) => ({
-        idempresa: IDEMPRESA,
-        folio,
-        bloque: "Cortadas",
-        color: p.color,
+    // En ceros: lo que salió del corte es un hecho que se mide, no algo
+    // que se deduzca del plan.
+    setTallas((prev) => [
+      ...prev,
+      ...nuevos.map((p, i) => ({
+        ...p,
+        id: idTemporal(),
+        bloque: "Cortadas" as const,
         orden: i + 1,
-        // Las mismas tallas del plan, todas en cero.
         cantidades: Object.fromEntries(
           Object.keys(p.cantidades ?? {}).map((t) => [t, 0]),
         ),
-        proporciones: p.proporciones ?? {},
-        proporcion: p.proporcion,
+        created_at: new Date().toISOString(),
       })),
-    )
-    if (error) {
-      toast.error("No se pudo preparar el resultado de corte", {
-        description: error.message,
-      })
-      return
-    }
-    toast.success(`${nuevos.length} colores listos para capturar el corte`)
-    await cargar()
+    ])
+    toast.success(`${nuevos.length} colores listos — presiona Guardar`)
   }
+
 
   // ── Tallas ────────────────────────────────────────────────────────────────
 
@@ -430,55 +550,40 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    * prompt del navegador queda bloqueado cuando la ficha se abre sobre
    * otro panel modal, y el boton parecia no hacer nada.
    */
-  async function agregarTalla(bloque: "Especificacion" | "Cortadas", color: string) {
-    if (!folio) {
-      toast.error("No se pudo identificar el folio. Cierra y vuelve a abrir la ficha.")
-      return
-    }
+  function agregarTalla(bloque: "Especificacion" | "Cortadas", color: string) {
+    if (!folio) return
     const limpio = color.trim().toUpperCase()
     if (!limpio) {
-      toast.error("Escribe el color del renglon")
+      toast.error("Escribe el color del renglón")
       return
     }
-    // La clave unica es (folio, bloque, color): avisar antes es mas claro
-    // que dejar que la base rechace con un error tecnico.
     if (tallas.some((t) => t.bloque === bloque && t.color.toUpperCase() === limpio)) {
-      toast.error(`Ya hay un renglon para ${limpio} en este bloque`)
+      toast.error(`Ya hay un renglón para ${limpio} en este bloque`)
       return
     }
-    const supabase = getSupabase()
-    if (!supabase) return
-
-    const { error } = await supabase.from("ficha_tallas").insert({
-      idempresa: IDEMPRESA,
-      folio,
-      bloque,
-      color: limpio,
-      orden: tallas.filter((t) => t.bloque === bloque).length + 1,
-      cantidades: Object.fromEntries(columnasTalla.map((c) => [c, 0])),
-      // La proporción se hereda del primer renglón del bloque: es del
-      // tendido, la misma para todos los colores.
-      proporciones:
-        tallas.find((t) => t.bloque === bloque)?.proporciones ?? {},
-    })
-    if (error) {
-      toast.error("No se pudo agregar el renglón", { description: error.message })
-      return
-    }
-    toast.success(`Color ${limpio} agregado`)
-    await cargar()
+    // Solo en memoria, con id temporal: se inserta al presionar Guardar.
+    setTallas((prev) => [
+      ...prev,
+      {
+        id: idTemporal(),
+        idempresa: IDEMPRESA,
+        folio,
+        bloque,
+        color: limpio,
+        orden: prev.filter((t) => t.bloque === bloque).length + 1,
+        cantidades: Object.fromEntries(columnasTalla.map((c) => [c, 0])),
+        proporciones: prev.find((t) => t.bloque === bloque)?.proporciones ?? {},
+        proporcion: null,
+        created_at: new Date().toISOString(),
+      },
+    ])
   }
 
-  async function guardarTalla(fila: FichaTalla, talla: string, valor: number) {
-    const supabase = getSupabase()
-    if (!supabase) return
+
+  /** Solo en memoria: se escribe al presionar Guardar. */
+  function guardarTalla(fila: FichaTalla, talla: string, valor: number) {
     const cantidades = { ...(fila.cantidades ?? {}), [talla]: valor }
     setTallas((prev) => prev.map((t) => (t.id === fila.id ? { ...t, cantidades } : t)))
-    const { error } = await supabase
-      .from("ficha_tallas")
-      .update({ cantidades })
-      .eq("id", fila.id)
-    if (error) toast.error("No se pudo guardar", { description: error.message })
   }
 
   /**
@@ -486,88 +591,64 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    * es una sola por bloque, no una por color, y asi el PDF la encuentra
    * donde la espera.
    */
-  async function guardarProporcion(
+  /** Solo en memoria: se escribe al presionar Guardar. */
+  function guardarProporcion(
     bloque: "Especificacion" | "Cortadas",
     talla: string,
     valor: number,
   ) {
-    const supabase = getSupabase()
-    if (!supabase) return
     const primera = tallas.find((t) => t.bloque === bloque)
     if (!primera) {
-      toast.error("Agrega primero un renglon de color")
+      toast.error("Agrega primero un renglón de color")
       return
     }
     const proporciones = { ...(primera.proporciones ?? {}), [talla]: valor }
     setTallas((prev) =>
       prev.map((t) => (t.id === primera.id ? { ...t, proporciones } : t)),
     )
-    const { error } = await supabase
-      .from("ficha_tallas")
-      .update({ proporciones })
-      .eq("id", primera.id)
-    if (error) toast.error("No se pudo guardar", { description: error.message })
   }
 
-  async function borrarTalla(id: number) {
-    const supabase = getSupabase()
-    if (!supabase) return
-    const { error } = await supabase.from("ficha_tallas").delete().eq("id", id)
-    if (error) {
-      toast.error("No se pudo borrar", { description: error.message })
-      return
-    }
-    await cargar()
+  /** Solo en memoria: el borrado se aplica al presionar Guardar. */
+  function borrarTalla(id: number) {
+    setTallas((prev) => prev.filter((t) => t.id !== id))
+    if (id > 0) setBorradosTallas((prev) => [...prev, id])
   }
 
   // ── Materiales ────────────────────────────────────────────────────────────
 
-  async function agregarMaterial(tipo: TipoMaterialFicha) {
-    if (!folio) {
-      toast.error("No se pudo identificar el folio. Cierra y vuelve a abrir la ficha.")
-      return
-    }
-    const supabase = getSupabase()
-    if (!supabase) return
-    const { error } = await supabase.from("ficha_materiales").insert({
-      idempresa: IDEMPRESA,
-      folio,
-      tipo,
-      orden: materiales.filter((m) => m.tipo === tipo).length + 1,
-      descripcion: "",
-      cantidad: 0,
-      costo: 0,
-    })
-    if (error) {
-      toast.error("No se pudo agregar la línea", { description: error.message })
-      return
-    }
-    // La línea nace vacía; sin aviso, agregarla se siente como que no pasó
-    // nada hasta que uno mira el final de la tabla.
-    toast.success("Línea agregada — captura clave, descripción y costo")
-    await cargar()
+  function agregarMaterial(tipo: TipoMaterialFicha) {
+    if (!folio) return
+    // Solo en memoria, con id temporal: se inserta al presionar Guardar.
+    setMateriales((prev) => [
+      ...prev,
+      {
+        id: idTemporal(),
+        idempresa: IDEMPRESA,
+        folio,
+        tipo,
+        orden: prev.filter((m) => m.tipo === tipo).length + 1,
+        clave: null,
+        descripcion: "",
+        color: null,
+        cantidad: 0,
+        costo: 0,
+        idarticulo: null,
+        uso: null,
+        created_at: new Date().toISOString(),
+      },
+    ])
   }
 
-  async function guardarMaterial(fila: FichaMaterial, cambios: Partial<FichaMaterial>) {
-    const supabase = getSupabase()
-    if (!supabase) return
+
+  /** Solo en memoria: se escribe al presionar Guardar. */
+  function guardarMaterial(fila: FichaMaterial, cambios: Partial<FichaMaterial>) {
     setMateriales((prev) => prev.map((m) => (m.id === fila.id ? { ...m, ...cambios } : m)))
-    const { error } = await supabase
-      .from("ficha_materiales")
-      .update(cambios)
-      .eq("id", fila.id)
-    if (error) toast.error("No se pudo guardar", { description: error.message })
   }
 
-  async function borrarMaterial(id: number) {
-    const supabase = getSupabase()
-    if (!supabase) return
-    const { error } = await supabase.from("ficha_materiales").delete().eq("id", id)
-    if (error) {
-      toast.error("No se pudo borrar", { description: error.message })
-      return
-    }
-    await cargar()
+  /** Solo en memoria: el borrado se aplica al presionar Guardar. */
+  function borrarMaterial(id: number) {
+    setMateriales((prev) => prev.filter((m) => m.id !== id))
+    if (id > 0) setBorradosMateriales((prev) => [...prev, id])
   }
 
   if (!open) return null
@@ -613,7 +694,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               size="sm"
               variant="ghost"
               className="gap-1.5"
-              onClick={() => onOpenChange(false)}
+              onClick={intentarSalir}
             >
               <ArrowLeft className="size-4" />
               Volver
@@ -634,6 +715,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               <Printer className="size-4" />
               Imprimir / PDF
             </Button>
+            {hayCambios && (
+              <span className="rounded bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
+                Cambios sin guardar
+              </span>
+            )}
             <Button size="sm" disabled={readOnly || guardando || loading} onClick={guardar}>
               {guardando && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
               Guardar
@@ -838,6 +924,55 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
           </div>
         )}
       </div>
+
+      {/*
+        Salir con cambios sin guardar. Tres salidas, como pidio operacion:
+        guardar y salir, descartar y salir, o seguir editando.
+
+        Descartar no borra nada de la base: lo tecleado solo vivia en
+        memoria, asi que basta con cerrar.
+      */}
+      {confirmarSalida && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-xl">
+            <h3 className="text-base font-semibold">Hay cambios sin guardar</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Si sales sin guardar, la ficha queda como estaba antes de tus
+              cambios.
+            </p>
+            <div className="mt-5 flex flex-col gap-2">
+              <Button
+                disabled={guardando}
+                onClick={async () => {
+                  await guardar()
+                  setConfirmarSalida(false)
+                  onOpenChange(false)
+                }}
+              >
+                {guardando && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+                Guardar cambios y salir
+              </Button>
+              <Button
+                variant="outline"
+                disabled={guardando}
+                onClick={() => {
+                  setConfirmarSalida(false)
+                  onOpenChange(false)
+                }}
+              >
+                Descartar cambios y salir
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={guardando}
+                onClick={() => setConfirmarSalida(false)}
+              >
+                Seguir editando
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

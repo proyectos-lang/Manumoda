@@ -887,5 +887,22 @@ export type CatTalla = {
   created_at: string
 }
 
+/**
+ * Las escalas de talla que se ofrecen de un clic al capturar la ficha.
+ *
+ * Son juegos, no una lista suelta: una prenda usa CH-M-G o usa 0-3-5,
+ * nunca una mezcla. Presentarlas agrupadas evita marcar tallas de dos
+ * escalas distintas por descuido.
+ *
+ * Cualquier otra se sigue escribiendo a mano.
+ */
+export const ESCALAS_TALLA: { nombre: string; tallas: string[] }[] = [
+  { nombre: "Letra", tallas: ["CH", "M", "G", "XG"] },
+  { nombre: "Letra extendida", tallas: ["XXS", "XS", "S", "M", "L", "XL", "XXL"] },
+  { nombre: "Plus", tallas: ["0X", "1X", "2X", "3X"] },
+  { nombre: "Niña", tallas: ["0", "3", "5", "7", "9"] },
+  { nombre: "Dama", tallas: ["28", "30", "32", "34", "36", "38"] },
+]
+
 /** Las siete tallas estándar, en el orden en que se leen. */
 export const TALLAS_ESTANDAR = ["XXS", "XS", "S", "M", "L", "XL", "XXL"]
