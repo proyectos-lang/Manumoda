@@ -1151,6 +1151,11 @@ function CuadroMateriales({
                           // Al elegir del catálogo se traen también nombre y
                           // costo: son el dato bueno, y retecleárlos solo
                           // introduce diferencias con Inventarios.
+                          //
+                          // Los campos de la fila usan `value` y no
+                          // `defaultValue` justamente por esto: con
+                          // defaultValue el costo cambiaba en memoria pero el
+                          // input seguía mostrando el viejo.
                           onCambiar(f, {
                             clave: claveManual || null,
                             idarticulo: art?.id ?? null,
@@ -1160,8 +1165,8 @@ function CuadroMateriales({
                         }
                       />
                     ) : (
-                      <Input disabled={readOnly} defaultValue={f.clave ?? ""}
-                        onBlur={(e) => onCambiar(f, { clave: e.target.value })}
+                      <Input disabled={readOnly} value={f.clave ?? ""}
+                        onChange={(e) => onCambiar(f, { clave: e.target.value })}
                         className="h-7 min-w-[130px] text-xs" />
                     )}
                   </td>
@@ -1169,8 +1174,8 @@ function CuadroMateriales({
                     <td className="px-1 py-1">
                       <Input
                         disabled={readOnly}
-                        defaultValue={f.uso ?? ""}
-                        onBlur={(e) =>
+                        value={f.uso ?? ""}
+                        onChange={(e) =>
                           onCambiar(f, { uso: e.target.value.toUpperCase() || null })
                         }
                         placeholder="Forro, entretela…"
@@ -1180,20 +1185,20 @@ function CuadroMateriales({
                     </td>
                   )}
                   <td className="px-1 py-1">
-                    <Input disabled={readOnly} defaultValue={f.descripcion ?? ""}
-                      onBlur={(e) => onCambiar(f, { descripcion: e.target.value })}
+                    <Input disabled={readOnly} value={f.descripcion ?? ""}
+                      onChange={(e) => onCambiar(f, { descripcion: e.target.value })}
                       className="h-7 min-w-[220px] text-xs" />
                   </td>
                   <td className="px-1 py-1">
                     <Input type="number" step="0.0001" min="0" disabled={readOnly}
-                      defaultValue={String(f.cantidad ?? 0)}
-                      onBlur={(e) => onCambiar(f, { cantidad: Number(e.target.value) || 0 })}
+                      value={f.cantidad ?? 0}
+                      onChange={(e) => onCambiar(f, { cantidad: Number(e.target.value) || 0 })}
                       className="h-7 w-full text-right text-xs tabular-nums" />
                   </td>
                   <td className="px-1 py-1">
                     <Input type="number" step="0.0001" min="0" disabled={readOnly}
-                      defaultValue={String(f.costo ?? 0)}
-                      onBlur={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
+                      value={f.costo ?? 0}
+                      onChange={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
                       className="h-7 w-full text-right text-xs tabular-nums" />
                   </td>
                   <td className="px-2 py-1 text-right text-xs tabular-nums">
