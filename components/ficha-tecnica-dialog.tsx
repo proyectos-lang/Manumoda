@@ -23,6 +23,7 @@ import {
 } from "@/components/ficha-proporciones"
 import { BuscadorTela } from "@/components/buscador-tela"
 import { FichaResultadoCorte } from "@/components/ficha-resultado-corte"
+import { FichaResumenCostos } from "@/components/ficha-resumen-costos"
 import { fetchAll } from "@/lib/supabase/fetch-all"
 
 /**
@@ -907,27 +908,12 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   <CampoNum label="Precio Público" value={ficha.precio_publico} readOnly={readOnly}
                     onChange={(v) => campo("precio_publico", v)} />
                 </div>
-                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                  <p>
-                    <span className="font-medium">Costo Neto</span> y{" "}
-                    <span className="font-medium">Margen</span> se calculan solos; los
-                    demás se capturan aquí y quedan informativos.
-                  </p>
-                  <p className="tabular-nums">
-                    Costo Neto = costo fijo {fmt(ficha.costo_fijo)} + tela{" "}
-                    {fmt(ficha.costo_tela)} + habilitación {fmt(ficha.costo_habilitacion)}{" "}
-                    = <span className="font-semibold">{fmt(ficha.costo_neto)}</span>
-                  </p>
-                  {ficha.margen_pct != null && (
-                    <p className="tabular-nums">
-                      Margen = (venta {fmt(ficha.precio_venta)} − neto{" "}
-                      {fmt(ficha.costo_neto)}) ÷ venta ={" "}
-                      <span className="font-semibold">
-                        {Number(ficha.margen_pct).toFixed(2)}%
-                      </span>
-                    </p>
-                  )}
-                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  <span className="font-medium">Costo Neto</span> y{" "}
+                  <span className="font-medium">Margen</span> se calculan solos; los
+                  demás se capturan aquí. El desglose completo está al final, ya
+                  con las telas y habilitaciones capturadas.
+                </p>
 
                 {/*
                   Los costos del proceso, en su propia franja y despues del
@@ -1067,18 +1053,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     <Derivado label="Costo total por pieza" value={costoTotalPieza} />
                     {ficha.precio_venta != null && Number(ficha.precio_venta) > 0 && (
                       <Derivado
-                        label="Deja por pieza"
+                        label="Utilidad unitaria"
                         value={Number(ficha.precio_venta) - costoTotalPieza}
                       />
                     )}
                   </div>
-                  <p className="mt-2 text-xs tabular-nums text-muted-foreground">
-                    Costo total = neto {fmt(ficha.costo_neto)} + maquila{" "}
-                    {fmt(ficha.costo_maquila)} + lavandería{" "}
-                    {fmt(ficha.costo_lavanderia)}
-                    {costoServicios > 0 && <> + servicios {fmt(costoServicios)}</>} ={" "}
-                    <span className="font-semibold">{fmt(costoTotalPieza)}</span>
-                  </p>
                 </div>
               </section>
 
@@ -1103,6 +1082,19 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 onAgregar={() => agregarMaterial("Habilitacion")}
                 onCambiar={guardarMaterial}
                 onBorrar={borrarMaterial}
+              />
+
+              {/*
+                El costeo va al FINAL, no arriba con los precios: ahi el
+                desglose mostraba tela $0.00 y habilitacion $0.00 porque
+                esos cuadros todavia no se habian capturado, y quien leia
+                no entendia de donde salia el Costo Neto.
+              */}
+              <FichaResumenCostos
+                ficha={ficha}
+                costoServicios={costoServicios}
+                costoTotalPieza={costoTotalPieza}
+                piezas={proporciones.total ?? ficha.piezas_totales ?? null}
               />
             </div>
           </div>
