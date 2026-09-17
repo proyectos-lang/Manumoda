@@ -165,7 +165,7 @@ export function FichaProporciones({
               })
             }
             placeholder="600"
-            className="mt-1 h-9 w-40 text-right tabular-nums"
+            className="mt-1 h-9 w-40 text-right tabular-nums sin-flechas"
           />
         </div>
       </div>
@@ -274,7 +274,7 @@ export function FichaProporciones({
                     disabled={readOnly}
                     value={valor.tallas[t]}
                     onChange={(e) => setTalla(t, Number(e.target.value) || 0)}
-                    className="h-7 w-24 text-right text-xs tabular-nums"
+                    className="h-7 w-24 text-right text-xs tabular-nums sin-flechas"
                   />
                   <span className="w-24 text-right text-[11px] text-muted-foreground tabular-nums">
                     {sumaT > 0 && valor.total
@@ -363,7 +363,7 @@ export function FichaProporciones({
                     disabled={readOnly}
                     value={valor.colores[c]}
                     onChange={(e) => setColor(c, Number(e.target.value) || 0)}
-                    className="h-7 w-24 text-right text-xs tabular-nums"
+                    className="h-7 w-24 text-right text-xs tabular-nums sin-flechas"
                   />
                   <span className="w-24 text-right text-[11px] text-muted-foreground tabular-nums">
                     {sumaC > 0 && valor.total

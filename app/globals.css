@@ -287,4 +287,25 @@
   .bg-icon-yellow { background-color: var(--icon-yellow); }
   .bg-icon-teal { background-color: var(--icon-teal); }
   .bg-icon-purple { background-color: var(--icon-purple); }
+
+  /*
+   * Campo numerico sin las flechitas de subir y bajar.
+   *
+   * En la ficha tecnica estorban: las casillas son angostas, las flechas
+   * se comen el espacio del numero y un clic accidental cambia un costo
+   * o una cantidad de piezas sin que nadie lo note.
+   *
+   * Se sigue pudiendo teclear numeros y usar las flechas del teclado.
+   * Hacen falta las dos reglas: WebKit (Chrome, Edge, Safari) usa un
+   * pseudo-elemento y Firefox una propiedad propia.
+   */
+  .sin-flechas::-webkit-outer-spin-button,
+  .sin-flechas::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .sin-flechas {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
 }

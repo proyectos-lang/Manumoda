@@ -148,7 +148,7 @@ export function FichaResultadoCorte({
                           placeholder={String(planCelda)}
                           title={`Plan: ${planCelda}`}
                           className={cn(
-                            "h-7 w-full min-w-[62px] text-center text-sm tabular-nums",
+                            "h-7 w-full min-w-[62px] text-center text-sm tabular-nums sin-flechas",
                             cuadra && "border-emerald-300 bg-emerald-50",
                             falta && "border-amber-300 bg-amber-50",
                             sobra && "border-sky-300 bg-sky-50",

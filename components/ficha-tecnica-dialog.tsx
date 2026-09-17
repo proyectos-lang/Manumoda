@@ -1203,7 +1203,7 @@ function CampoNum({
         disabled={readOnly}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-        className="mt-1 h-8 text-sm"
+        className="mt-1 h-8 text-sm sin-flechas"
       />
     </div>
   )
@@ -1246,7 +1246,7 @@ function CampoProceso({
         value={costo ?? ""}
         onChange={(e) => onCosto(e.target.value === "" ? null : Number(e.target.value))}
         placeholder="0.00"
-        className="mt-1 h-8 text-right text-sm tabular-nums"
+        className="mt-1 h-8 text-right text-sm tabular-nums sin-flechas"
       />
       <select
         disabled={readOnly}
@@ -1387,13 +1387,13 @@ function CuadroMateriales({
                     <Input type="number" step="0.0001" min="0" disabled={readOnly}
                       value={f.cantidad ?? 0}
                       onChange={(e) => onCambiar(f, { cantidad: Number(e.target.value) || 0 })}
-                      className="h-7 w-full text-right text-xs tabular-nums" />
+                      className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
                   </td>
                   <td className="px-1 py-1">
                     <Input type="number" step="0.0001" min="0" disabled={readOnly}
                       value={f.costo ?? 0}
                       onChange={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
-                      className="h-7 w-full text-right text-xs tabular-nums" />
+                      className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
                   </td>
                   <td className="px-2 py-1 text-right text-xs tabular-nums">
                     ${(Number(f.cantidad || 0) * Number(f.costo || 0)).toFixed(2)}
