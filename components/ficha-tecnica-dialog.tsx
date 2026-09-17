@@ -70,6 +70,17 @@ function idTemporal(): number {
   return siguienteIdTemporal--
 }
 
+/**
+ * Fecha en formato local: 24/07/2026.
+ *
+ * Se parte la cadena en vez de usar Date: `new Date("2026-07-24")` se
+ * interpreta como UTC y en México mostraría el día anterior.
+ */
+function fmtFechaCorta(iso: string): string {
+  const [a, m, d] = iso.slice(0, 10).split("-")
+  return `${d}/${m}/${a}`
+}
+
 /** Importe corto para las explicaciones de la franja de costeo. */
 function fmt(v: number | null | undefined): string {
   return v == null ? "$0.00" : `$${Number(v).toFixed(2)}`
@@ -801,6 +812,35 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     onChange={() => {}} />
                   <Campo label="Modelo Cliente" value={ficha.modelo_cliente} readOnly={readOnly}
                     onChange={(v) => campo("modelo_cliente", v)} />
+
+                  {/*
+                    Las dos fechas del pedido, juntas y arriba. Antes la de
+                    confirmacion estaba al final de la franja de costeo, donde
+                    quedaba fuera de la vista en pantallas angostas y separada
+                    de su pareja natural. En el PDF siempre fueron juntas.
+                  */}
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Fecha confirmación
+                    </label>
+                    <Input
+                      type="date"
+                      disabled={readOnly}
+                      value={ficha.fecha_confirmacion ?? ""}
+                      onChange={(e) => campo("fecha_confirmacion", e.target.value || null)}
+                      className="mt-1 h-8 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Fecha cancelación
+                    </label>
+                    <div className="mt-1 flex h-8 items-center rounded-md border border-border bg-muted/50 px-3 text-sm">
+                      {ficha.fecha_cancelacion
+                        ? fmtFechaCorta(ficha.fecha_cancelacion)
+                        : "—"}
+                    </div>
+                  </div>
                   <div className="sm:col-span-2">
                     <label className="text-xs font-medium text-muted-foreground">
                       Descripción Completa
@@ -853,7 +893,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               {/* ── Costos ── */}
               <section>
                 <h3 className="mb-2 text-sm font-semibold">Costos y precios</h3>
-                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                   <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
                     onChange={(v) => campo("costo_fijo", v)} />
                   <Derivado label="Costo Neto" value={ficha.costo_neto} />
@@ -862,18 +902,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   <Derivado label="Margen %" value={ficha.margen_pct} sufijo="%" />
                   <CampoNum label="Precio Público" value={ficha.precio_publico} readOnly={readOnly}
                     onChange={(v) => campo("precio_publico", v)} />
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground">
-                      Fecha confirmación
-                    </label>
-                    <Input
-                      type="date"
-                      disabled={readOnly}
-                      value={ficha.fecha_confirmacion ?? ""}
-                      onChange={(e) => campo("fecha_confirmacion", e.target.value || null)}
-                      className="mt-1 h-8 text-sm"
-                    />
-                  </div>
                 </div>
                 <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                   <p>
