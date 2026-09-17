@@ -101,6 +101,8 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   /** Los catálogos de Inventarios, para los buscadores por clave. */
   const [catalogoTelas, setCatalogoTelas] = useState<VwInventarioArticulo[]>([])
   const [catalogoHab, setCatalogoHab] = useState<VwInventarioArticulo[]>([])
+  /** Los maquileros del catálogo, para asignar quién produce la orden. */
+  const [maquileros, setMaquileros] = useState<{ id: number; nombre: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
@@ -335,6 +337,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       ])
       setCatalogoTelas(tel.data)
       setCatalogoHab(hab.data)
+
+      const { data: maq } = await supabase
+        .from("maquileros")
+        .select("id, nombre")
+        .eq("idempresa", IDEMPRESA)
+        .order("nombre")
+      setMaquileros(maq ?? [])
     })()
   }, [open, catalogoTelas.length])
 
@@ -363,6 +372,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         precio_publico: ficha.precio_publico,
         fecha_confirmacion: ficha.fecha_confirmacion,
         piezas_ficha: proporciones.total,
+        // Los costos del proceso y el maquilero: son el MISMO dato que usa
+        // Pago Maquilas, no una copia. La ficha sirve para asignarlos
+        // cuando la orden todavía no los trae.
+        costo_maquila: ficha.costo_maquila,
+        costo_lavanderia: ficha.costo_lavanderia,
+        idmaquilero: ficha.idmaquilero,
+        maquilero: ficha.maquilero,
       })
       .eq("idempresa", IDEMPRESA)
       .eq("folio", folio)
@@ -901,12 +917,75 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                     <p className="text-xs font-semibold">Costos del proceso</p>
                     <p className="text-[11px] text-muted-foreground">
-                      No entran al Costo Neto · se editan en Pago Maquilas
+                      No entran al Costo Neto · es el mismo dato de Pago Maquilas
                     </p>
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <Derivado label="Costo Maquila" value={ficha.costo_maquila} />
-                    <Derivado label="Costo Lavandería" value={ficha.costo_lavanderia} />
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {/*
+                      El maquilero se ELIGE aqui, y es el mismo campo que usa
+                      Pago Maquilas para calcular lo que se le debe: no es una
+                      copia. La ficha sirve para asignarlo cuando la orden
+                      todavia no lo trae.
+                    */}
+                    <div className="sm:col-span-2">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Maquilero
+                      </label>
+                      <select
+                        disabled={readOnly}
+                        value={ficha.idmaquilero ?? ""}
+                        onChange={(e) => {
+                          const id = e.target.value === "" ? null : Number(e.target.value)
+                          setFicha((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  idmaquilero: id,
+                                  // El texto se sincroniza con el catálogo: si
+                                  // quedaran distintos, Pago Maquilas agruparía
+                                  // por uno y la ficha mostraría el otro.
+                                  maquilero:
+                                    maquileros.find((m) => m.id === id)?.nombre ??
+                                    (id == null ? null : prev.maquilero),
+                                }
+                              : prev,
+                          )
+                        }}
+                        className="mt-1 h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="">Sin asignar</option>
+                        {maquileros.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.nombre}
+                          </option>
+                        ))}
+                      </select>
+                      {/*
+                        219 ordenes traen un nombre del Excel pero solo 167
+                        estan ligadas al catalogo. Ese texto se muestra en vez
+                        de esconderlo: si no, pareceria que no tienen maquilero.
+                      */}
+                      {ficha.idmaquilero == null && ficha.maquilero && (
+                        <p className="mt-1 text-[11px] text-amber-700">
+                          Del Excel: <span className="font-medium">{ficha.maquilero}</span>
+                          {" — no está en el catálogo"}
+                        </p>
+                      )}
+                    </div>
+                    <CampoNum
+                      label="Costo Maquila"
+                      value={ficha.costo_maquila ?? null}
+                      readOnly={readOnly}
+                      onChange={(v) => campo("costo_maquila", v)}
+                    />
+                    <CampoNum
+                      label="Costo Lavandería"
+                      value={ficha.costo_lavanderia ?? null}
+                      readOnly={readOnly}
+                      onChange={(v) => campo("costo_lavanderia", v)}
+                    />
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <Derivado
                       label="Costo total por pieza"
                       value={

@@ -833,6 +833,15 @@ export type VwFichaTecnica = {
   piezas_cortadas: number | null
   costo_tela: number
   costo_habilitacion: number
+  /**
+   * Quién produce la orden. Es el MISMO dato que usa Pago Maquilas, no
+   * una copia: asignarlo desde la ficha lo asigna de verdad.
+   */
+  idmaquilero: number | null
+  /** El texto que vino del Excel; puede no estar en el catálogo. */
+  maquilero: string | null
+  /** El nombre del catálogo, resuelto en la vista. */
+  maquilero_catalogo: string | null
   costo_fijo: number | null
   costo_maquila: number | null
   costo_lavanderia: number | null
