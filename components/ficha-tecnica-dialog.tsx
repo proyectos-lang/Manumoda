@@ -887,6 +887,62 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     </p>
                   )}
                 </div>
+
+                {/*
+                  Los costos del proceso, en su propia franja y despues del
+                  desglose: se muestran porque hacen falta para decidir, pero
+                  NO entran al Costo Neto —la ficha impresa no los incluye— y
+                  mezclarlos arriba haria pensar que si.
+
+                  Vienen del Excel y se gestionan en Pago Maquilas; aqui solo
+                  se consultan.
+                */}
+                <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="text-xs font-semibold">Costos del proceso</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      No entran al Costo Neto · se editan en Pago Maquilas
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Derivado label="Costo Maquila" value={ficha.costo_maquila} />
+                    <Derivado label="Costo Lavandería" value={ficha.costo_lavanderia} />
+                    <Derivado
+                      label="Costo total por pieza"
+                      value={
+                        Number(ficha.costo_neto ?? 0) +
+                        Number(ficha.costo_maquila ?? 0) +
+                        Number(ficha.costo_lavanderia ?? 0)
+                      }
+                    />
+                  </div>
+                  <p className="mt-2 text-xs tabular-nums text-muted-foreground">
+                    Costo total = neto {fmt(ficha.costo_neto)} + maquila{" "}
+                    {fmt(ficha.costo_maquila)} + lavandería{" "}
+                    {fmt(ficha.costo_lavanderia)} ={" "}
+                    <span className="font-semibold">
+                      {fmt(
+                        Number(ficha.costo_neto ?? 0) +
+                          Number(ficha.costo_maquila ?? 0) +
+                          Number(ficha.costo_lavanderia ?? 0),
+                      )}
+                    </span>
+                    {ficha.precio_venta != null && Number(ficha.precio_venta) > 0 && (
+                      <>
+                        {" · deja "}
+                        <span className="font-semibold">
+                          {fmt(
+                            Number(ficha.precio_venta) -
+                              Number(ficha.costo_neto ?? 0) -
+                              Number(ficha.costo_maquila ?? 0) -
+                              Number(ficha.costo_lavanderia ?? 0),
+                          )}
+                        </span>
+                        {" por pieza"}
+                      </>
+                    )}
+                  </p>
+                </div>
               </section>
 
               {/* ── Materiales ── */}
