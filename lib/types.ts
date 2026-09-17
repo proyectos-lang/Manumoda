@@ -843,8 +843,28 @@ export type VwFichaTecnica = {
   /** El nombre del catálogo, resuelto en la vista. */
   maquilero_catalogo: string | null
   costo_fijo: number | null
+  // ── Costos del proceso, todos POR PIEZA ──
+  // Se capturan en la ficha y los lee Pago Maquilas: son las mismas
+  // columnas de `ordenes_produccion`, no una copia.
   costo_maquila: number | null
   costo_lavanderia: number | null
+  costo_estampado: number | null
+  costo_bordado: number | null
+  costo_corte_externo: number | null
+  costo_otro: number | null
+  /**
+   * Quién hace cada proceso. Informativo por ahora; será la base para
+   * pagarle a cada quien lo suyo en vez de un solo pago por folio.
+   */
+  idmaquilero_lavanderia: number | null
+  idmaquilero_estampado: number | null
+  idmaquilero_bordado: number | null
+  idmaquilero_corte_externo: number | null
+  idmaquilero_otro: number | null
+  /** La suma de los cuatro servicios externos, calculada en la vista. */
+  costo_servicios: number
+  /** Neto + todo el proceso: lo que cuesta producir una pieza de verdad. */
+  costo_total_pieza: number
   /** Derivado: fijo + maquila + lavandería + tela + habilitación. */
   costo_neto: number
   precio_venta: number | null

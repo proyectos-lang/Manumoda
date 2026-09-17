@@ -377,6 +377,15 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         // cuando la orden todavía no los trae.
         costo_maquila: ficha.costo_maquila,
         costo_lavanderia: ficha.costo_lavanderia,
+        costo_estampado: ficha.costo_estampado,
+        costo_bordado: ficha.costo_bordado,
+        costo_corte_externo: ficha.costo_corte_externo,
+        costo_otro: ficha.costo_otro,
+        idmaquilero_lavanderia: ficha.idmaquilero_lavanderia,
+        idmaquilero_estampado: ficha.idmaquilero_estampado,
+        idmaquilero_bordado: ficha.idmaquilero_bordado,
+        idmaquilero_corte_externo: ficha.idmaquilero_corte_externo,
+        idmaquilero_otro: ficha.idmaquilero_otro,
         idmaquilero: ficha.idmaquilero,
         maquilero: ficha.maquilero,
       })
@@ -644,6 +653,22 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   }
 
   if (!open) return null
+
+  /**
+   * Los costos del proceso se calculan aquí y no se leen de la vista:
+   * así el total refleja lo que se acaba de teclear, antes de guardar.
+   * La vista trae el mismo número una vez guardado.
+   */
+  const costoServicios =
+    Number(ficha?.costo_estampado ?? 0) +
+    Number(ficha?.costo_bordado ?? 0) +
+    Number(ficha?.costo_corte_externo ?? 0) +
+    Number(ficha?.costo_otro ?? 0)
+  const costoTotalPieza =
+    Number(ficha?.costo_neto ?? 0) +
+    Number(ficha?.costo_maquila ?? 0) +
+    Number(ficha?.costo_lavanderia ?? 0) +
+    costoServicios
 
   const espec = tallas.filter((t) => t.bloque === "Especificacion")
   const cortadas = tallas.filter((t) => t.bloque === "Cortadas")
@@ -978,48 +1003,81 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                       readOnly={readOnly}
                       onChange={(v) => campo("costo_maquila", v)}
                     />
-                    <CampoNum
-                      label="Costo Lavandería"
-                      value={ficha.costo_lavanderia ?? null}
+                    <CampoProceso
+                      label="Lavandería"
+                      costo={ficha.costo_lavanderia ?? null}
+                      idmaquilero={ficha.idmaquilero_lavanderia ?? null}
+                      maquileros={maquileros}
                       readOnly={readOnly}
-                      onChange={(v) => campo("costo_lavanderia", v)}
+                      onCosto={(v) => campo("costo_lavanderia", v)}
+                      onMaquilero={(v) => campo("idmaquilero_lavanderia", v)}
                     />
                   </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <Derivado
-                      label="Costo total por pieza"
-                      value={
-                        Number(ficha.costo_neto ?? 0) +
-                        Number(ficha.costo_maquila ?? 0) +
-                        Number(ficha.costo_lavanderia ?? 0)
-                      }
+
+                  {/*
+                    Los servicios externos. Van en su propio renglon y no
+                    junto a maquila porque son otra clase de gasto: se
+                    contratan por fuera y no todos los folios los llevan.
+                    Hoy los cuatro estan vacios en las 637 ordenes: el Excel
+                    nunca los trajo y esta es la primera captura.
+                  */}
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <CampoProceso
+                      label="Estampado"
+                      costo={ficha.costo_estampado ?? null}
+                      idmaquilero={ficha.idmaquilero_estampado ?? null}
+                      maquileros={maquileros}
+                      readOnly={readOnly}
+                      onCosto={(v) => campo("costo_estampado", v)}
+                      onMaquilero={(v) => campo("idmaquilero_estampado", v)}
                     />
+                    <CampoProceso
+                      label="Bordado"
+                      costo={ficha.costo_bordado ?? null}
+                      idmaquilero={ficha.idmaquilero_bordado ?? null}
+                      maquileros={maquileros}
+                      readOnly={readOnly}
+                      onCosto={(v) => campo("costo_bordado", v)}
+                      onMaquilero={(v) => campo("idmaquilero_bordado", v)}
+                    />
+                    <CampoProceso
+                      label="Corte externo"
+                      costo={ficha.costo_corte_externo ?? null}
+                      idmaquilero={ficha.idmaquilero_corte_externo ?? null}
+                      maquileros={maquileros}
+                      readOnly={readOnly}
+                      onCosto={(v) => campo("costo_corte_externo", v)}
+                      onMaquilero={(v) => campo("idmaquilero_corte_externo", v)}
+                    />
+                    <CampoProceso
+                      label="Otros"
+                      costo={ficha.costo_otro ?? null}
+                      idmaquilero={ficha.idmaquilero_otro ?? null}
+                      maquileros={maquileros}
+                      readOnly={readOnly}
+                      onCosto={(v) => campo("costo_otro", v)}
+                      onMaquilero={(v) => campo("idmaquilero_otro", v)}
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    El responsable de cada proceso es informativo por ahora; más
+                    adelante servirá para pagarle a cada quien lo suyo.
+                  </p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Derivado label="Costo total por pieza" value={costoTotalPieza} />
+                    {ficha.precio_venta != null && Number(ficha.precio_venta) > 0 && (
+                      <Derivado
+                        label="Deja por pieza"
+                        value={Number(ficha.precio_venta) - costoTotalPieza}
+                      />
+                    )}
                   </div>
                   <p className="mt-2 text-xs tabular-nums text-muted-foreground">
                     Costo total = neto {fmt(ficha.costo_neto)} + maquila{" "}
                     {fmt(ficha.costo_maquila)} + lavandería{" "}
-                    {fmt(ficha.costo_lavanderia)} ={" "}
-                    <span className="font-semibold">
-                      {fmt(
-                        Number(ficha.costo_neto ?? 0) +
-                          Number(ficha.costo_maquila ?? 0) +
-                          Number(ficha.costo_lavanderia ?? 0),
-                      )}
-                    </span>
-                    {ficha.precio_venta != null && Number(ficha.precio_venta) > 0 && (
-                      <>
-                        {" · deja "}
-                        <span className="font-semibold">
-                          {fmt(
-                            Number(ficha.precio_venta) -
-                              Number(ficha.costo_neto ?? 0) -
-                              Number(ficha.costo_maquila ?? 0) -
-                              Number(ficha.costo_lavanderia ?? 0),
-                          )}
-                        </span>
-                        {" por pieza"}
-                      </>
-                    )}
+                    {fmt(ficha.costo_lavanderia)}
+                    {costoServicios > 0 && <> + servicios {fmt(costoServicios)}</>} ={" "}
+                    <span className="font-semibold">{fmt(costoTotalPieza)}</span>
                   </p>
                 </div>
               </section>
@@ -1151,6 +1209,63 @@ function CampoNum({
   )
 }
 
+
+/**
+ * Un proceso del folio: cuánto cuesta por pieza y quién lo hace.
+ *
+ * Los dos juntos porque son el mismo hecho —"a fulano le pagamos X por
+ * pieza de estampado"— y separarlos obligaría a cruzar dos listas para
+ * leerlo. Hoy el responsable es informativo; más adelante cada uno
+ * cobrará lo suyo.
+ */
+function CampoProceso({
+  label,
+  costo,
+  idmaquilero,
+  maquileros,
+  readOnly,
+  onCosto,
+  onMaquilero,
+}: {
+  label: string
+  costo: number | null
+  idmaquilero: number | null
+  maquileros: { id: number; nombre: string }[]
+  readOnly: boolean
+  onCosto: (v: number | null) => void
+  onMaquilero: (v: number | null) => void
+}) {
+  return (
+    <div className="rounded-md border border-border bg-card p-2">
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <Input
+        type="number"
+        min="0"
+        step="0.01"
+        disabled={readOnly}
+        value={costo ?? ""}
+        onChange={(e) => onCosto(e.target.value === "" ? null : Number(e.target.value))}
+        placeholder="0.00"
+        className="mt-1 h-8 text-right text-sm tabular-nums"
+      />
+      <select
+        disabled={readOnly}
+        value={idmaquilero ?? ""}
+        onChange={(e) =>
+          onMaquilero(e.target.value === "" ? null : Number(e.target.value))
+        }
+        className="mt-1 h-7 w-full rounded-md border border-input bg-transparent px-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value="">¿Quién lo hace?</option>
+        {maquileros.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.nombre}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
 
 /** Un valor calculado por la base. Se muestra, no se edita. */
 function Derivado({ label, value, sufijo }: { label: string; value: number | null; sufijo?: string }) {
