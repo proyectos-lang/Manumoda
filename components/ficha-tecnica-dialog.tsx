@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Copy, Loader2, Plus, Printer, Trash2, Upload } from "lucide-react"
+import { ArrowLeft, Loader2, Plus, Printer, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,6 +22,7 @@ import {
   type ProporcionesState,
 } from "@/components/ficha-proporciones"
 import { BuscadorTela } from "@/components/buscador-tela"
+import { FichaResultadoCorte } from "@/components/ficha-resultado-corte"
 import { fetchAll } from "@/lib/supabase/fetch-all"
 
 /**
@@ -140,6 +141,71 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     for (const t of tallas) for (const k of Object.keys(t.cantidades ?? {})) vistas.add(k)
     return vistas.size > 0 ? [...vistas] : TALLAS_DEFAULT
   }, [tallas, proporciones])
+
+  /**
+   * El reparto planeado, como matriz color × talla. Define la forma del
+   * cuadro de resultado de corte: mismas filas, mismas columnas.
+   */
+  const matrizPlan = useMemo(() => {
+    const m: Record<string, Record<string, number>> = {}
+    for (const fila of tallas.filter((t) => t.bloque === "Especificacion")) {
+      m[fila.color] = { ...(fila.cantidades ?? {}) } as Record<string, number>
+    }
+    return m
+  }, [tallas])
+
+  /**
+   * Lo capturado del corte. Una celda ausente es "sin capturar", que NO
+   * es lo mismo que un cero: el cero dice "no salió ninguna", el hueco
+   * dice "todavía no lo sé".
+   */
+  const matrizCorte = useMemo(() => {
+    const m: Record<string, Record<string, number | null>> = {}
+    for (const fila of tallas.filter((t) => t.bloque === "Cortadas")) {
+      m[fila.color] = { ...(fila.cantidades ?? {}) } as Record<string, number | null>
+    }
+    return m
+  }, [tallas])
+
+  /**
+   * Captura una celda del corte. Si el color todavía no tiene renglón, se
+   * crea copiando la estructura del plan: quien captura no debería tener
+   * que dar de alta nada.
+   *
+   * Solo en memoria: se escribe al presionar Guardar.
+   */
+  function capturarCorte(color: string, talla: string, valor: number | null) {
+    if (!folio) return
+    setTallas((prev) => {
+      const fila = prev.find((t) => t.bloque === "Cortadas" && t.color === color)
+      if (fila) {
+        const cantidades = { ...(fila.cantidades ?? {}) } as Record<string, number>
+        if (valor == null) delete cantidades[talla]
+        else cantidades[talla] = valor
+        return prev.map((t) => (t.id === fila.id ? { ...t, cantidades } : t))
+      }
+      // Sin renglón todavía: nace con esta sola casilla, no con el plan.
+      if (valor == null) return prev
+      const delPlan = prev.find(
+        (t) => t.bloque === "Especificacion" && t.color === color,
+      )
+      return [
+        ...prev,
+        {
+          id: idTemporal(),
+          idempresa: IDEMPRESA,
+          folio,
+          bloque: "Cortadas" as const,
+          color,
+          orden: prev.filter((t) => t.bloque === "Cortadas").length + 1,
+          cantidades: { [talla]: valor },
+          proporciones: delPlan?.proporciones ?? {},
+          proporcion: delPlan?.proporcion ?? null,
+          created_at: new Date().toISOString(),
+        },
+      ]
+    })
+  }
 
   const cargar = useCallback(async () => {
     if (!folio) return
@@ -512,85 +578,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   }
 
 
-  /**
-   * Copia la estructura del plan al cuadro de resultado de corte: los
-   * mismos colores y tallas, pero EN CEROS.
-   *
-   * En ceros a proposito: lo que salio del corte es un hecho que se mide,
-   * no algo que se deduzca del plan. Precargarlo con las cantidades
-   * planeadas haria que un corte sin capturar pareciera cumplido.
-   */
-  function replicarPlanEnCorte() {
-    if (!folio) return
-    const plan = tallas.filter((t) => t.bloque === "Especificacion")
-    if (plan.length === 0) {
-      toast.error("Primero aplica el reparto: de ahí sale la estructura")
-      return
-    }
-    const yaEsta = new Set(
-      tallas.filter((t) => t.bloque === "Cortadas").map((t) => t.color),
-    )
-    const nuevos = plan.filter((p) => !yaEsta.has(p.color))
-    if (nuevos.length === 0) {
-      toast.info("El resultado de corte ya tiene todos los colores del plan")
-      return
-    }
-    // En ceros: lo que salió del corte es un hecho que se mide, no algo
-    // que se deduzca del plan.
-    setTallas((prev) => [
-      ...prev,
-      ...nuevos.map((p, i) => ({
-        ...p,
-        id: idTemporal(),
-        bloque: "Cortadas" as const,
-        orden: i + 1,
-        cantidades: Object.fromEntries(
-          Object.keys(p.cantidades ?? {}).map((t) => [t, 0]),
-        ),
-        created_at: new Date().toISOString(),
-      })),
-    ])
-    toast.success(`${nuevos.length} colores listos — presiona Guardar`)
-  }
-
-
-  // ── Tallas ────────────────────────────────────────────────────────────────
-
-  /**
-   * El color se captura en la propia tabla, no con window.prompt: el
-   * prompt del navegador queda bloqueado cuando la ficha se abre sobre
-   * otro panel modal, y el boton parecia no hacer nada.
-   */
-  function agregarTalla(bloque: "Especificacion" | "Cortadas", color: string) {
-    if (!folio) return
-    const limpio = color.trim().toUpperCase()
-    if (!limpio) {
-      toast.error("Escribe el color del renglón")
-      return
-    }
-    if (tallas.some((t) => t.bloque === bloque && t.color.toUpperCase() === limpio)) {
-      toast.error(`Ya hay un renglón para ${limpio} en este bloque`)
-      return
-    }
-    // Solo en memoria, con id temporal: se inserta al presionar Guardar.
-    setTallas((prev) => [
-      ...prev,
-      {
-        id: idTemporal(),
-        idempresa: IDEMPRESA,
-        folio,
-        bloque,
-        color: limpio,
-        orden: prev.filter((t) => t.bloque === bloque).length + 1,
-        cantidades: Object.fromEntries(columnasTalla.map((c) => [c, 0])),
-        proporciones: prev.find((t) => t.bloque === bloque)?.proporciones ?? {},
-        proporcion: null,
-        created_at: new Date().toISOString(),
-      },
-    ])
-  }
-
-
   /** Solo en memoria: se escribe al presionar Guardar. */
   function guardarTalla(fila: FichaTalla, talla: string, valor: number) {
     const cantidades = { ...(fila.cantidades ?? {}), [talla]: valor }
@@ -602,28 +589,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    * es una sola por bloque, no una por color, y asi el PDF la encuentra
    * donde la espera.
    */
-  /** Solo en memoria: se escribe al presionar Guardar. */
-  function guardarProporcion(
-    bloque: "Especificacion" | "Cortadas",
-    talla: string,
-    valor: number,
-  ) {
-    const primera = tallas.find((t) => t.bloque === bloque)
-    if (!primera) {
-      toast.error("Agrega primero un renglón de color")
-      return
-    }
-    const proporciones = { ...(primera.proporciones ?? {}), [talla]: valor }
-    setTallas((prev) =>
-      prev.map((t) => (t.id === primera.id ? { ...t, proporciones } : t)),
-    )
-  }
-
-  /** Solo en memoria: el borrado se aplica al presionar Guardar. */
-  function borrarTalla(id: number) {
-    setTallas((prev) => prev.filter((t) => t.id !== id))
-    if (id > 0) setBorradosTallas((prev) => [...prev, id])
-  }
 
   // ── Materiales ────────────────────────────────────────────────────────────
 
@@ -874,20 +839,18 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 corte. Nace en blanco con los mismos colores y tallas del
                 plan, y se llena mas adelante desde Corte.
               */}
-              <CuadroTallas
-                titulo="Resultado de corte"
-                subtitulo="Se llena en Corte, cuando se sepa lo que realmente salió."
-                filas={cortadas}
+              {/*
+                Espejo del reparto: mismas filas y columnas, celdas en
+                blanco. Las filas no se capturan aqui —salen del plan— para
+                que cada casilla caiga en la misma posicion que su
+                contraparte planeada.
+              */}
+              <FichaResultadoCorte
+                plan={matrizPlan}
+                real={matrizCorte}
                 columnas={columnasTalla}
                 readOnly={readOnly}
-                onAgregar={(color) => agregarTalla("Cortadas", color)}
-                onCambiar={guardarTalla}
-                onCambiarProporcion={(talla, v) =>
-                  guardarProporcion("Cortadas", talla, v)
-                }
-                onBorrar={borrarTalla}
-                onReplicarPlan={replicarPlanEnCorte}
-                puedeReplicar={espec.length > 0}
+                onCambiar={capturarCorte}
               />
 
               {/* ── Costos ── */}
@@ -1053,6 +1016,7 @@ function CampoNum({
   )
 }
 
+
 /** Un valor calculado por la base. Se muestra, no se edita. */
 function Derivado({ label, value, sufijo }: { label: string; value: number | null; sufijo?: string }) {
   return (
@@ -1062,181 +1026,6 @@ function Derivado({ label, value, sufijo }: { label: string; value: number | nul
         {value == null ? "—" : `${sufijo ? "" : "$"}${Number(value).toFixed(2)}${sufijo ?? ""}`}
       </div>
     </div>
-  )
-}
-
-function CuadroTallas({
-  titulo, filas, columnas, readOnly, onAgregar, onCambiar, onCambiarProporcion,
-  onBorrar, subtitulo, onReplicarPlan, puedeReplicar,
-}: {
-  titulo: string
-  filas: FichaTalla[]
-  columnas: string[]
-  readOnly: boolean
-  onAgregar: (color: string) => void
-  onCambiar: (fila: FichaTalla, talla: string, valor: number) => void
-  onCambiarProporcion: (talla: string, valor: number) => void
-  onBorrar: (id: number) => void
-  subtitulo?: string
-  /** Copia los colores y tallas del plan, en ceros. */
-  onReplicarPlan?: () => void
-  puedeReplicar?: boolean
-}) {
-  const [nuevoColor, setNuevoColor] = useState("")
-  const total = filas.reduce(
-    (s, f) => s + Object.values(f.cantidades ?? {}).reduce((a, b) => a + Number(b || 0), 0),
-    0,
-  )
-  return (
-    <section>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold">{titulo}</h3>
-          {subtitulo && (
-            <p className="text-xs text-muted-foreground">{subtitulo}</p>
-          )}
-        </div>
-        {/*
-          El color se teclea aqui mismo. Antes lo pedia window.prompt, que
-          el navegador bloquea cuando la ficha se abre sobre otro panel
-          modal: el boton parecia no hacer nada.
-        */}
-        <div className="flex items-center gap-1.5">
-          {onReplicarPlan && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1 text-xs"
-              disabled={readOnly || !puedeReplicar}
-              title="Copia los colores y tallas del plan, en ceros"
-              onClick={onReplicarPlan}
-            >
-              <Copy className="size-3" />
-              Copiar del plan
-            </Button>
-          )}
-          <Input
-            value={nuevoColor}
-            onChange={(e) => setNuevoColor(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && nuevoColor.trim()) {
-                onAgregar(nuevoColor)
-                setNuevoColor("")
-              }
-            }}
-            placeholder="Color…"
-            disabled={readOnly}
-            className="h-7 w-36 text-xs"
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1 text-xs"
-            disabled={readOnly || !nuevoColor.trim()}
-            onClick={() => {
-              onAgregar(nuevoColor)
-              setNuevoColor("")
-            }}
-          >
-            <Plus className="size-3" />
-            Color
-          </Button>
-        </div>
-      </div>
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead className="bg-muted">
-            <tr>
-              <th className="px-3 py-1.5 text-left font-medium">Color</th>
-              {columnas.map((c) => (
-                <th key={c} className="px-2 py-1.5 text-center font-medium">{c}</th>
-              ))}
-              <th className="px-3 py-1.5 text-right font-medium">Total</th>
-              <th className="w-10" />
-            </tr>
-            {/*
-              La proporción del tendido: un valor por talla, no por color.
-              Se guarda en el primer renglón del bloque, que es donde la
-              busca el PDF.
-            */}
-            {filas.length > 0 && (
-              <tr className="border-t border-border">
-                <td className="px-3 py-1 text-xs font-medium text-muted-foreground">
-                  Proporción
-                </td>
-                {columnas.map((c) => (
-                  <td key={c} className="px-1 py-1">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      disabled={readOnly}
-                      defaultValue={String(filas[0]?.proporciones?.[c] ?? "")}
-                      onBlur={(e) =>
-                        onCambiarProporcion(c, Number(e.target.value) || 0)
-                      }
-                      className="h-7 w-full min-w-[60px] text-center text-xs tabular-nums"
-                    />
-                  </td>
-                ))}
-                <td />
-                <td />
-              </tr>
-            )}
-          </thead>
-          <tbody>
-            {filas.length === 0 ? (
-              <tr>
-                <td colSpan={columnas.length + 3}
-                  className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  Sin renglones. Agrega un color.
-                </td>
-              </tr>
-            ) : (
-              filas.map((f) => {
-                const suma = Object.values(f.cantidades ?? {}).reduce(
-                  (a, b) => a + Number(b || 0), 0)
-                return (
-                  <tr key={f.id} className="border-t border-border">
-                    <td className="px-3 py-1 font-medium">{f.color}</td>
-                    {columnas.map((c) => (
-                      <td key={c} className="px-1 py-1">
-                        <Input
-                          type="number"
-                          min="0"
-                          disabled={readOnly}
-                          value={String(f.cantidades?.[c] ?? 0)}
-                          onChange={(e) => onCambiar(f, c, Number(e.target.value) || 0)}
-                          className="h-7 w-full min-w-[60px] text-center text-sm tabular-nums"
-                        />
-                      </td>
-                    ))}
-                    <td className="px-3 py-1 text-right font-medium tabular-nums">{suma}</td>
-                    <td className="px-1 py-1">
-                      <Button size="sm" variant="ghost" className="size-7 p-0"
-                        disabled={readOnly} onClick={() => onBorrar(f.id)}>
-                        <Trash2 className="size-3.5 text-muted-foreground" />
-                      </Button>
-                    </td>
-                  </tr>
-                )
-              })
-            )}
-          </tbody>
-          {filas.length > 0 && (
-            <tfoot className="border-t-2 border-border bg-muted/50">
-              <tr>
-                <td className="px-3 py-1.5 font-semibold" colSpan={columnas.length + 1}>
-                  Piezas Totales
-                </td>
-                <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{total}</td>
-                <td />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-    </section>
   )
 }
 
