@@ -656,6 +656,37 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   if (!open) return null
 
   /**
+   * Los materiales se suman desde `materiales`, el estado en memoria, y
+   * NO desde `ficha.costo_tela` / `costo_habilitacion`.
+   *
+   * Esas dos vienen de la vista, que solo conoce lo GUARDADO: desde el
+   * guardado explícito, una línea recién capturada todavía no está ahí y
+   * la tabla mostraba $0.00 hasta presionar Guardar. El Costo Neto salía
+   * incompleto por lo mismo.
+   */
+  const costoTela = materiales
+    .filter((m) => m.tipo === "Tela")
+    .reduce((s, m) => s + Number(m.cantidad || 0) * Number(m.costo || 0), 0)
+  const costoHabilitacion = materiales
+    .filter((m) => m.tipo === "Habilitacion")
+    .reduce((s, m) => s + Number(m.cantidad || 0) * Number(m.costo || 0), 0)
+  /** Costo Neto = costo fijo + materiales. La misma fórmula de la vista. */
+  const costoNeto =
+    Math.round(
+      (Number(ficha?.costo_fijo ?? 0) + costoTela + costoHabilitacion) * 100,
+    ) / 100
+
+  /** Margen sobre el precio de venta, con el neto de la pantalla. */
+  const margenPct =
+    ficha?.precio_venta != null && Number(ficha.precio_venta) > 0
+      ? Math.round(
+          ((100 * (Number(ficha.precio_venta) - costoNeto)) /
+            Number(ficha.precio_venta)) *
+            100,
+        ) / 100
+      : null
+
+  /**
    * Los costos del proceso se calculan aquí y no se leen de la vista:
    * así el total refleja lo que se acaba de teclear, antes de guardar.
    * La vista trae el mismo número una vez guardado.
@@ -666,7 +697,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     Number(ficha?.costo_corte_externo ?? 0) +
     Number(ficha?.costo_otro ?? 0)
   const costoTotalPieza =
-    Number(ficha?.costo_neto ?? 0) +
+    costoNeto +
     Number(ficha?.costo_maquila ?? 0) +
     Number(ficha?.costo_lavanderia ?? 0) +
     costoServicios
@@ -901,10 +932,10 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                   <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
                     onChange={(v) => campo("costo_fijo", v)} />
-                  <Derivado label="Costo Neto" value={ficha.costo_neto} />
+                  <Derivado label="Costo Neto" value={costoNeto} />
                   <CampoNum label="Precio Venta" value={ficha.precio_venta} readOnly={readOnly}
                     onChange={(v) => campo("precio_venta", v)} />
-                  <Derivado label="Margen %" value={ficha.margen_pct} sufijo="%" />
+                  <Derivado label="Margen %" value={margenPct} sufijo="%" />
                   <CampoNum label="Precio Público" value={ficha.precio_publico} readOnly={readOnly}
                     onChange={(v) => campo("precio_publico", v)} />
                 </div>
@@ -1092,6 +1123,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               */}
               <FichaResumenCostos
                 ficha={ficha}
+                costoTela={costoTela}
+                costoHabilitacion={costoHabilitacion}
+                costoNeto={costoNeto}
                 costoServicios={costoServicios}
                 costoTotalPieza={costoTotalPieza}
                 piezas={proporciones.total ?? ficha.piezas_totales ?? null}

@@ -30,18 +30,29 @@ function money(v: number | null | undefined): string {
 
 export function FichaResumenCostos({
   ficha,
+  costoTela,
+  costoHabilitacion,
+  costoNeto,
   costoServicios,
   costoTotalPieza,
   piezas,
 }: {
   ficha: VwFichaTecnica
+  /**
+   * Los materiales y el neto llegan CALCULADOS desde el formulario, no se
+   * leen de `ficha`: esa viene de la vista, que solo conoce lo guardado, y
+   * una línea recién capturada no estaría ahí todavía.
+   */
+  costoTela: number
+  costoHabilitacion: number
+  costoNeto: number
   costoServicios: number
   costoTotalPieza: number
   /** Piezas del pedido, para el total de la orden. */
   piezas: number | null
 }) {
   const venta = Number(ficha.precio_venta ?? 0)
-  const neto = Number(ficha.costo_neto ?? 0)
+  const neto = costoNeto
   const utilidad = venta - costoTotalPieza
   const hayVenta = venta > 0
 
@@ -93,8 +104,8 @@ export function FichaResumenCostos({
           <table className="w-full text-sm">
             <tbody>
               <Fila concepto="Costo fijo" valor={ficha.costo_fijo} />
-              <Fila concepto="Tela" valor={ficha.costo_tela} />
-              <Fila concepto="Habilitación" valor={ficha.costo_habilitacion} />
+              <Fila concepto="Tela" valor={costoTela} />
+              <Fila concepto="Habilitación" valor={costoHabilitacion} />
               <Fila concepto="Costo Neto" valor={neto} fuerte nota="ficha impresa" />
 
               <Fila concepto="Maquila" valor={ficha.costo_maquila} sangria />
@@ -145,17 +156,23 @@ export function FichaResumenCostos({
                   </td>
                 </tr>
               )}
-              {/* El margen de la ficha impresa: se calcula sobre el NETO,
-                  no sobre el total. Se muestra al lado para que no se
-                  confunda con la utilidad real. */}
-              {ficha.margen_pct != null && (
+              {/*
+                El margen de la ficha impresa: sobre el NETO, no sobre el
+                total. Se muestra al lado para que no se confunda con la
+                utilidad real.
+
+                El margen se recalcula aquí con el neto de la pantalla, no
+                se toma `ficha.margen_pct`: esa lo trae calculado con el
+                neto guardado y quedaría desfasado mientras se captura.
+              */}
+              {hayVenta && (
                 <tr>
                   <td className="px-3 py-1.5 text-muted-foreground">
                     Margen de la ficha
                     <span className="ml-1.5 text-[11px]">sobre el neto</span>
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-                    {`${Number(ficha.margen_pct).toFixed(2)}%`}
+                    {`${((100 * (venta - neto)) / venta).toFixed(2)}%`}
                   </td>
                 </tr>
               )}
