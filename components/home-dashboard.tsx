@@ -211,6 +211,15 @@ export function HomeDashboard({
           if (r.riesgo_entrega === "Vencido") at.vencidos++
           else if (r.riesgo_entrega === "A Destiempo") at.porVencer++
 
+          // Las dos exigen `fecha_diseno` / `fecha_corte`: solo cuentan lo
+          // que YA está programado y no ha terminado, no todo lo pendiente.
+          //
+          // Es deliberado (decisión de operación, 22-sep-2026): mide el
+          // trabajo en curso que se atoró. Lo que nunca se programó sale
+          // en "Sin programar", que es otro problema y se atiende distinto.
+          //
+          // Sin ese matiz los números confunden: hoy dan 39 y 76, pero los
+          // folios pendientes en total son 512 y 521.
           if (!r.no_requiere_diseno && r.fecha_diseno && !r.cumplimiento_diseno) at.disenoPendiente++
           if (!r.no_requiere_corte && r.fecha_corte && r.cumplimiento_corte !== "Si") at.cortePendiente++
 
@@ -337,18 +346,20 @@ export function HomeDashboard({
               onClick={() => onNavigate("ingestion", "sin-programar")}
             />
             <AttentionCard
-              label="Diseño por evaluar"
+              label="Diseño programado sin terminar"
               value={atencion.disenoPendiente}
               icon={Palette}
               tone="indigo"
               onClick={() => onNavigate("diseno", "diseno-pendiente")}
+              hint="Ya tiene semana asignada y la diseñadora no ha cumplido"
             />
             <AttentionCard
-              label="Corte sin cumplir"
+              label="Corte programado sin cumplir"
               value={atencion.cortePendiente}
               icon={Scissors}
               tone="amber"
               onClick={() => onNavigate("corte", "corte-pendiente")}
+              hint="Ya tiene semana asignada y el corte no se ha cumplido"
             />
             <AttentionCard
               label="Sin revisión +7d"
