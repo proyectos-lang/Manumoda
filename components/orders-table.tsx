@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, CalendarIcon, RefreshCw, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw, ClipboardList } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw, ClipboardList, Plus } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,8 @@ import { ScheduleCutDialog } from "@/components/schedule-cut-dialog"
 import { AvanceEtapas, EtapasOrdenSheet } from "@/components/etapas-orden-sheet"
 import { EtapasTablero } from "@/components/etapas-tablero"
 import { EtapasCola } from "@/components/etapas-cola"
+import { CrearOrdenDialog } from "@/components/crear-orden-dialog"
+import { useFichaTecnica } from "@/components/ficha-tecnica-provider"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FolioLink } from "@/components/folio-detail-drawer"
 import { RiskBadge } from "@/components/risk-badge"
@@ -122,6 +124,8 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
   const [avance, setAvance] = useState<Map<string, VwOrdenAvance>>(new Map())
   const [etapasFolio, setEtapasFolio] = useState<string | null>(null)
   const [etapasOpen, setEtapasOpen] = useState(false)
+  const [crearOpen, setCrearOpen] = useState(false)
+  const ficha = useFichaTecnica()
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget?.id) return
@@ -415,16 +419,27 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
             onChange={setFilterModelo}
           />
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchOrders}
-          disabled={loading || configMissing}
-          className="gap-2 md:self-auto bg-transparent"
-        >
-          <RefreshCw className={cn("size-4", loading && "animate-spin")} />
-          Actualizar
-        </Button>
+        <div className="flex items-center gap-2 md:self-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchOrders}
+            disabled={loading || configMissing}
+            className="gap-2 bg-transparent"
+          >
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+            Actualizar
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setCrearOpen(true)}
+            disabled={readOnly || configMissing}
+            className="gap-1.5"
+          >
+            <Plus className="size-4" />
+            Nueva orden
+          </Button>
+        </div>
       </div>
 
       {/* Filtro heredado del inicio */}
@@ -817,6 +832,20 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
           setScheduleCutOpen(false)
           setScheduleCutId(null)
           void fetchOrders()
+        }}
+      />
+
+      {/*
+        Al crear, se abre enseguida su ficha tecnica: la orden nace con lo
+        minimo y el resto —tallas, materiales, costos— se captura ahi.
+      */}
+      <CrearOrdenDialog
+        open={crearOpen}
+        onOpenChange={setCrearOpen}
+        onCreada={(folio) => {
+          void fetchOrders()
+          ficha.registrarRefresco(() => void fetchOrders())
+          ficha.abrir(folio)
         }}
       />
 
