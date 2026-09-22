@@ -87,6 +87,12 @@ type ResumenRow = {
   fecha_apartada_entrega: string | null
   fecha_ultima_revision: string | null
   calidad: number | null
+  /** Días hasta la fecha límite; negativo = ya venció. Lo calcula la vista. */
+  dias_restantes: number | null
+  /** Con valor, la orden ya se entregó: los días dejan de correr. */
+  fecha_facturacion: string | null
+  /** La del corte, de corte_programacion. Distinta de `calidad`, la de maquila. */
+  calificacion_corte: number | null
   familia: string | null
   fecha_s1: string | null
   fecha_s2: string | null
@@ -1235,10 +1241,18 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/*
+          Alto fijo con encabezado pegajoso: la tabla trae cientos de
+          folios y al bajar se perdia de vista que columna era cual.
+
+          `overflow-auto` va en el hijo y el fondo del encabezado es
+          opaco: con un fondo translucido las filas se ven pasar por
+          detras al hacer scroll.
+        */}
+        <div className="max-h-[70vh] overflow-auto">
           <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/40 hover:bg-muted/40">
+            <TableHeader className="sticky top-0 z-10">
+              <TableRow className="bg-muted hover:bg-muted">
                 <TableHead className="w-[130px]">Folio</TableHead>
                 <TableHead>Modelo</TableHead>
                 <TableHead>Familia</TableHead>
@@ -1248,8 +1262,10 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead className="w-[110px]">Límite de Entrega</TableHead>
                 <TableHead className="w-[110px]">Contra Muestra</TableHead>
                 <TableHead className="w-[110px]">Apartado de Entrega</TableHead>
+                <TableHead className="w-[90px] text-center">Días</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
-                <TableHead className="w-[90px] text-center">Calificación</TableHead>
+                <TableHead className="w-[90px] text-center">Calidad maquila</TableHead>
+                <TableHead className="w-[90px] text-center">Calif. corte</TableHead>
                 <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
@@ -1268,7 +1284,9 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      <TableCell><Skeleton className="mx-auto h-4 w-8" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="mx-auto size-6 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="mx-auto size-6 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-44" /></TableCell>
@@ -1279,7 +1297,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
 
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={13} className="py-12 text-center">
+                  <TableCell colSpan={15} className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">
                       No hay órdenes activas en{" "}
                       <code className="font-mono text-xs">vw_resumen_operacion</code>.
@@ -1332,10 +1350,49 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                           ? formatDate(r.fecha_contra_muestra)
                           : <span className="text-muted-foreground/60 italic">—</span>}
                       </TableCell>
+                      {/*
+                        Resaltada: es el compromiso que el maquilero dio y
+                        contra el que se penaliza, asi que tiene que
+                        saltar a la vista entre las otras tres fechas.
+                      */}
                       <TableCell className="tabular-nums text-sm">
-                        {r.fecha_apartada_entrega
-                          ? formatDate(r.fecha_apartada_entrega)
-                          : <span className="text-muted-foreground/60 italic">—</span>}
+                        {r.fecha_apartada_entrega ? (
+                          <span className="inline-flex rounded bg-violet-50 px-2 py-0.5 font-semibold text-violet-700 ring-1 ring-inset ring-violet-200">
+                            {formatDate(r.fecha_apartada_entrega)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/60 italic">—</span>
+                        )}
+                      </TableCell>
+                      {/*
+                        Dias para la fecha limite. Se lee de la vista, que
+                        los calcula con CURRENT_DATE: asi todas las
+                        pantallas cuentan igual.
+                      */}
+                      <TableCell className="text-center text-sm tabular-nums">
+                        {r.dias_restantes == null ? (
+                          <span className="text-muted-foreground/60 italic">—</span>
+                        ) : r.fecha_facturacion ? (
+                          <span className="text-muted-foreground/60">entregada</span>
+                        ) : (
+                          <span
+                            className={cn(
+                              "font-semibold",
+                              r.dias_restantes < 0 && "text-destructive",
+                              r.dias_restantes >= 0 && r.dias_restantes <= 7 && "text-amber-600",
+                              r.dias_restantes > 7 && "text-muted-foreground",
+                            )}
+                            title={
+                              r.dias_restantes < 0
+                                ? `Vencida hace ${-r.dias_restantes} días`
+                                : `Faltan ${r.dias_restantes} días`
+                            }
+                          >
+                            {r.dias_restantes < 0
+                              ? `−${-r.dias_restantes}`
+                              : r.dias_restantes}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span
@@ -1358,9 +1415,34 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                                   ? "bg-amber-100 text-amber-700"
                                   : "bg-rose-100 text-rose-700",
                             )}
-                            title={`Calificación ${r.calidad} de 10`}
+                            title={`Calidad de maquila ${r.calidad} de 10`}
                           >
                             {r.calidad}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">—</span>
+                        )}
+                      </TableCell>
+                      {/*
+                        La calificacion del CORTE, que vive en
+                        corte_programacion. Es otra cosa que la calidad de
+                        maquila: por eso van en columnas separadas en vez
+                        de una sola que dijera "Calificacion" a secas.
+                      */}
+                      <TableCell className="text-center">
+                        {r.calificacion_corte != null ? (
+                          <span
+                            className={cn(
+                              "inline-flex size-6 items-center justify-center rounded-full text-xs font-bold tabular-nums",
+                              r.calificacion_corte >= 8
+                                ? "bg-emerald-100 text-emerald-700"
+                                : r.calificacion_corte >= 5
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-rose-100 text-rose-700",
+                            )}
+                            title={`Calificación de corte ${r.calificacion_corte} de 10`}
+                          >
+                            {r.calificacion_corte}
                           </span>
                         ) : (
                           <span className="text-xs text-muted-foreground/50">—</span>
