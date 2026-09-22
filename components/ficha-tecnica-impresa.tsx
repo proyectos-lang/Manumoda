@@ -137,6 +137,15 @@ export function FichaTecnicaImpresa({
                    label2="Num Pedido" value2={ficha.num_pedido} />
               <Par label="Modelo Interno" value={ficha.modelo}
                    label2="Modelo Cliente" value2={ficha.modelo_cliente} />
+              {/*
+                El EAN solo se imprime si lo hay. La mayoría de los folios
+                no lo llevan y un recuadro vacío en el papel hace pensar
+                que falta capturarlo.
+              */}
+              {ficha.codigo_ean && (
+                <Par label="Codigo EAN" value={ficha.codigo_ean}
+                     label2="Categoria" value2={ficha.categoria} />
+              )}
               <div className="mt-1">
                 <div className="text-[10px] font-bold">Descripcion Completa</div>
                 <div className="border border-black/50 px-1 py-0.5 font-medium">

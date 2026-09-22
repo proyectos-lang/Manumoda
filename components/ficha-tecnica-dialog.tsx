@@ -367,6 +367,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         compradora: ficha.compradora,
         num_pedido: ficha.num_pedido,
         modelo_cliente: ficha.modelo_cliente,
+        // Vacío se guarda como NULL: la base distingue "sin EAN" de un
+        // texto en blanco, y la restricción de formato rechaza "".
+        codigo_ean: ficha.codigo_ean?.trim() || null,
         descripcion_completa: ficha.descripcion_completa,
         costo_fijo: ficha.costo_fijo,
         precio_venta: ficha.precio_venta,
@@ -883,6 +886,16 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     onChange={() => {}} />
                   <Campo label="Modelo Cliente" value={ficha.modelo_cliente} readOnly={readOnly}
                     onChange={(v) => campo("modelo_cliente", v)} />
+                  {/*
+                    Junto a Modelo Cliente porque es su pareja: los dos
+                    identifican la prenda del lado del cliente, no del
+                    nuestro.
+                  */}
+                  <CampoEan
+                    value={ficha.codigo_ean}
+                    readOnly={readOnly}
+                    onChange={(v) => campo("codigo_ean", v)}
+                  />
 
                   {/*
                     Las dos fechas del pedido, juntas y arriba. Antes la de
@@ -1302,6 +1315,61 @@ function Campo({
         onChange={(e) => onChange(e.target.value)}
         className="mt-1 h-8 text-sm"
       />
+    </div>
+  )
+}
+
+/**
+ * El código de barras de la prenda, tecleado a mano.
+ *
+ * NO SE GENERA, SE COPIA:
+ *   Lo entrega el cliente con el pedido. Manumoda no asigna EAN porque
+ *   los rangos los da GS1 a cada marca, no el maquilador.
+ *
+ * SOLO DÍGITOS, Y NO SE BLOQUEA NADA MÁS:
+ *   Al teclear se descarta lo que no sea número —así un copiar y pegar
+ *   con espacios entra limpio— y si el largo no es el de un EAN se
+ *   AVISA, pero se deja guardar. Un código a medio teclear no debe
+ *   impedir guardar el resto de la ficha; quien captura sabrá si lo
+ *   deja así a propósito.
+ *
+ *   Tampoco se comprueba el dígito verificador: sería rechazar códigos
+ *   reales mal transcritos sin poder decir cuál de los trece dígitos
+ *   está mal.
+ */
+function CampoEan({
+  value,
+  readOnly,
+  onChange,
+}: {
+  value: string | null
+  readOnly?: boolean
+  onChange: (v: string) => void
+}) {
+  const v = value ?? ""
+  /** Los largos que usa el comercio: EAN-8, EAN-13 y el de caja, GTIN-14. */
+  const largoValido = v === "" || [8, 13, 14].includes(v.length)
+
+  return (
+    <div>
+      <label className="text-xs font-medium text-muted-foreground">
+        Código EAN
+      </label>
+      <Input
+        inputMode="numeric"
+        disabled={readOnly}
+        value={v}
+        // Se limpia al vuelo: pegar "750 123 456 7890" deja los dígitos.
+        onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 14))}
+        placeholder="7501234567890"
+        className="mt-1 h-8 text-sm tabular-nums"
+      />
+      {!largoValido && (
+        <p className="mt-1 text-[11px] text-amber-700">
+          Un EAN tiene 8, 13 o 14 dígitos; llevas {v.length}. Se guarda
+          igual.
+        </p>
+      )}
     </div>
   )
 }

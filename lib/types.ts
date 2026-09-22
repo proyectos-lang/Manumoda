@@ -817,6 +817,12 @@ export type VwFichaTecnica = {
   num_pedido: string | null
   modelo: string | null
   modelo_cliente: string | null
+  /**
+   * El código de barras de la prenda, tecleado a mano. Lo entrega el
+   * cliente; Manumoda no lo genera. Es `string` y no `number` para no
+   * perder el cero inicial, que en un EAN distingue dos códigos.
+   */
+  codigo_ean: string | null
   descripcion_completa: string | null
   categoria: string | null
   familia: string | null
