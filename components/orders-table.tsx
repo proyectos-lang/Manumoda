@@ -125,6 +125,16 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget?.id) return
+    // Segunda barrera, además del menú apagado: un folio que ya arrancó
+    // maquila tiene tela cortada y gente trabajando. La interfaz sola no
+    // basta — el diálogo pudo quedar abierto desde antes del arranque.
+    if (deleteTarget.fecha_s1) {
+      toast.error("No se puede eliminar", {
+        description: `El folio ${deleteTarget.folio} ya arrancó maquila el ${formatDate(deleteTarget.fecha_s1)}.`,
+      })
+      setDeleteTarget(null)
+      return
+    }
     const supabase = getSupabase()
     if (!supabase) return
     setDeleting(true)
@@ -689,12 +699,34 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
+                            {/*
+                              Un folio que ya arranco maquila no se borra:
+                              hay tela cortada y alguien trabajando. Antes
+                              de eso todo es reversible —programar una
+                              semana se puede deshacer, cortar no— asi que
+                              se permite.
+
+                              La opcion se deja VISIBLE pero apagada, con
+                              el motivo: si desapareciera, quien la busca no
+                              sabria si es un error de la pantalla.
+                            */}
                             <DropdownMenuItem
-                              onClick={() => setDeleteTarget(row)}
-                              className="text-destructive focus:text-destructive"
+                              onClick={() => {
+                                if (row.fecha_s1) return
+                                setDeleteTarget(row)
+                              }}
+                              disabled={Boolean(row.fecha_s1)}
+                              title={
+                                row.fecha_s1
+                                  ? `Ya arrancó maquila el ${formatDate(row.fecha_s1)}: no se puede eliminar`
+                                  : undefined
+                              }
+                              className={cn(
+                                !row.fecha_s1 && "text-destructive focus:text-destructive",
+                              )}
                             >
                               <Trash2 className="size-3.5 mr-2 shrink-0" />
-                              Eliminar folio
+                              {row.fecha_s1 ? "En producción — no se elimina" : "Eliminar folio"}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -840,7 +872,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar folio?</AlertDialogTitle>
+            <AlertDialogTitle>¿Eliminar el folio {deleteTarget?.folio}?</AlertDialogTitle>
             <AlertDialogDescription>
               Se eliminará permanentemente la orden con folio{" "}
               <span className="font-mono font-medium">{deleteTarget?.folio ?? ""}</span>.
