@@ -974,3 +974,21 @@ export type VwCliente = Cliente & {
    */
   se_puede_borrar: boolean
 }
+
+/**
+ * Una fila de la matriz de códigos EAN: un color y sus códigos por talla.
+ *
+ * Misma forma que `FichaTalla` pero en tabla aparte: aplicar el reparto
+ * reescribe las cantidades, y los códigos —que son dato del cliente, no
+ * del plan de producción— no deben borrarse por eso.
+ */
+export type FichaEan = {
+  id: number
+  idempresa: number
+  folio: string
+  color: string
+  orden: number
+  /** {talla: código}. La talla sin código no aparece en el objeto. */
+  codigos: Record<string, string>
+  created_at: string
+}

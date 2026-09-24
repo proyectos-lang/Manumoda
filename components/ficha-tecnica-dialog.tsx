@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils"
 import type {
   FichaMaterial,
   FichaTalla,
+  FichaEan,
   TipoMaterialFicha,
   VwFichaTecnica,
   VwInventarioArticulo,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ficha-proporciones"
 import { BuscadorTela } from "@/components/buscador-tela"
 import { FichaResultadoCorte } from "@/components/ficha-resultado-corte"
+import { FichaEanMatriz, type MatrizEan } from "@/components/ficha-ean-matriz"
 import { FichaResumenCostos } from "@/components/ficha-resumen-costos"
 import { fetchAll } from "@/lib/supabase/fetch-all"
 
@@ -132,6 +134,8 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   const [confirmarSalida, setConfirmarSalida] = useState(false)
   /** Filas que ya existen en la base y se borrarán al guardar. */
   const [borradosTallas, setBorradosTallas] = useState<number[]>([])
+  /** La matriz de codigos EAN, una fila por color. */
+  const [eanes, setEanes] = useState<FichaEan[]>([])
   const [borradosMateriales, setBorradosMateriales] = useState<number[]>([])
   const readOnly = useReadOnly()
   const { user } = useAuth()
@@ -144,6 +148,19 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     for (const t of tallas) for (const k of Object.keys(t.cantidades ?? {})) vistas.add(k)
     return vistas.size > 0 ? [...vistas] : TALLAS_DEFAULT
   }, [tallas, proporciones])
+
+  /**
+   * Los codigos EAN como matriz {color: {talla: codigo}}.
+   *
+   * Se deriva de `eanes` igual que `matrizCorte` de `tallas`: el estado
+   * guarda filas —que es lo que la base recibe— y la pantalla necesita
+   * la matriz.
+   */
+  const matrizEan = useMemo(() => {
+    const m: MatrizEan = {}
+    for (const fila of eanes) m[fila.color] = { ...(fila.codigos ?? {}) }
+    return m
+  }, [eanes])
 
   /**
    * El reparto planeado, como matriz color × talla. Define la forma del
@@ -210,13 +227,47 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     })
   }
 
+  /**
+   * Captura un código EAN. Igual que el corte: si el color todavía no
+   * tiene renglón se crea, y todo vive en memoria hasta Guardar.
+   *
+   * La casilla vaciada BORRA la talla del objeto en vez de guardar "":
+   * "el cliente no dio este código" y "lo dio vacío" son lo mismo, y
+   * guardar la cadena vacía llenaría el jsonb de ruido.
+   */
+  function capturarEan(color: string, talla: string, codigo: string) {
+    if (!folio) return
+    setEanes((prev) => {
+      const fila = prev.find((x) => x.color === color)
+      if (fila) {
+        const codigos = { ...(fila.codigos ?? {}) }
+        if (codigo === "") delete codigos[talla]
+        else codigos[talla] = codigo
+        return prev.map((x) => (x.id === fila.id ? { ...x, codigos } : x))
+      }
+      if (codigo === "") return prev
+      return [
+        ...prev,
+        {
+          id: idTemporal(),
+          idempresa: IDEMPRESA,
+          folio,
+          color,
+          orden: prev.length + 1,
+          codigos: { [talla]: codigo },
+          created_at: new Date().toISOString(),
+        },
+      ]
+    })
+  }
+
   const cargar = useCallback(async () => {
     if (!folio) return
     const supabase = getSupabase()
     if (!supabase) return
     setLoading(true)
 
-    const [f, t, m] = await Promise.all([
+    const [f, t, m, e] = await Promise.all([
       supabase
         .from("vw_ficha_tecnica")
         .select("*")
@@ -237,6 +288,12 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         .eq("folio", folio)
         .order("tipo")
         .order("orden"),
+      supabase
+        .from("ficha_ean")
+        .select("*")
+        .eq("idempresa", IDEMPRESA)
+        .eq("folio", folio)
+        .order("orden"),
     ])
 
     setLoading(false)
@@ -256,6 +313,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     )
     setTallas(filasTalla)
     setMateriales((m.data as FichaMaterial[]) ?? [])
+    setEanes((e.data as FichaEan[]) ?? [])
 
     // Reconstruir las proporciones de lo guardado. La de talla es del
     // bloque (se lee del primer renglon); la de color, de cada renglon.
@@ -289,6 +347,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         f: datos,
         t: filasTalla,
         m: (m.data as FichaMaterial[]) ?? [],
+        e: (e.data as FichaEan[]) ?? [],
       }),
     )
 
@@ -367,8 +426,10 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         compradora: ficha.compradora,
         num_pedido: ficha.num_pedido,
         modelo_cliente: ficha.modelo_cliente,
-        // Vacío se guarda como NULL: la base distingue "sin EAN" de un
-        // texto en blanco, y la restricción de formato rechaza "".
+        // El EAN general ya NO se edita aquí —ahora hay una matriz por
+        // color y talla, que es como se identifica un SKU— pero se
+        // reescribe tal cual para no borrar el que traigan las fichas
+        // capturadas antes del cambio.
         codigo_ean: ficha.codigo_ean?.trim() || null,
         descripcion_completa: ficha.descripcion_completa,
         costo_fijo: ficha.costo_fijo,
@@ -489,6 +550,44 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         .eq("id", m.id)
     }
 
+    // ── Los codigos EAN ──
+    //
+    // Se borra la fila entera cuando su color se queda sin un solo
+    // codigo: dejarla vacia seria guardar un color que no aporta nada,
+    // y al recargar la matriz la reconstruye del reparto igual.
+    const conCodigos = eanes.filter((x) =>
+      Object.values(x.codigos ?? {}).some((c) => String(c ?? "") !== ""),
+    )
+    const vaciasPrevias = eanes.filter(
+      (x) =>
+        x.id > 0 &&
+        !Object.values(x.codigos ?? {}).some((c) => String(c ?? "") !== ""),
+    )
+    for (const x of vaciasPrevias) {
+      await supabase.from("ficha_ean").delete().eq("id", x.id)
+    }
+
+    const nuevasE = conCodigos.filter((x) => x.id < 0)
+    const previasE = conCodigos.filter((x) => x.id > 0)
+    if (nuevasE.length > 0) {
+      const { error: e } = await supabase.from("ficha_ean").insert(
+        nuevasE.map(({ id, created_at, ...resto }) => resto),
+      )
+      if (e) {
+        setGuardando(false)
+        toast.error("No se pudieron guardar los códigos EAN", {
+          description: e.message,
+        })
+        return
+      }
+    }
+    for (const x of previasE) {
+      await supabase
+        .from("ficha_ean")
+        .update({ color: x.color, orden: x.orden, codigos: x.codigos })
+        .eq("id", x.id)
+    }
+
     setBorradosTallas([])
     setBorradosMateriales([])
     setGuardando(false)
@@ -505,7 +604,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    */
   const hayCambios =
     original !== "" &&
-    (original !== JSON.stringify({ f: ficha, t: tallas, m: materiales }) ||
+    (original !== JSON.stringify({ f: ficha, t: tallas, m: materiales, e: eanes }) ||
       borradosTallas.length > 0 ||
       borradosMateriales.length > 0)
 
@@ -876,7 +975,17 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Campo label="Razón Social" value={ficha.razon_social} readOnly={readOnly}
                     onChange={(v) => campo("razon_social", v)} />
-                  <Campo label="Marca" value={ficha.marca} readOnly={readOnly}
+                  {/*
+                    Se rotula "Cliente" aunque la columna siga siendo
+                    `marca`: es como lo llaman en la operación. Renombrar
+                    la columna obligaría a tocar la vista y la ficha
+                    impresa sin ganar nada.
+
+                    OJO: no es el cliente del catálogo —ese es
+                    `idcliente` y se elige al crear el pedido—; aquí se
+                    escribe la marca bajo la que se vende la prenda.
+                  */}
+                  <Campo label="Cliente" value={ficha.marca} readOnly={readOnly}
                     onChange={(v) => campo("marca", v)} />
                   <Campo label="Compradora" value={ficha.compradora} readOnly={readOnly}
                     onChange={(v) => campo("compradora", v)} />
@@ -886,16 +995,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     onChange={() => {}} />
                   <Campo label="Modelo Cliente" value={ficha.modelo_cliente} readOnly={readOnly}
                     onChange={(v) => campo("modelo_cliente", v)} />
-                  {/*
-                    Junto a Modelo Cliente porque es su pareja: los dos
-                    identifican la prenda del lado del cliente, no del
-                    nuestro.
-                  */}
-                  <CampoEan
-                    value={ficha.codigo_ean}
-                    readOnly={readOnly}
-                    onChange={(v) => campo("codigo_ean", v)}
-                  />
 
                   {/*
                     Las dos fechas del pedido, juntas y arriba. Antes la de
@@ -972,6 +1071,21 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 onCambiar={capturarCorte}
               />
 
+              {/*
+                Los codigos EAN, abajo y como matriz: un EAN identifica
+                un SKU —color y talla—, no un folio entero. Las filas y
+                columnas salen del reparto, igual que el resultado de
+                corte, para que cada codigo caiga en la posicion de su
+                prenda.
+              */}
+              <FichaEanMatriz
+                colores={Object.keys(matrizPlan)}
+                columnas={columnasTalla}
+                valores={matrizEan}
+                readOnly={readOnly}
+                onCambiar={capturarEan}
+              />
+
               {/* ── Costos ── */}
               <section>
                 <h3 className="mb-2 text-sm font-semibold">Costos y precios</h3>
@@ -1011,56 +1125,23 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     </p>
                   </div>
                   {/*
-                    El maquilero se ELIGE aqui, y es el mismo campo que usa
-                    Pago Maquilas para calcular lo que se le debe: no es una
-                    copia. La ficha sirve para asignarlo cuando la orden
-                    todavia no lo trae.
+                    El maquilero ya NO se elige aqui: la fila "Maquila"
+                    de la tabla de abajo tiene su propio selector y
+                    escribe el mismo `idmaquilero`. Tener los dos era
+                    capturar el mismo dato dos veces en una pantalla.
+
+                    El aviso del Excel SI se queda: 219 ordenes traen un
+                    nombre de maquilero pero solo 167 estan ligadas al
+                    catalogo. Sin el aviso, esas 52 parecerian no tener
+                    maquilero cuando si lo traen escrito.
                   */}
-                  <div className="mb-3">
-                    <label className="text-xs font-medium text-muted-foreground">
-                      Maquilero principal
-                    </label>
-                    <select
-                      disabled={readOnly}
-                      value={ficha.idmaquilero ?? ""}
-                      onChange={(e) => {
-                        const id = e.target.value === "" ? null : Number(e.target.value)
-                        setFicha((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                idmaquilero: id,
-                                // El texto se sincroniza con el catalogo: si
-                                // quedaran distintos, Pago Maquilas agruparia
-                                // por uno y la ficha mostraria el otro.
-                                maquilero:
-                                  maquileros.find((m) => m.id === id)?.nombre ??
-                                  (id == null ? null : prev.maquilero),
-                              }
-                            : prev,
-                        )
-                      }}
-                      className="mt-1 h-8 w-full max-w-sm rounded-md border border-input bg-transparent px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <option value="">Sin asignar</option>
-                      {maquileros.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.nombre}
-                        </option>
-                      ))}
-                    </select>
-                    {/*
-                      219 ordenes traen un nombre del Excel pero solo 167
-                      estan ligadas al catalogo. Ese texto se muestra en vez
-                      de esconderlo: si no, pareceria que no tienen maquilero.
-                    */}
-                    {ficha.idmaquilero == null && ficha.maquilero && (
-                      <p className="mt-1 text-[11px] text-amber-700">
-                        Del Excel: <span className="font-medium">{ficha.maquilero}</span>
-                        {" — no está en el catálogo"}
-                      </p>
-                    )}
-                  </div>
+                  {ficha.idmaquilero == null && ficha.maquilero && (
+                    <p className="mb-2 text-[11px] text-amber-700">
+                      Maquilero del Excel:{" "}
+                      <span className="font-medium">{ficha.maquilero}</span>
+                      {" — no está en el catálogo, eligelo abajo"}
+                    </p>
+                  )}
 
                   {/*
                     Los cinco procesos, en lista hacia abajo como la
@@ -1315,61 +1396,6 @@ function Campo({
         onChange={(e) => onChange(e.target.value)}
         className="mt-1 h-8 text-sm"
       />
-    </div>
-  )
-}
-
-/**
- * El código de barras de la prenda, tecleado a mano.
- *
- * NO SE GENERA, SE COPIA:
- *   Lo entrega el cliente con el pedido. Manumoda no asigna EAN porque
- *   los rangos los da GS1 a cada marca, no el maquilador.
- *
- * SOLO DÍGITOS, Y NO SE BLOQUEA NADA MÁS:
- *   Al teclear se descarta lo que no sea número —así un copiar y pegar
- *   con espacios entra limpio— y si el largo no es el de un EAN se
- *   AVISA, pero se deja guardar. Un código a medio teclear no debe
- *   impedir guardar el resto de la ficha; quien captura sabrá si lo
- *   deja así a propósito.
- *
- *   Tampoco se comprueba el dígito verificador: sería rechazar códigos
- *   reales mal transcritos sin poder decir cuál de los trece dígitos
- *   está mal.
- */
-function CampoEan({
-  value,
-  readOnly,
-  onChange,
-}: {
-  value: string | null
-  readOnly?: boolean
-  onChange: (v: string) => void
-}) {
-  const v = value ?? ""
-  /** Los largos que usa el comercio: EAN-8, EAN-13 y el de caja, GTIN-14. */
-  const largoValido = v === "" || [8, 13, 14].includes(v.length)
-
-  return (
-    <div>
-      <label className="text-xs font-medium text-muted-foreground">
-        Código EAN
-      </label>
-      <Input
-        inputMode="numeric"
-        disabled={readOnly}
-        value={v}
-        // Se limpia al vuelo: pegar "750 123 456 7890" deja los dígitos.
-        onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 14))}
-        placeholder="7501234567890"
-        className="mt-1 h-8 text-sm tabular-nums"
-      />
-      {!largoValido && (
-        <p className="mt-1 text-[11px] text-amber-700">
-          Un EAN tiene 8, 13 o 14 dígitos; llevas {v.length}. Se guarda
-          igual.
-        </p>
-      )}
     </div>
   )
 }

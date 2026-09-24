@@ -5,6 +5,7 @@ import { Loader2, Plus, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { useReadOnly } from "@/lib/auth-context"
 import type { Cliente } from "@/lib/types"
@@ -40,6 +41,28 @@ import type { Cliente } from "@/lib/types"
 
 /** Lo que el desplegable necesita de una familia. */
 type Familia = { id: number; nombre: string; grupo: string | null }
+
+/**
+ * Los días que la operación necesita entre el pedido y la entrega.
+ * Menos que esto es un pedido apretado: se avisa, no se impide.
+ */
+const DIAS_MINIMOS = 60
+
+/**
+ * Los días entre dos fechas en formato "aaaa-mm-dd".
+ *
+ * Se parten las cadenas en vez de usar `new Date(iso)`: esa las lee
+ * como UTC y en México la fecha cae al día anterior, lo que aquí
+ * desplazaría la cuenta un día entero.
+ */
+function diasEntre(desde: string, hasta: string): number | null {
+  if (!desde || !hasta) return null
+  const [a1, m1, d1] = desde.split("-").map(Number)
+  const [a2, m2, d2] = hasta.split("-").map(Number)
+  if (!a1 || !a2) return null
+  const ms = Date.UTC(a2, m2 - 1, d2) - Date.UTC(a1, m1 - 1, d1)
+  return Math.round(ms / 86_400_000)
+}
 
 export function CrearOrdenDialog({
   open,
@@ -167,6 +190,15 @@ export function CrearOrdenDialog({
   if (!open) return null
 
   const sinClientes = !cargandoCatalogos && clientes.length === 0
+
+  /**
+   * Los días de que dispone la producción. Se avisa cuando son menos de
+   * 60, pero NO se bloquea: el cliente a veces impone la fecha y quien
+   * captura solo la registra. Bloquearlo obligaría a inventar una fecha
+   * falsa para poder crear la orden.
+   */
+  const diasEntrega = diasEntre(fechaPedido, fechaCancelacion)
+  const entregaApretada = diasEntrega != null && diasEntrega < DIAS_MINIMOS
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -304,10 +336,34 @@ export function CrearOrdenDialog({
                 value={fechaCancelacion}
                 onChange={(e) => setFechaCancelacion(e.target.value)}
                 disabled={readOnly}
-                className="mt-1 h-9"
+                className={cn(
+                  "mt-1 h-9",
+                  entregaApretada && "border-amber-400 bg-amber-50",
+                )}
               />
             </div>
           </div>
+
+          {/*
+            El aviso de los 60 días. En ámbar y a ancho completo para
+            que se vea: es lo que decide si la orden se puede cumplir.
+
+            Avisa, no impide. El cliente a veces impone la fecha y quien
+            captura solo la registra; bloquear obligaría a inventar una
+            fecha falsa para poder crear la orden.
+          */}
+          {entregaApretada && (
+            <div className="rounded-md border border-amber-400 bg-amber-50 px-3 py-2">
+              <p className="text-xs font-semibold text-amber-900">
+                Fecha de entrega por debajo de los 60 días establecidos
+              </p>
+              <p className="mt-0.5 text-[11px] text-amber-800">
+                Quedan {diasEntrega}{" "}
+                {diasEntrega === 1 ? "día" : "días"} entre el pedido y la
+                entrega. La orden se puede crear igual.
+              </p>
+            </div>
+          )}
 
           <p className="text-xs text-muted-foreground">
             Las tallas, materiales y costos se capturan en la ficha técnica, que
