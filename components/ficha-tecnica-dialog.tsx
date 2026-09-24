@@ -1121,21 +1121,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               />
 
               {/*
-                Los codigos EAN, abajo y como matriz: un EAN identifica
-                un SKU —color y talla—, no un folio entero. Las filas y
-                columnas salen del reparto, igual que el resultado de
-                corte, para que cada codigo caiga en la posicion de su
-                prenda.
-              */}
-              <FichaEanMatriz
-                colores={Object.keys(matrizPlan)}
-                columnas={columnasTalla}
-                valores={matrizEan}
-                readOnly={readOnly}
-                onCambiar={capturarEan}
-              />
-
-              {/*
                 Toda la franja de costeo cuelga del permiso: sin el,
                 la ficha se queda en la version simplificada —proceso,
                 tallas y materiales— que es justo lo que se pidio.
@@ -1385,6 +1370,27 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   piezasPlan={proporciones.total ?? ficha.piezas_totales ?? null}
                 />
               )}
+
+              {/*
+                Los codigos EAN, al final de la ficha.
+
+                Un EAN identifica un SKU —color y talla—, no un folio
+                entero, asi que va como matriz. Las filas y columnas
+                salen del reparto, igual que el resultado de corte, para
+                que cada codigo caiga en la posicion de su prenda.
+
+                Va de ultimo a proposito: es dato del cliente que se
+                copia de un listado, no se decide aqui. Lo que se
+                captura pensando —tallas, corte, materiales, costos— va
+                primero; esto se teclea al cerrar.
+              */}
+              <FichaEanMatriz
+                colores={Object.keys(matrizPlan)}
+                columnas={columnasTalla}
+                valores={matrizEan}
+                readOnly={readOnly}
+                onCambiar={capturarEan}
+              />
             </div>
           </div>
         )}
