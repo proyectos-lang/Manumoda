@@ -961,9 +961,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
                   <p className="text-xs text-sky-900">
                     {!verCostos && readOnly && !readOnlyGlobal
-                      ? "Ves la ficha en modo consulta y sin la información de costos."
+                      ? "Ves la ficha en modo consulta y sin el costeo —precios, margen y utilidad."
                       : !verCostos
-                        ? "Ves la ficha sin la información de costos."
+                        ? "Ves la ficha sin el costeo: precios, margen y utilidad."
                         : "Ves la ficha en modo consulta: no puedes modificar sus campos."}{" "}
                     <span className="text-sky-700">
                       Es por tus permisos; pídeselos a un administrador si
@@ -1121,9 +1121,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               />
 
               {/*
-                Toda la franja de costeo cuelga del permiso: sin el,
-                la ficha se queda en la version simplificada —proceso,
-                tallas y materiales— que es justo lo que se pidio.
+                La franja de costeo y la tabla de procesos cuelgan del
+                permiso. Los costos de TELA y HABILITACION no: esos se
+                ven siempre, en sus cuadros de mas abajo, porque quien
+                captura materiales necesita saber lo que cuestan para
+                elegirlos (operacion, 24-sep-2026).
 
                 Se ESCONDE en vez de mostrarse bloqueada: un campo
                 deshabilitado sigue enseñando el numero, que es
@@ -1332,7 +1334,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 titulo="Composición de Tela"
                 filas={telas}
                 readOnly={readOnly}
-                verCostos={verCostos}
                 esTela
                 catalogoTelas={catalogoTelas}
                 usosSugeridos={usosSugeridos}
@@ -1345,7 +1346,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 titulo="Habilitación"
                 filas={habilitacion}
                 readOnly={readOnly}
-                verCostos={verCostos}
                 catalogoTelas={catalogoHab}
                 onAgregar={() => agregarMaterial("Habilitacion")}
                 onCambiar={guardarMaterial}
@@ -1594,18 +1594,12 @@ function Derivado({ label, value, sufijo }: { label: string; value: number | nul
 }
 
 function CuadroMateriales({
-  titulo, filas, readOnly, verCostos, esTela, catalogoTelas, usosSugeridos,
+  titulo, filas, readOnly, esTela, catalogoTelas, usosSugeridos,
   onAgregar, onCambiar, onBorrar,
 }: {
   titulo: string
   filas: FichaMaterial[]
   readOnly: boolean
-  /**
-   * Sin permiso de costos se ocultan las columnas de costo y total, y
-   * el pie con la suma. La cantidad SI se ve: es dato de produccion
-   * —cuanta tela lleva la prenda— y no dice lo que vale.
-   */
-  verCostos: boolean
   /** Las telas traen buscador de catálogo y uso; las habilitaciones no. */
   esTela?: boolean
   catalogoTelas?: VwInventarioArticulo[]
@@ -1617,12 +1611,12 @@ function CuadroMateriales({
 }) {
   const total = filas.reduce((s, f) => s + Number(f.cantidad || 0) * Number(f.costo || 0), 0)
   /**
-   * Las columnas de la tabla, que cambian con el permiso y con el tipo.
-   * Se cuentan aqui porque los `colSpan` del pie y de los renglones
-   * vacios tienen que cuadrar con ellas: un colSpan corto parte la
-   * tabla en dos visualmente.
+   * Las columnas de la tabla: clave, [tipo], descripcion, cantidad,
+   * costo, total y borrar. Se cuentan aqui porque los `colSpan` del
+   * pie y de los renglones vacios tienen que cuadrar con ellas: un
+   * colSpan corto parte la tabla en dos visualmente.
    */
-  const columnas = 4 + (esTela ? 1 : 0) + (verCostos ? 2 : 0)
+  const columnas = 6 + (esTela ? 1 : 0)
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
@@ -1649,12 +1643,8 @@ function CuadroMateriales({
               <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
               {/* Ancho fijo para que el encabezado caiga sobre su campo */}
               <th className="w-[110px] px-2 py-1.5 text-right font-medium">Cantidad</th>
-              {verCostos && (
-                <th className="w-[110px] px-2 py-1.5 text-right font-medium">Costo</th>
-              )}
-              {verCostos && (
-                <th className="w-[100px] px-2 py-1.5 text-right font-medium">Total</th>
-              )}
+              <th className="w-[110px] px-2 py-1.5 text-right font-medium">Costo</th>
+              <th className="w-[100px] px-2 py-1.5 text-right font-medium">Total</th>
               <th className="w-10" />
             </tr>
           </thead>
@@ -1720,19 +1710,15 @@ function CuadroMateriales({
                       onChange={(e) => onCambiar(f, { cantidad: Number(e.target.value) || 0 })}
                       className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
                   </td>
-                  {verCostos && (
-                    <td className="px-1 py-1">
-                      <Input type="number" step="0.0001" min="0" disabled={readOnly}
-                        value={f.costo ?? 0}
-                        onChange={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
-                        className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
-                    </td>
-                  )}
-                  {verCostos && (
-                    <td className="px-2 py-1 text-right text-xs tabular-nums">
-                      ${(Number(f.cantidad || 0) * Number(f.costo || 0)).toFixed(2)}
-                    </td>
-                  )}
+                  <td className="px-1 py-1">
+                    <Input type="number" step="0.0001" min="0" disabled={readOnly}
+                      value={f.costo ?? 0}
+                      onChange={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
+                      className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
+                  </td>
+                  <td className="px-2 py-1 text-right text-xs tabular-nums">
+                    ${(Number(f.cantidad || 0) * Number(f.costo || 0)).toFixed(2)}
+                  </td>
                   <td className="px-1 py-1">
                     <Button size="sm" variant="ghost" className="size-7 p-0"
                       disabled={readOnly} onClick={() => onBorrar(f.id)}>
@@ -1763,7 +1749,7 @@ function CuadroMateriales({
               </tr>
             ))}
           </tbody>
-          {filas.length > 0 && verCostos && (
+          {filas.length > 0 && (
             <tfoot className="border-t-2 border-border bg-muted/50">
               <tr>
                 <td colSpan={esTela ? 5 : 4} className="px-3 py-1.5 text-right font-semibold">

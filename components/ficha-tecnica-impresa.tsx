@@ -57,12 +57,13 @@ export function FichaTecnicaImpresa({
   columnasTalla: string[]
   fotoUrl: string | null
   /**
-   * Sin permiso de costos, el PDF sale sin la franja de costeo y sin
-   * las columnas de dinero de los materiales.
+   * Sin permiso de costos, el PDF sale sin la franja de costeo: ni
+   * costo neto, ni precios, ni margen.
    *
-   * Se filtra aqui y no solo en pantalla porque el papel viaja: lo que
-   * se esconde en la pantalla no puede salir impreso, o esconderlo no
-   * habria servido de nada.
+   * Los costos de los materiales SI se imprimen siempre, igual que en
+   * pantalla. Se filtra aqui y no solo en pantalla porque el papel
+   * viaja: lo que se esconde en la pantalla no puede salir impreso, o
+   * esconderlo no habria servido de nada.
    */
   verCostos: boolean
   onCerrar: () => void
@@ -211,9 +212,9 @@ export function FichaTecnicaImpresa({
 
           {/* Materiales */}
           <CuadroMaterialesImpreso titulo="Composicion de Tela" filas={telas}
-                                   total={totalTela} verCostos={verCostos} esTela />
+                                   total={totalTela} esTela />
           <CuadroMaterialesImpreso titulo="Habilitacion" filas={habilitacion}
-                                   total={totalHab} verCostos={verCostos} />
+                                   total={totalHab} />
         </div>
       </div>
 
@@ -359,17 +360,15 @@ function CuadroTallasImpreso({
 }
 
 function CuadroMaterialesImpreso({
-  titulo, filas, total, verCostos, esTela,
+  titulo, filas, total, esTela,
 }: {
   titulo: string
   filas: FichaMaterial[]
   total: number
-  /** Sin el, se imprimen clave, tipo, descripcion y cantidad: nada de dinero. */
-  verCostos: boolean
   esTela?: boolean
 }) {
   /** Las columnas que se imprimen, para que los colSpan cuadren. */
-  const columnas = 3 + (esTela ? 1 : 0) + (verCostos ? 2 : 0)
+  const columnas = 5 + (esTela ? 1 : 0)
   return (
     <div className="mt-3 print:break-inside-avoid">
       <div className="text-[10px] font-bold">{titulo}</div>
@@ -380,12 +379,8 @@ function CuadroMaterialesImpreso({
             {esTela && <th className="border border-black/50 px-1 py-0.5 text-left">TIPO</th>}
             <th className="border border-black/50 px-1 py-0.5 text-left">DESCRIPCION</th>
             <th className="border border-black/50 px-1 py-0.5 text-right">CANTIDAD</th>
-            {verCostos && (
-              <th className="border border-black/50 px-1 py-0.5 text-right">COSTO</th>
-            )}
-            {verCostos && (
-              <th className="border border-black/50 px-1 py-0.5 text-right">TOTAL</th>
-            )}
+            <th className="border border-black/50 px-1 py-0.5 text-right">COSTO</th>
+            <th className="border border-black/50 px-1 py-0.5 text-right">TOTAL</th>
           </tr>
         </thead>
         <tbody>
@@ -407,33 +402,27 @@ function CuadroMaterialesImpreso({
                 <td className="border border-black/50 px-1 py-0.5 text-right tabular-nums">
                   {Number(m.cantidad || 0)}
                 </td>
-                {verCostos && (
-                  <td className="border border-black/50 px-1 py-0.5 text-right tabular-nums">
-                    {money(m.costo)}
-                  </td>
-                )}
-                {verCostos && (
-                  <td className="border border-black/50 px-1 py-0.5 text-right tabular-nums">
-                    {money(Number(m.cantidad || 0) * Number(m.costo || 0))}
-                  </td>
-                )}
+                <td className="border border-black/50 px-1 py-0.5 text-right tabular-nums">
+                  {money(m.costo)}
+                </td>
+                <td className="border border-black/50 px-1 py-0.5 text-right tabular-nums">
+                  {money(Number(m.cantidad || 0) * Number(m.costo || 0))}
+                </td>
               </tr>
             ))
           )}
         </tbody>
-        {verCostos && (
-          <tfoot>
-            <tr className="bg-black/5">
-              <td colSpan={esTela ? 5 : 4}
-                  className="border border-black/50 px-1 py-0.5 text-right font-bold">
-                Total
-              </td>
-              <td className="border border-black/50 px-1 py-0.5 text-right font-bold tabular-nums">
-                {money(total)}
-              </td>
-            </tr>
-          </tfoot>
-        )}
+        <tfoot>
+          <tr className="bg-black/5">
+            <td colSpan={esTela ? 5 : 4}
+                className="border border-black/50 px-1 py-0.5 text-right font-bold">
+              Total
+            </td>
+            <td className="border border-black/50 px-1 py-0.5 text-right font-bold tabular-nums">
+              {money(total)}
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   )

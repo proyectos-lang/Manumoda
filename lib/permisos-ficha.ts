@@ -15,12 +15,23 @@ import type { SessionUser } from "@/lib/types"
  *   ModuleKey lleva ese carácter.
  *
  * QUÉ SIGNIFICA NO TENERLOS:
- *   · Sin `ficha:costos` — la ficha se ve en versión simplificada: los
- *     datos del proceso, las tallas y los materiales sin precios. Ni
- *     costos, ni precios, ni márgenes, ni utilidad.
+ *   · Sin `ficha:costos` — se esconde la franja de costeo, la tabla de
+ *     procesos y el resumen final: nada de costo neto, precios,
+ *     márgenes ni utilidad.
  *   · Sin `ficha:editar` — la ficha se abre pero todos sus campos están
  *     bloqueados. Es el mismo efecto que el modo de solo lectura, pero
  *     acotado a la ficha.
+ *
+ * LOS COSTOS DE TELA Y HABILITACIÓN SE VEN SIEMPRE:
+ *   Los dos cuadros de materiales muestran su costo unitario y su
+ *   total a todo el mundo, con permiso o sin él (decisión de
+ *   operación, 24-sep-2026). Quien captura materiales necesita ver lo
+ *   que cuestan para elegirlos.
+ *
+ *   OJO: son la mayor parte del costo neto, así que quien los vea
+ *   puede sumarlos y deducir buena parte de lo que cuesta la prenda.
+ *   Lo que el permiso sigue escondiendo es el costeo armado —neto,
+ *   precio de venta, margen y utilidad—, no el precio de los insumos.
  *
  * UN ADMIN LOS TIENE SIEMPRE:
  *   Igual que con los módulos, `es_admin` los concede sin necesidad de
@@ -51,7 +62,7 @@ export const PERMISOS_FICHA: {
     clave: PERMISO_FICHA_COSTOS,
     etiqueta: "Ver costos en la ficha técnica",
     descripcion:
-      "Sin este permiso ve una ficha simplificada: proceso, tallas y materiales, sin costos ni precios.",
+      "Sin este permiso no ve el costo neto, los precios, el margen ni la utilidad. Los costos de tela y habilitación sí los ve.",
   },
   {
     clave: PERMISO_FICHA_EDITAR,
