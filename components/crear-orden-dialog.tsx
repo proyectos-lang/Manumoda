@@ -33,10 +33,24 @@ import type { Cliente } from "@/lib/types"
  *   familia que Corte no conoce, esa orden no tendría con qué
  *   programarse.
  *
+ * LOS PRECIOS SE CAPTURAN AQUÍ:
+ *   Precio de venta y precio público son condición COMERCIAL del
+ *   pedido, no dato de producción: se acuerdan con el cliente antes de
+ *   que exista una ficha. Estaban en la ficha y se movieron aquí
+ *   (operación, 24-sep-2026).
+ *
+ *   El de venta no es solo informativo: Pago Maquilas lo usa para
+ *   descontar las piezas no entregadas, y la ficha calcula con él el
+ *   margen y la utilidad.
+ *
+ *   Son opcionales: muchos pedidos se abren antes de cerrar el precio.
+ *   Para corregirlos después está "Editar precios" en el menú de la
+ *   orden, en el Panel General.
+ *
  * SOLO LO MÍNIMO:
- *   Se capturan cliente, modelo, piezas y fechas. Todo lo demás —tallas,
- *   materiales, costos— vive en la ficha técnica, que se abre enseguida.
- *   Pedirlo todo aquí duplicaría esa pantalla.
+ *   Se capturan cliente, modelo, piezas, fechas y precios. Lo demás
+ *   —tallas, materiales, costos— vive en la ficha técnica, que se abre
+ *   enseguida. Pedirlo todo aquí duplicaría esa pantalla.
  */
 
 /** Lo que el desplegable necesita de una familia. */
@@ -83,6 +97,8 @@ export function CrearOrdenDialog({
   )
   const [fechaCancelacion, setFechaCancelacion] = useState("")
   const [numPedido, setNumPedido] = useState("")
+  const [precioVenta, setPrecioVenta] = useState("")
+  const [precioPublico, setPrecioPublico] = useState("")
   const [creando, setCreando] = useState(false)
 
   const [clientes, setClientes] = useState<Cliente[]>([])
@@ -144,6 +160,8 @@ export function CrearOrdenDialog({
     setFechaPedido(new Date().toISOString().slice(0, 10))
     setFechaCancelacion("")
     setNumPedido("")
+    setPrecioVenta("")
+    setPrecioPublico("")
   }
 
   async function crear() {
@@ -170,6 +188,12 @@ export function CrearOrdenDialog({
       p_fecha_cancelacion: fechaCancelacion || null,
       p_tipo_pedido: null,
       p_num_pedido: numPedido.trim() || null,
+      // Vacío = NULL, no cero: "todavía no se acordó el precio" y "se
+      // vende en $0" son cosas distintas, y Pago Maquilas las trata
+      // distinto al descontar piezas no entregadas.
+      p_precio_venta: precioVenta.trim() === "" ? null : Number(precioVenta),
+      p_precio_publico:
+        precioPublico.trim() === "" ? null : Number(precioPublico),
     })
 
     setCreando(false)
@@ -365,9 +389,48 @@ export function CrearOrdenDialog({
             </div>
           )}
 
+          {/*
+            Los precios, junto a las fechas: son las condiciones del
+            pedido, lo que se acuerda con el cliente. Opcionales porque
+            muchas ordenes se abren antes de cerrar el precio.
+          */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">
+                Precio de venta
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={precioVenta}
+                onChange={(e) => setPrecioVenta(e.target.value)}
+                placeholder="Opcional"
+                disabled={readOnly}
+                className="sin-flechas mt-1 h-9 text-right tabular-nums"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">
+                Precio público
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={precioPublico}
+                onChange={(e) => setPrecioPublico(e.target.value)}
+                placeholder="Opcional"
+                disabled={readOnly}
+                className="sin-flechas mt-1 h-9 text-right tabular-nums"
+              />
+            </div>
+          </div>
+
           <p className="text-xs text-muted-foreground">
             Las tallas, materiales y costos se capturan en la ficha técnica, que
-            se abre al crear la orden.
+            se abre al crear la orden. Los precios se corrigen después desde
+            el menú de la orden.
           </p>
         </div>
 

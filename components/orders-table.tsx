@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, CalendarIcon, RefreshCw, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw, ClipboardList, Plus } from "lucide-react"
+import { Loader2, Search, CalendarIcon, RefreshCw, Trash2, ChevronDown, Ban, Pencil, XCircle, RotateCcw, ClipboardList, Plus, DollarSign } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -27,6 +27,7 @@ import { AvanceEtapas, EtapasOrdenSheet } from "@/components/etapas-orden-sheet"
 import { EtapasTablero } from "@/components/etapas-tablero"
 import { EtapasCola } from "@/components/etapas-cola"
 import { CrearOrdenDialog } from "@/components/crear-orden-dialog"
+import { EditarPreciosDialog } from "@/components/editar-precios-dialog"
 import { useFichaTecnica } from "@/components/ficha-tecnica-provider"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FolioLink } from "@/components/folio-detail-drawer"
@@ -125,6 +126,8 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
   const [etapasFolio, setEtapasFolio] = useState<string | null>(null)
   const [etapasOpen, setEtapasOpen] = useState(false)
   const [crearOpen, setCrearOpen] = useState(false)
+  /** La orden cuyos precios se estan corrigiendo, o null. */
+  const [preciosId, setPreciosId] = useState<number | null>(null)
   const ficha = useFichaTecnica()
 
   const handleConfirmDelete = async () => {
@@ -311,7 +314,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       supabase
         .from("ordenes_produccion")
         .select(
-          "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_aprobacion_diseno, fecha_facturacion",
+          "id, folio, num_pedido, modelo, familia, cliente, piezas, fecha_pedido, fecha_cancelacion, fecha_limite_confirmacion, tipo_pedido, fase_actual, idempresa, corte_origen, diseno_programado, no_requiere_diseno, no_requiere_corte, corte_programado, fecha_aprobacion_diseno, fecha_facturacion, fecha_s1, precio_venta, precio_publico",
         )
         .eq("idempresa", IDEMPRESA)
         .is("fecha_facturacion", null)
@@ -713,6 +716,16 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                                 Marcar: No pasa por Corte
                               </DropdownMenuItem>
                             )}
+                            {/*
+                              Los precios se capturan al crear el pedido,
+                              pero las 638 ordenes que ya existen nacieron
+                              antes de esa regla: sin un sitio donde
+                              corregirlos quedarian congeladas.
+                            */}
+                            <DropdownMenuItem onClick={() => setPreciosId(Number(row.id))}>
+                              <DollarSign className="size-3.5 mr-2 shrink-0" />
+                              Editar precios
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {/*
                               Un folio que ya arranco maquila no se borra:
@@ -846,6 +859,31 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
           void fetchOrders()
           ficha.registrarRefresco(() => void fetchOrders())
           ficha.abrir(folio)
+        }}
+      />
+
+      <EditarPreciosDialog
+        orden={(() => {
+          // Se normaliza el id: `OrdenProduccion.id` puede venir como
+          // texto o faltar —la fila puede nacer del Excel— y el diálogo
+          // necesita uno concreto para actualizar.
+          const o = orders.find((x) => x.id != null && Number(x.id) === preciosId)
+          if (!o) return null
+          return {
+            id: Number(o.id),
+            folio: o.folio,
+            modelo: o.modelo ?? null,
+            // Los precios son opcionales en `OrdenProduccion`: si la
+            // consulta no los pidiera llegarian `undefined`, que no es
+            // lo mismo que "sin precio".
+            precio_venta: o.precio_venta ?? null,
+            precio_publico: o.precio_publico ?? null,
+          }
+        })()}
+        onOpenChange={(v) => !v && setPreciosId(null)}
+        onGuardado={() => {
+          setPreciosId(null)
+          void fetchOrders()
         }}
       />
 
