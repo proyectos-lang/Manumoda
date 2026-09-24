@@ -7,6 +7,7 @@ import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { SessionUser } from "@/lib/types"
 import type { ModuleKey } from "@/components/app-sidebar"
 import { NAV } from "@/components/app-sidebar"
+import { PERMISOS_FICHA } from "@/lib/permisos-ficha"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -429,6 +430,55 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                     </label>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/*
+              Los permisos de la ficha tecnica, en su propia seccion.
+              No abren un modulo del menu: graduan lo que se ve y se
+              puede hacer DENTRO de la ficha, asi que mezclarlos con la
+              lista de modulos haria pensar que son otra pantalla.
+            */}
+            {!esAdmin && (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Ficha tecnica</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Que puede ver y hacer dentro de la ficha, si tiene
+                    acceso al modulo donde se abre
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {PERMISOS_FICHA.map((p) => (
+                    <label
+                      key={p.clave}
+                      className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/60 px-3 py-2.5 transition-colors hover:bg-muted/30"
+                    >
+                      <Checkbox
+                        checked={permisos.has(p.clave)}
+                        onCheckedChange={() => togglePermiso(p.clave)}
+                        className="mt-0.5 data-[state=checked]:border-violet-600 data-[state=checked]:bg-violet-600"
+                      />
+                      <span>
+                        <span className="block text-sm">{p.etiqueta}</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {p.descripcion}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {/*
+                  Sin RLS estos permisos son un guardarrail de pantalla,
+                  no una frontera de seguridad. Decirlo aqui evita que
+                  alguien confie en ellos para esconder datos sensibles.
+                */}
+                {soloLectura && (
+                  <p className="text-[11px] text-amber-700">
+                    Este usuario es de solo lectura: no podra editar la
+                    ficha aunque se marque el permiso de edicion.
+                  </p>
+                )}
               </div>
             )}
           </div>

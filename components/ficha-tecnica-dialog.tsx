@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { useAuth, useReadOnly } from "@/lib/auth-context"
+import { puedeVerCostos, puedeEditarFicha } from "@/lib/permisos-ficha"
 import { cn } from "@/lib/utils"
 import type {
   FichaMaterial,
@@ -137,8 +138,22 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   /** La matriz de codigos EAN, una fila por color. */
   const [eanes, setEanes] = useState<FichaEan[]>([])
   const [borradosMateriales, setBorradosMateriales] = useState<number[]>([])
-  const readOnly = useReadOnly()
+  const readOnlyGlobal = useReadOnly()
   const { user } = useAuth()
+
+  /**
+   * Los dos permisos de la ficha.
+   *
+   * `readOnly` sustituye al de solo lectura global: aqui bloquea tanto
+   * quien no puede escribir en NADA como quien no tiene permiso de
+   * editar esta pantalla. Se calcula una vez y se pasa a los hijos, que
+   * ya lo reciben; asi no hay que tocar cada campo.
+   *
+   * OJO: esto es un guardarrail de pantalla. Sin RLS (script 015) la
+   * anon key del navegador sigue pudiendo leer y escribir la tabla.
+   */
+  const verCostos = puedeVerCostos(user)
+  const readOnly = readOnlyGlobal || !puedeEditarFicha(user)
 
   /** Los encabezados de talla salen de lo capturado; si no hay, los default. */
   const columnasTalla = useMemo(() => {
@@ -858,6 +873,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         materiales={materiales}
         columnasTalla={columnasTalla}
         fotoUrl={fotoUrl}
+        // El papel viaja: lo que se esconde en pantalla tampoco se
+        // imprime, o esconderlo no habría servido de nada.
+        verCostos={verCostos}
         onCerrar={() => setImprimiendo(false)}
       />
     )
@@ -924,6 +942,37 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         ) : (
           <div className="p-5">
             <div className="space-y-6">
+              {/*
+                Se dice por qué la ficha se ve recortada o bloqueada. Sin
+                el aviso, quien no tiene el permiso piensa que la pantalla
+                está rota o que los costos se perdieron, y acaba
+                preguntando.
+
+                Los dos casos van en un solo renglón: son la misma
+                explicación y dos franjas seguidas harían más ruido que
+                los avisos en sí.
+
+                El bloqueo solo se menciona cuando viene del permiso de
+                la ficha: quien es de solo lectura en TODO el sistema ya
+                lo ve en el banner de arriba, y repetirlo aquí sería
+                decirle dos veces lo mismo.
+              */}
+              {(!verCostos || (readOnly && !readOnlyGlobal)) && (
+                <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
+                  <p className="text-xs text-sky-900">
+                    {!verCostos && readOnly && !readOnlyGlobal
+                      ? "Ves la ficha en modo consulta y sin la información de costos."
+                      : !verCostos
+                        ? "Ves la ficha sin la información de costos."
+                        : "Ves la ficha en modo consulta: no puedes modificar sus campos."}{" "}
+                    <span className="text-sky-700">
+                      Es por tus permisos; pídeselos a un administrador si
+                      los necesitas.
+                    </span>
+                  </p>
+                </div>
+              )}
+
               {/* ── Datos generales + foto ── */}
               <section className="grid gap-5 md:grid-cols-[220px_1fr]">
                 <div>
@@ -1086,205 +1135,219 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 onCambiar={capturarEan}
               />
 
-              {/* ── Costos ── */}
-              <section>
-                <h3 className="mb-2 text-sm font-semibold">Costos y precios</h3>
-                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                  <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
-                    onChange={(v) => campo("costo_fijo", v)} />
-                  <Derivado label="Costo Neto" value={costoNeto} />
-                  <CampoNum label="Precio Venta" value={ficha.precio_venta} readOnly={readOnly}
-                    onChange={(v) => campo("precio_venta", v)} />
-                  <Derivado label="Margen %" value={margenPct} sufijo="%" />
-                  <CampoNum label="Precio Público" value={ficha.precio_publico} readOnly={readOnly}
-                    onChange={(v) => campo("precio_publico", v)} />
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  <span className="font-medium">Costo Neto</span> y{" "}
-                  <span className="font-medium">Margen</span> se calculan solos; los
-                  demás se capturan aquí. El desglose completo está al final, ya
-                  con las telas y habilitaciones capturadas.
-                </p>
+              {/*
+                Toda la franja de costeo cuelga del permiso: sin el,
+                la ficha se queda en la version simplificada —proceso,
+                tallas y materiales— que es justo lo que se pidio.
 
-                {/*
-                  Los costos del proceso, en su propia franja y despues del
-                  desglose. Maquila y lavanderia SI entran al Costo Neto
-                  —decision de operacion, script 069—; los cuatro servicios
-                  externos no. Por eso van juntos pero separados dentro de
-                  la tabla: es la misma clase de dato, con distinto efecto
-                  en el costeo.
-
-                  Es el mismo dato que usa Pago Maquilas, no una copia:
-                  lo que se capture aqui es lo que ahi se paga.
-                */}
-                <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
-                  <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-                    <p className="text-xs font-semibold">Costos del proceso</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Es el mismo dato de Pago Maquilas
-                    </p>
+                Se ESCONDE en vez de mostrarse bloqueada: un campo
+                deshabilitado sigue enseñando el numero, que es
+                precisamente lo que no debe verse.
+              */}
+              {verCostos && (
+                <>
+                {/* ── Costos ── */}
+                <section>
+                  <h3 className="mb-2 text-sm font-semibold">Costos y precios</h3>
+                  <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                    <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
+                      onChange={(v) => campo("costo_fijo", v)} />
+                    <Derivado label="Costo Neto" value={costoNeto} />
+                    <CampoNum label="Precio Venta" value={ficha.precio_venta} readOnly={readOnly}
+                      onChange={(v) => campo("precio_venta", v)} />
+                    <Derivado label="Margen %" value={margenPct} sufijo="%" />
+                    <CampoNum label="Precio Público" value={ficha.precio_publico} readOnly={readOnly}
+                      onChange={(v) => campo("precio_publico", v)} />
                   </div>
-                  {/*
-                    El maquilero ya NO se elige aqui: la fila "Maquila"
-                    de la tabla de abajo tiene su propio selector y
-                    escribe el mismo `idmaquilero`. Tener los dos era
-                    capturar el mismo dato dos veces en una pantalla.
-
-                    El aviso del Excel SI se queda: 219 ordenes traen un
-                    nombre de maquilero pero solo 167 estan ligadas al
-                    catalogo. Sin el aviso, esas 52 parecerian no tener
-                    maquilero cuando si lo traen escrito.
-                  */}
-                  {ficha.idmaquilero == null && ficha.maquilero && (
-                    <p className="mb-2 text-[11px] text-amber-700">
-                      Maquilero del Excel:{" "}
-                      <span className="font-medium">{ficha.maquilero}</span>
-                      {" — no está en el catálogo, eligelo abajo"}
-                    </p>
-                  )}
-
-                  {/*
-                    Los cinco procesos, en lista hacia abajo como la
-                    composicion de tela: proceso, quien lo hace y cuanto
-                    cuesta, uno debajo de otro. En rejilla habia que saltar
-                    entre tarjetas para comparar dos costos.
-
-                    Maquila y lavanderia entran al Costo Neto; los cuatro de
-                    abajo son servicios externos y van aparte: se contratan
-                    por fuera y no todos los folios los llevan. Hoy esos
-                    cuatro estan vacios en las 637 ordenes, el Excel nunca
-                    los trajo y esta es la primera captura.
-                  */}
-                  <div className="overflow-hidden rounded-lg border border-border bg-background">
-                    <table className="w-full">
-                      <thead className="bg-muted text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-1.5 font-medium">Proceso</th>
-                          <th className="px-1 py-1.5 font-medium">
-                            ¿Quién lo hace?
-                          </th>
-                          <th className="px-1 py-1.5 text-right font-medium">
-                            Costo por pieza
-                          </th>
-                          <th className="px-3 py-1.5 text-right font-medium">
-                            Total del pedido
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <FilaProceso
-                          label="Maquila"
-                          costo={ficha.costo_maquila ?? null}
-                          idmaquilero={ficha.idmaquilero ?? null}
-                          maquileros={maquileros}
-                          piezas={piezasProceso}
-                          readOnly={readOnly}
-                          onCosto={(v) => campo("costo_maquila", v)}
-                          onMaquilero={(v) =>
-                            setFicha((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    idmaquilero: v,
-                                    maquilero:
-                                      maquileros.find((m) => m.id === v)?.nombre ??
-                                      (v == null ? null : prev.maquilero),
-                                  }
-                                : prev,
-                            )
-                          }
-                        />
-                        <FilaProceso
-                          label="Lavandería"
-                          costo={ficha.costo_lavanderia ?? null}
-                          idmaquilero={ficha.idmaquilero_lavanderia ?? null}
-                          maquileros={maquileros}
-                          piezas={piezasProceso}
-                          readOnly={readOnly}
-                          onCosto={(v) => campo("costo_lavanderia", v)}
-                          onMaquilero={(v) => campo("idmaquilero_lavanderia", v)}
-                        />
-                        {/* Los servicios externos, bajo su propio encabezado */}
-                        <tr className="border-t border-border bg-muted/40">
-                          <td
-                            className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
-                            colSpan={4}
-                          >
-                            Servicios externos — no entran al Costo Neto
-                          </td>
-                        </tr>
-                        <FilaProceso
-                          label="Estampado"
-                          costo={ficha.costo_estampado ?? null}
-                          idmaquilero={ficha.idmaquilero_estampado ?? null}
-                          maquileros={maquileros}
-                          piezas={piezasProceso}
-                          readOnly={readOnly}
-                          onCosto={(v) => campo("costo_estampado", v)}
-                          onMaquilero={(v) => campo("idmaquilero_estampado", v)}
-                        />
-                        <FilaProceso
-                          label="Bordado"
-                          costo={ficha.costo_bordado ?? null}
-                          idmaquilero={ficha.idmaquilero_bordado ?? null}
-                          maquileros={maquileros}
-                          piezas={piezasProceso}
-                          readOnly={readOnly}
-                          onCosto={(v) => campo("costo_bordado", v)}
-                          onMaquilero={(v) => campo("idmaquilero_bordado", v)}
-                        />
-                        <FilaProceso
-                          label="Corte externo"
-                          costo={ficha.costo_corte_externo ?? null}
-                          idmaquilero={ficha.idmaquilero_corte_externo ?? null}
-                          maquileros={maquileros}
-                          piezas={piezasProceso}
-                          readOnly={readOnly}
-                          onCosto={(v) => campo("costo_corte_externo", v)}
-                          onMaquilero={(v) => campo("idmaquilero_corte_externo", v)}
-                        />
-                        <FilaProceso
-                          label="Otros"
-                          costo={ficha.costo_otro ?? null}
-                          idmaquilero={ficha.idmaquilero_otro ?? null}
-                          maquileros={maquileros}
-                          piezas={piezasProceso}
-                          readOnly={readOnly}
-                          onCosto={(v) => campo("costo_otro", v)}
-                          onMaquilero={(v) => campo("idmaquilero_otro", v)}
-                        />
-                      </tbody>
-                    </table>
-                  </div>
-                  {/*
-                    El maquilero principal SI se usa: Pago Maquilas agrupa
-                    por el. Los de cada servicio todavia no —el calculo del
-                    pago los toma todos del principal—, y decirlo evita que
-                    alguien espere ver ahi un pago separado.
-                  */}
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    El total del pedido usa{" "}
-                    {piezasCortadas > 0 ? "las piezas cortadas" : "las piezas del plan"}.
-                    El responsable de cada servicio es informativo por ahora; más
-                    adelante servirá para pagarle a cada quien lo suyo.
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    <span className="font-medium">Costo Neto</span> y{" "}
+                    <span className="font-medium">Margen</span> se calculan solos; los
+                    demás se capturan aquí. El desglose completo está al final, ya
+                    con las telas y habilitaciones capturadas.
                   </p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <Derivado label="Costo total por pieza" value={costoTotalPieza} />
-                    {ficha.precio_venta != null && Number(ficha.precio_venta) > 0 && (
-                      <Derivado
-                        label="Utilidad unitaria"
-                        value={Number(ficha.precio_venta) - costoTotalPieza}
-                      />
+
+                  {/*
+                    Los costos del proceso, en su propia franja y despues del
+                    desglose. Maquila y lavanderia SI entran al Costo Neto
+                    —decision de operacion, script 069—; los cuatro servicios
+                    externos no. Por eso van juntos pero separados dentro de
+                    la tabla: es la misma clase de dato, con distinto efecto
+                    en el costeo.
+
+                    Es el mismo dato que usa Pago Maquilas, no una copia:
+                    lo que se capture aqui es lo que ahi se paga.
+                  */}
+                  <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
+                    <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-xs font-semibold">Costos del proceso</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Es el mismo dato de Pago Maquilas
+                      </p>
+                    </div>
+                    {/*
+                      El maquilero ya NO se elige aqui: la fila "Maquila"
+                      de la tabla de abajo tiene su propio selector y
+                      escribe el mismo `idmaquilero`. Tener los dos era
+                      capturar el mismo dato dos veces en una pantalla.
+
+                      El aviso del Excel SI se queda: 219 ordenes traen un
+                      nombre de maquilero pero solo 167 estan ligadas al
+                      catalogo. Sin el aviso, esas 52 parecerian no tener
+                      maquilero cuando si lo traen escrito.
+                    */}
+                    {ficha.idmaquilero == null && ficha.maquilero && (
+                      <p className="mb-2 text-[11px] text-amber-700">
+                        Maquilero del Excel:{" "}
+                        <span className="font-medium">{ficha.maquilero}</span>
+                        {" — no está en el catálogo, eligelo abajo"}
+                      </p>
                     )}
+
+                    {/*
+                      Los cinco procesos, en lista hacia abajo como la
+                      composicion de tela: proceso, quien lo hace y cuanto
+                      cuesta, uno debajo de otro. En rejilla habia que saltar
+                      entre tarjetas para comparar dos costos.
+
+                      Maquila y lavanderia entran al Costo Neto; los cuatro de
+                      abajo son servicios externos y van aparte: se contratan
+                      por fuera y no todos los folios los llevan. Hoy esos
+                      cuatro estan vacios en las 637 ordenes, el Excel nunca
+                      los trajo y esta es la primera captura.
+                    */}
+                    <div className="overflow-hidden rounded-lg border border-border bg-background">
+                      <table className="w-full">
+                        <thead className="bg-muted text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-1.5 font-medium">Proceso</th>
+                            <th className="px-1 py-1.5 font-medium">
+                              ¿Quién lo hace?
+                            </th>
+                            <th className="px-1 py-1.5 text-right font-medium">
+                              Costo por pieza
+                            </th>
+                            <th className="px-3 py-1.5 text-right font-medium">
+                              Total del pedido
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <FilaProceso
+                            label="Maquila"
+                            costo={ficha.costo_maquila ?? null}
+                            idmaquilero={ficha.idmaquilero ?? null}
+                            maquileros={maquileros}
+                            piezas={piezasProceso}
+                            readOnly={readOnly}
+                            onCosto={(v) => campo("costo_maquila", v)}
+                            onMaquilero={(v) =>
+                              setFicha((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      idmaquilero: v,
+                                      maquilero:
+                                        maquileros.find((m) => m.id === v)?.nombre ??
+                                        (v == null ? null : prev.maquilero),
+                                    }
+                                  : prev,
+                              )
+                            }
+                          />
+                          <FilaProceso
+                            label="Lavandería"
+                            costo={ficha.costo_lavanderia ?? null}
+                            idmaquilero={ficha.idmaquilero_lavanderia ?? null}
+                            maquileros={maquileros}
+                            piezas={piezasProceso}
+                            readOnly={readOnly}
+                            onCosto={(v) => campo("costo_lavanderia", v)}
+                            onMaquilero={(v) => campo("idmaquilero_lavanderia", v)}
+                          />
+                          {/* Los servicios externos, bajo su propio encabezado */}
+                          <tr className="border-t border-border bg-muted/40">
+                            <td
+                              className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                              colSpan={4}
+                            >
+                              Servicios externos — no entran al Costo Neto
+                            </td>
+                          </tr>
+                          <FilaProceso
+                            label="Estampado"
+                            costo={ficha.costo_estampado ?? null}
+                            idmaquilero={ficha.idmaquilero_estampado ?? null}
+                            maquileros={maquileros}
+                            piezas={piezasProceso}
+                            readOnly={readOnly}
+                            onCosto={(v) => campo("costo_estampado", v)}
+                            onMaquilero={(v) => campo("idmaquilero_estampado", v)}
+                          />
+                          <FilaProceso
+                            label="Bordado"
+                            costo={ficha.costo_bordado ?? null}
+                            idmaquilero={ficha.idmaquilero_bordado ?? null}
+                            maquileros={maquileros}
+                            piezas={piezasProceso}
+                            readOnly={readOnly}
+                            onCosto={(v) => campo("costo_bordado", v)}
+                            onMaquilero={(v) => campo("idmaquilero_bordado", v)}
+                          />
+                          <FilaProceso
+                            label="Corte externo"
+                            costo={ficha.costo_corte_externo ?? null}
+                            idmaquilero={ficha.idmaquilero_corte_externo ?? null}
+                            maquileros={maquileros}
+                            piezas={piezasProceso}
+                            readOnly={readOnly}
+                            onCosto={(v) => campo("costo_corte_externo", v)}
+                            onMaquilero={(v) => campo("idmaquilero_corte_externo", v)}
+                          />
+                          <FilaProceso
+                            label="Otros"
+                            costo={ficha.costo_otro ?? null}
+                            idmaquilero={ficha.idmaquilero_otro ?? null}
+                            maquileros={maquileros}
+                            piezas={piezasProceso}
+                            readOnly={readOnly}
+                            onCosto={(v) => campo("costo_otro", v)}
+                            onMaquilero={(v) => campo("idmaquilero_otro", v)}
+                          />
+                        </tbody>
+                      </table>
+                    </div>
+                    {/*
+                      El maquilero principal SI se usa: Pago Maquilas agrupa
+                      por el. Los de cada servicio todavia no —el calculo del
+                      pago los toma todos del principal—, y decirlo evita que
+                      alguien espere ver ahi un pago separado.
+                    */}
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      El total del pedido usa{" "}
+                      {piezasCortadas > 0 ? "las piezas cortadas" : "las piezas del plan"}.
+                      El responsable de cada servicio es informativo por ahora; más
+                      adelante servirá para pagarle a cada quien lo suyo.
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <Derivado label="Costo total por pieza" value={costoTotalPieza} />
+                      {ficha.precio_venta != null && Number(ficha.precio_venta) > 0 && (
+                        <Derivado
+                          label="Utilidad unitaria"
+                          value={Number(ficha.precio_venta) - costoTotalPieza}
+                        />
+                      )}
+                    </div>
                   </div>
-                </div>
-              </section>
+                </section>
+                </>
+              )}
 
               {/* ── Materiales ── */}
               <CuadroMateriales
                 titulo="Composición de Tela"
                 filas={telas}
                 readOnly={readOnly}
+                verCostos={verCostos}
                 esTela
                 catalogoTelas={catalogoTelas}
                 usosSugeridos={usosSugeridos}
@@ -1297,6 +1360,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 titulo="Habilitación"
                 filas={habilitacion}
                 readOnly={readOnly}
+                verCostos={verCostos}
                 catalogoTelas={catalogoHab}
                 onAgregar={() => agregarMaterial("Habilitacion")}
                 onCambiar={guardarMaterial}
@@ -1309,16 +1373,18 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 esos cuadros todavia no se habian capturado, y quien leia
                 no entendia de donde salia el Costo Neto.
               */}
-              <FichaResumenCostos
-                ficha={ficha}
-                costoTela={costoTela}
-                costoHabilitacion={costoHabilitacion}
-                costoNeto={costoNeto}
-                costoServicios={costoServicios}
-                costoTotalPieza={costoTotalPieza}
-                piezasCortadas={piezasCortadas}
-                piezasPlan={proporciones.total ?? ficha.piezas_totales ?? null}
-              />
+              {verCostos && (
+                <FichaResumenCostos
+                  ficha={ficha}
+                  costoTela={costoTela}
+                  costoHabilitacion={costoHabilitacion}
+                  costoNeto={costoNeto}
+                  costoServicios={costoServicios}
+                  costoTotalPieza={costoTotalPieza}
+                  piezasCortadas={piezasCortadas}
+                  piezasPlan={proporciones.total ?? ficha.piezas_totales ?? null}
+                />
+              )}
             </div>
           </div>
         )}
@@ -1522,12 +1588,18 @@ function Derivado({ label, value, sufijo }: { label: string; value: number | nul
 }
 
 function CuadroMateriales({
-  titulo, filas, readOnly, esTela, catalogoTelas, usosSugeridos,
+  titulo, filas, readOnly, verCostos, esTela, catalogoTelas, usosSugeridos,
   onAgregar, onCambiar, onBorrar,
 }: {
   titulo: string
   filas: FichaMaterial[]
   readOnly: boolean
+  /**
+   * Sin permiso de costos se ocultan las columnas de costo y total, y
+   * el pie con la suma. La cantidad SI se ve: es dato de produccion
+   * —cuanta tela lleva la prenda— y no dice lo que vale.
+   */
+  verCostos: boolean
   /** Las telas traen buscador de catálogo y uso; las habilitaciones no. */
   esTela?: boolean
   catalogoTelas?: VwInventarioArticulo[]
@@ -1538,6 +1610,13 @@ function CuadroMateriales({
   onBorrar: (id: number) => void
 }) {
   const total = filas.reduce((s, f) => s + Number(f.cantidad || 0) * Number(f.costo || 0), 0)
+  /**
+   * Las columnas de la tabla, que cambian con el permiso y con el tipo.
+   * Se cuentan aqui porque los `colSpan` del pie y de los renglones
+   * vacios tienen que cuadrar con ellas: un colSpan corto parte la
+   * tabla en dos visualmente.
+   */
+  const columnas = 4 + (esTela ? 1 : 0) + (verCostos ? 2 : 0)
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
@@ -1564,8 +1643,12 @@ function CuadroMateriales({
               <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
               {/* Ancho fijo para que el encabezado caiga sobre su campo */}
               <th className="w-[110px] px-2 py-1.5 text-right font-medium">Cantidad</th>
-              <th className="w-[110px] px-2 py-1.5 text-right font-medium">Costo</th>
-              <th className="w-[100px] px-2 py-1.5 text-right font-medium">Total</th>
+              {verCostos && (
+                <th className="w-[110px] px-2 py-1.5 text-right font-medium">Costo</th>
+              )}
+              {verCostos && (
+                <th className="w-[100px] px-2 py-1.5 text-right font-medium">Total</th>
+              )}
               <th className="w-10" />
             </tr>
           </thead>
@@ -1631,15 +1714,19 @@ function CuadroMateriales({
                       onChange={(e) => onCambiar(f, { cantidad: Number(e.target.value) || 0 })}
                       className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
                   </td>
-                  <td className="px-1 py-1">
-                    <Input type="number" step="0.0001" min="0" disabled={readOnly}
-                      value={f.costo ?? 0}
-                      onChange={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
-                      className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
-                  </td>
-                  <td className="px-2 py-1 text-right text-xs tabular-nums">
-                    ${(Number(f.cantidad || 0) * Number(f.costo || 0)).toFixed(2)}
-                  </td>
+                  {verCostos && (
+                    <td className="px-1 py-1">
+                      <Input type="number" step="0.0001" min="0" disabled={readOnly}
+                        value={f.costo ?? 0}
+                        onChange={(e) => onCambiar(f, { costo: Number(e.target.value) || 0 })}
+                        className="h-7 w-full text-right text-xs tabular-nums sin-flechas" />
+                    </td>
+                  )}
+                  {verCostos && (
+                    <td className="px-2 py-1 text-right text-xs tabular-nums">
+                      ${(Number(f.cantidad || 0) * Number(f.costo || 0)).toFixed(2)}
+                    </td>
+                  )}
                   <td className="px-1 py-1">
                     <Button size="sm" variant="ghost" className="size-7 p-0"
                       disabled={readOnly} onClick={() => onBorrar(f.id)}>
@@ -1660,7 +1747,7 @@ function CuadroMateriales({
                 onClick={() => !readOnly && onAgregar()}
               >
                 <td
-                  colSpan={esTela ? 7 : 6}
+                  colSpan={columnas}
                   className="cursor-text px-3 py-2 text-xs text-muted-foreground/40 hover:bg-muted/30"
                 >
                   {i === 0 && filas.length === 0
@@ -1670,7 +1757,7 @@ function CuadroMateriales({
               </tr>
             ))}
           </tbody>
-          {filas.length > 0 && (
+          {filas.length > 0 && verCostos && (
             <tfoot className="border-t-2 border-border bg-muted/50">
               <tr>
                 <td colSpan={esTela ? 5 : 4} className="px-3 py-1.5 text-right font-semibold">
