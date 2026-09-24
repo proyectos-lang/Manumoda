@@ -941,3 +941,36 @@ export const ESCALAS_TALLA: { nombre: string; tallas: string[] }[] = [
 
 /** Las siete tallas estándar, en el orden en que se leen. */
 export const TALLAS_ESTANDAR = ["XXS", "XS", "S", "M", "L", "XL", "XXL"]
+
+/**
+ * Un cliente del catálogo.
+ *
+ * Antes el cliente era texto libre en `ordenes_produccion.cliente`. Esa
+ * columna se conserva con el nombre copiado: renombrar un cliente no
+ * debe reescribir la historia de folios viejos.
+ */
+export type Cliente = {
+  id: number
+  idempresa: number
+  nombre: string
+  /** RFC o equivalente. Opcional: los clientes migrados no lo traen. */
+  documento: string | null
+  correo: string | null
+  telefono: string | null
+  /** Falso = no se ofrece al crear pedidos. Ver `Cliente.activo`. */
+  activo: boolean
+  notas: string | null
+  created_at: string
+}
+
+/** Fila de `vw_clientes`: el cliente con lo que se le ha producido. */
+export type VwCliente = Cliente & {
+  ordenes: number
+  piezas: number
+  ultimo_pedido: string | null
+  /**
+   * Falso en cuanto tiene una orden. Entonces se inactiva en vez de
+   * borrarse: sus folios quedarían sin a quién apuntar.
+   */
+  se_puede_borrar: boolean
+}
