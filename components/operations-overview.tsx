@@ -435,6 +435,39 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
   }, [leadRows])
 
   /**
+   * Cortes que arrancaron maquila sin que nadie los calificara.
+   *
+   * POR QUE IMPORTA:
+   *   Un folio SALE de la etapa de corte cuando su cumplimiento dice
+   *   "Si". Los que nunca se calificaron no salen nunca: el corte ya se
+   *   hizo —la prenda se esta cosiendo, o ya se entrego— pero el
+   *   registro se quedo en "Pendiente".
+   *
+   *   Hoy son 69 de 82 filas del plan de corte, 43 de ellas ya cerradas
+   *   en S7. Por eso solo 6 folios tienen el corte calificado, y por eso
+   *   el indicador de puntualidad de Corte se mide sobre tan pocos.
+   *
+   *   No se cuentan como "en Corte" —ya estan en maquila, que es donde
+   *   se trabajan— pero se avisa para que se puedan regularizar.
+   */
+  const cortesSinCalificar = useMemo(() => {
+    const FASES_MAQUILA = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
+    const filas = leadRows.filter(
+      (r) =>
+        r.fecha_corte != null &&
+        r.cumplimiento_corte !== "Si" &&
+        r.fase_actual != null &&
+        FASES_MAQUILA.has(r.fase_actual),
+    )
+    return {
+      total: filas.length,
+      // Los cerrados son los mas urgentes: ya no hay a quien preguntarle
+      // como salio el corte.
+      cerrados: filas.filter((r) => r.fase_actual === "S7").length,
+    }
+  }, [leadRows])
+
+  /**
    * El plan de la semana: cuánto se programó y cuánto falta por calificar.
    *
    * Es el número contra el que trabaja el equipo, y el que ve en el módulo
@@ -756,6 +789,28 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 {leadStats.fueraDePlan === 1
                   ? "orden confirmada sigue sin semana de corte y queda fuera del cálculo"
                   : "órdenes confirmadas siguen sin semana de corte y quedan fuera del cálculo"}
+              </p>
+            )}
+            {/*
+              El corte sin calificar es la razon de que este grafico mida
+              Corte sobre tan pocas ordenes: sin la calificacion el folio
+              no sale de la etapa, aunque la prenda ya se este cosiendo.
+              Decirlo aqui es lo que permite corregirlo.
+            */}
+            {cortesSinCalificar.total > 0 && (
+              <p className="mt-1 text-xs text-amber-700">
+                <span className="font-medium">
+                  {cortesSinCalificar.total} cortes sin calificar:
+                </span>{" "}
+                ya arrancaron maquila y su cumplimiento sigue en Pendiente
+                {cortesSinCalificar.cerrados > 0 && (
+                  <>
+                    {" "}
+                    —{cortesSinCalificar.cerrados} de ellos ya cerrados en S7
+                  </>
+                )}
+                . Mientras no se califiquen, no cuentan en la puntualidad de
+                Corte.
               </p>
             )}
           </div>
