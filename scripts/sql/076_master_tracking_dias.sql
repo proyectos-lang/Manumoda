@@ -11,15 +11,15 @@
 --   `vw_seguimiento_integrado` —otra vista, que esta pantalla no
 --   consulta para su tabla—. Por eso el arreglo no se vio.
 --
---   No era falta de datos: 251 órdenes tienen fecha de cancelación y 13
---   tienen apartada. Era que la vista no las exponía.
+--   No era falta de datos: de las 55 filas visibles, 55 tienen fecha de
+--   cancelación y 6 tienen apartada. Era que la vista no las exponía.
 --
 -- LOS DÍAS VAN CONTRA EL LÍMITE DE ENTREGA:
 --   Es `fecha_cancelacion`, la misma columna que la tabla ya muestra
 --   (operación, 26-sep-2026). Así el número se puede comprobar a
 --   simple vista contra la fecha de al lado, sin adivinar de dónde
---   salió. De las 219 filas, 213 la tienen; las 6 restantes quedan con
---   un guion porque no hay contra qué comparar.
+--   salió. Las 55 filas visibles la tienen, así que la columna Días
+--   deja de estar vacía por completo.
 --
 -- FUERA LA CALIFICACIÓN DE CORTE:
 --   `corte_programacion.calificacion` está vacía en sus 82 filas: la
@@ -30,14 +30,17 @@
 --   La COLUMNA de origen NO se toca: se sigue capturando en el módulo
 --   de Corte, y el día que haya datos volver a exponerla es una línea.
 --
--- LA CALIDAD SALÍA VACÍA POR OTRA RAZÓN:
+-- LA CALIDAD NO SE VE, Y ES ESPERABLE:
 --   El dato existe —149 órdenes lo traen— pero TODAS están en fase S7,
---   que es donde se califica al cerrar. Y la vista excluía S7, así que
---   la tabla mostraba justo las filas que nunca pueden tener calidad.
+--   que es donde se califica al cerrar. Y la tabla sigue sin mostrar
+--   S7: es seguimiento de lo que está EN PROCESO, y un folio cerrado ya
+--   no se sigue (operación, 26-sep-2026).
 --
---   Ahora S7 entra: la tabla pasa de 55 a 219 folios y la columna se
---   llena con las 149. 'Por Programar' sigue fuera —419 órdenes sin
---   fechas ni avance serían ruido en un seguimiento.
+--   Consecuencia asumida: la columna Calidad queda vacía en las 55
+--   filas visibles, porque ninguna ha llegado todavía al punto donde se
+--   califica. Se muestra igual para que se vea llegar el dato cuando un
+--   folio avance, pero la pantalla lo explica en vez de dejar 55
+--   guiones sin motivo aparente.
 --
 -- PREREQUISITO: script 070 ejecutado.
 -- ============================================================
@@ -112,15 +115,18 @@ LEFT JOIN LATERAL (
 ) dp ON true
 LEFT JOIN manumoda.disenadoras dis ON dp.iddisenadora = dis.id
 LEFT JOIN manumoda.costureras   cos ON dp.idcosturera  = cos.id
--- S7 SÍ entra: es donde se registra la calidad, y excluirlo dejaba esa
--- columna vacía por construcción. 'Por Programar' sigue fuera: 419
--- órdenes sin fechas ni avance no aportan a un seguimiento.
-WHERE o.fase_actual <> 'Por Programar'::text;
+-- Solo lo que está EN PROCESO: un folio cerrado (S7) ya no se sigue, y
+-- 'Por Programar' todavía no tiene fechas ni avance que seguir.
+--
+-- OJO: esto deja la columna Calidad vacía a propósito. Se registra al
+-- cerrar, en S7, así que ninguna fila visible puede traerla todavía.
+WHERE o.fase_actual <> 'Por Programar'::text
+  AND o.fase_actual <> 'S7'::text;
 
 COMMENT ON VIEW manumoda.vw_resumen_operacion IS
-  'La tabla de Master Tracking. Incluye S7, que es donde se registra la '
-  'calidad; excluye Por Programar. dias_restantes va contra el Límite '
-  'de Entrega.';
+  'La tabla de Master Tracking: solo folios en proceso, sin Por '
+  'Programar ni S7. dias_restantes va contra el Límite de Entrega. La '
+  'calidad se registra en S7, así que aquí siempre llega vacía.';
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- 2. vw_seguimiento_integrado — el mismo criterio de días, y sin la
@@ -237,14 +243,14 @@ FROM information_schema.columns
 WHERE table_schema = 'manumoda'
   AND column_name = 'calificacion_corte';
 
--- 3. La tabla ahora incluye S7. Esperado: 219 folios, con S7 presente.
+-- 3. Ni S7 ni Por Programar aparecen. Esperado: 55 folios, ningún S7.
 SELECT fase_actual, COUNT(*) AS folios
 FROM manumoda.vw_resumen_operacion
 WHERE idempresa = 1
 GROUP BY fase_actual
 ORDER BY folios DESC;
 
--- 4. Cuántos muestran días. Esperado: 213 de 219; 6 sin Límite de Entrega.
+-- 4. Cuántos muestran días. Esperado: 55 de 55.
 SELECT COUNT(*) FILTER (WHERE dias_restantes IS NOT NULL) AS con_dias,
        COUNT(*) FILTER (WHERE dias_restantes IS NULL)     AS sin_limite,
        COUNT(*)                                            AS folios
@@ -257,13 +263,14 @@ FROM manumoda.vw_resumen_operacion
 WHERE dias_restantes IS NOT NULL
   AND dias_restantes <> (fecha_cancelacion - CURRENT_DATE)::integer;
 
--- 6. La calidad ya llega: eran 0 visibles y deben ser 149.
+-- 6. La calidad llega vacía, y es lo esperado: se registra en S7, que
+--    esta vista no muestra. Esperado: 0 con calidad.
 SELECT COUNT(*) FILTER (WHERE calidad IS NOT NULL) AS con_calidad,
        COUNT(*)                                     AS folios
 FROM manumoda.vw_resumen_operacion
 WHERE idempresa = 1;
 
--- 7. La fecha apartada también. Esperado: 13.
+-- 7. La fecha apartada sí llega. Esperado: 6.
 SELECT COUNT(*) FILTER (WHERE fecha_apartada_entrega IS NOT NULL) AS con_apartada
 FROM manumoda.vw_resumen_operacion
 WHERE idempresa = 1;

@@ -1263,7 +1263,20 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead className="w-[110px]">Apartado de Entrega</TableHead>
                 <TableHead className="w-[90px] text-center">Días</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
-                <TableHead className="w-[90px] text-center">Calidad maquila</TableHead>
+                {/*
+                  Se registra al cerrar el folio, en S7, y esta tabla
+                  solo muestra lo que esta en proceso: por eso llega
+                  vacia. Se deja la columna —el dato aparece en cuanto
+                  un folio se califica antes de cerrar— pero el titulo
+                  dice donde se captura, para que 55 guiones no parezcan
+                  un fallo.
+                */}
+                <TableHead
+                  className="w-[90px] text-center"
+                  title="Se registra al cerrar el folio (S7), que esta tabla no muestra"
+                >
+                  Calidad maquila
+                </TableHead>
                 <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
@@ -1430,7 +1443,12 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                             {r.calidad}
                           </span>
                         ) : (
-                          <span className="text-xs text-muted-foreground/50">—</span>
+                          <span
+                            className="text-xs text-muted-foreground/50"
+                            title="La calidad se registra al cerrar el folio, en S7; esta tabla solo muestra folios en proceso"
+                          >
+                            —
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className="tabular-nums text-sm">
