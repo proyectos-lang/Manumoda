@@ -453,7 +453,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         {/* Alto fijo con encabezado pegajoso: la tabla ocupa más pantalla sin empujar el pie */}
         <div className="max-h-[70vh] overflow-auto">
-          <Table>
+          <Table sinContenedor>
             <TableHeader className="sticky top-0 z-10">
               <TableRow className="bg-muted hover:bg-muted">
                 <TableHead className="font-semibold">Folio</TableHead>

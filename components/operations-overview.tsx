@@ -87,12 +87,10 @@ type ResumenRow = {
   fecha_apartada_entrega: string | null
   fecha_ultima_revision: string | null
   calidad: number | null
-  /** Días hasta la fecha límite; negativo = ya venció. Lo calcula la vista. */
+  /** Días hasta el Límite de Entrega; negativo = ya venció. Lo calcula la vista. */
   dias_restantes: number | null
   /** Con valor, la orden ya se entregó: los días dejan de correr. */
   fecha_facturacion: string | null
-  /** La del corte, de corte_programacion. Distinta de `calidad`, la de maquila. */
-  calificacion_corte: number | null
   familia: string | null
   fecha_s1: string | null
   fecha_s2: string | null
@@ -468,6 +466,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
       "Límite de Entrega Original": r.fecha_cancelacion_original ?? "",
       "Contra Muestra": r.fecha_contra_muestra ?? "",
       "Apartado de Entrega": r.fecha_apartada_entrega ?? "",
+      Días: r.dias_restantes ?? "",
       "Última Revisión": r.fecha_ultima_revision ? String(r.fecha_ultima_revision).slice(0, 10) : "",
       Riesgo: r.riesgo_entrega ?? "",
       Fase: r.fase_actual ?? "",
@@ -1250,7 +1249,7 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
           detras al hacer scroll.
         */}
         <div className="max-h-[70vh] overflow-auto">
-          <Table>
+          <Table sinContenedor>
             <TableHeader className="sticky top-0 z-10">
               <TableRow className="bg-muted hover:bg-muted">
                 <TableHead className="w-[130px]">Folio</TableHead>
@@ -1265,7 +1264,6 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                 <TableHead className="w-[90px] text-center">Días</TableHead>
                 <TableHead className="w-[140px]">Riesgo</TableHead>
                 <TableHead className="w-[90px] text-center">Calidad maquila</TableHead>
-                <TableHead className="w-[90px] text-center">Calif. corte</TableHead>
                 <TableHead className="w-[120px]">Última Revisión</TableHead>
                 <TableHead>Avance S1 → S7</TableHead>
               </TableRow>
@@ -1368,10 +1366,22 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                         Dias para la fecha limite. Se lee de la vista, que
                         los calcula con CURRENT_DATE: asi todas las
                         pantallas cuentan igual.
+
+                        Se cuentan contra el Limite de Entrega, que es la
+                        columna de al lado: asi el numero se comprueba a
+                        simple vista sin adivinar de donde salio.
+
+                        Sin limite capturado no hay contra que comparar;
+                        el guion lo explica al pasar el cursor.
                       */}
                       <TableCell className="text-center text-sm tabular-nums">
                         {r.dias_restantes == null ? (
-                          <span className="text-muted-foreground/60 italic">—</span>
+                          <span
+                            className="text-muted-foreground/60 italic"
+                            title="Sin Límite de Entrega capturado"
+                          >
+                            —
+                          </span>
                         ) : r.fecha_facturacion ? (
                           <span className="text-muted-foreground/60">entregada</span>
                         ) : (
@@ -1418,31 +1428,6 @@ export function OperationsOverview({ configMissing }: { configMissing: boolean }
                             title={`Calidad de maquila ${r.calidad} de 10`}
                           >
                             {r.calidad}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground/50">—</span>
-                        )}
-                      </TableCell>
-                      {/*
-                        La calificacion del CORTE, que vive en
-                        corte_programacion. Es otra cosa que la calidad de
-                        maquila: por eso van en columnas separadas en vez
-                        de una sola que dijera "Calificacion" a secas.
-                      */}
-                      <TableCell className="text-center">
-                        {r.calificacion_corte != null ? (
-                          <span
-                            className={cn(
-                              "inline-flex size-6 items-center justify-center rounded-full text-xs font-bold tabular-nums",
-                              r.calificacion_corte >= 8
-                                ? "bg-emerald-100 text-emerald-700"
-                                : r.calificacion_corte >= 5
-                                  ? "bg-amber-100 text-amber-700"
-                                  : "bg-rose-100 text-rose-700",
-                            )}
-                            title={`Calificación de corte ${r.calificacion_corte} de 10`}
-                          >
-                            {r.calificacion_corte}
                           </span>
                         ) : (
                           <span className="text-xs text-muted-foreground/50">—</span>

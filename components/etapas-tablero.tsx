@@ -315,7 +315,7 @@ export function EtapasTablero({ configMissing }: { configMissing: boolean }) {
       {/* ── La matriz ── */}
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="max-h-[70vh] overflow-auto">
-          <Table>
+          <Table sinContenedor>
             <TableHeader className="sticky top-0 z-10">
               <TableRow className="bg-muted hover:bg-muted">
                 <TableHead className="sticky left-0 z-20 bg-muted font-semibold">

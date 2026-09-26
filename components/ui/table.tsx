@@ -4,17 +4,40 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-function Table({ className, ...props }: React.ComponentProps<'table'>) {
+/**
+ * `sinContenedor` quita el div que envuelve la tabla.
+ *
+ * POR QUE HACE FALTA:
+ *   Ese div lleva `overflow-x-auto`, y un elemento con overflow crea su
+ *   propio contexto de scroll. Un `<thead className="sticky top-0">` se
+ *   ancla a ESE div, no al de fuera, asi que cuando la pagina envuelve
+ *   la tabla en un contenedor con `max-h` + `overflow-auto` para tener
+ *   encabezado fijo, el encabezado no se pega: se va con las filas.
+ *
+ *   Con `sinContenedor` la tabla sale desnuda y el sticky se ancla al
+ *   contenedor de la pagina, que es lo que se buscaba. Solo debe usarse
+ *   cuando ese contenedor existe; si no, la tabla ancha desbordaria sin
+ *   barra horizontal.
+ */
+function Table({
+  className,
+  sinContenedor,
+  ...props
+}: React.ComponentProps<'table'> & { sinContenedor?: boolean }) {
+  const tabla = (
+    <table
+      data-slot="table"
+      className={cn('w-full caption-bottom text-sm', className)}
+      {...props}
+    />
+  )
+  if (sinContenedor) return tabla
   return (
     <div
       data-slot="table-container"
       className="relative w-full overflow-x-auto"
     >
-      <table
-        data-slot="table"
-        className={cn('w-full caption-bottom text-sm', className)}
-        {...props}
-      />
+      {tabla}
     </div>
   )
 }

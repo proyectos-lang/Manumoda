@@ -377,7 +377,7 @@ function ArticulosTab({
       */}
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="max-h-[65vh] overflow-auto">
-        <Table>
+        <Table sinContenedor>
           <TableHeader className="sticky top-0 z-10">
             <TableRow className="bg-muted hover:bg-muted">
               <TableHead className="font-semibold">Clave</TableHead>
@@ -2174,7 +2174,7 @@ function SaldosTab({
       */}
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="max-h-[65vh] overflow-auto">
-        <Table>
+        <Table sinContenedor>
           <TableHeader className="sticky top-0 z-10">
             <TableRow className="bg-muted hover:bg-muted">
               <TableHead className="font-semibold">Tipo</TableHead>
