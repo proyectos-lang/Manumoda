@@ -15,6 +15,7 @@ import { DesignModule } from "@/components/design-module"
 import { CorteModule } from "@/components/corte-module"
 import { ColaboradoresModule } from "@/components/colaboradores-module"
 import { ClientesModule } from "@/components/clientes-module"
+import { CalendarioRecepcionesModule } from "@/components/calendario-recepciones-module"
 import { PagoMaquilasModule } from "@/components/pago-maquilas-module"
 import { InventariosModule } from "@/components/inventarios-module"
 import { LoginScreen } from "@/components/login-screen"
@@ -39,6 +40,7 @@ const TITLES: Record<ModuleKey, string> = {
   riesgos: "Seguimiento de Ordenes",
   colaboradores: "Registro de Colaboradores",
   clientes: "Clientes",
+  recepciones: "Calendario de Recepciones",
   pagos: "Pago Maquilas",
   inventarios: "Inventarios",
   configuracion: "Configuración",
@@ -290,6 +292,10 @@ export default function Page() {
 
           {active === "clientes" && (
             <ClientesModule configMissing={configMissing} />
+          )}
+
+          {active === "recepciones" && (
+            <CalendarioRecepcionesModule configMissing={configMissing} />
           )}
 
           {active === "pagos" && <PagoMaquilasModule configMissing={configMissing} />}
