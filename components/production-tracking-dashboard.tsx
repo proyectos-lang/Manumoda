@@ -109,6 +109,8 @@ type FormState = {
   fecha_limite_confirmacion: Date | null
   fecha_contra_muestra: Date | null
   fecha_apartada_entrega: Date | null
+  /** Hora de entrega, "HH:MM". Vacio = apartó el día sin hora. */
+  hora_apartada_entrega: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -126,6 +128,7 @@ const EMPTY_FORM: FormState = {
   fecha_limite_confirmacion: null,
   fecha_contra_muestra: null,
   fecha_apartada_entrega: null,
+  hora_apartada_entrega: "",
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -213,7 +216,7 @@ export function ProductionTrackingDashboard({
       supabase
         .from("ordenes_produccion")
         .select(
-          "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra, fecha_apartada_entrega, fecha_facturacion",
+          "id, idempresa, folio, num_pedido, modelo, familia, cliente, maquilero, piezas, fase_actual, fecha_cancelacion, fecha_s1, fecha_s2, fecha_s3, fecha_s4, fecha_s5, fecha_s6, fecha_s7, calidad, tipo_revision, habilitaciones_insumos, comentarios_generales, fecha_ultima_revision, fecha_limite_confirmacion, fecha_contra_muestra, fecha_apartada_entrega, hora_apartada_entrega, fecha_facturacion",
         )
         .eq("idempresa", IDEMPRESA)
         .neq("fase_actual", "Por Programar")
@@ -731,6 +734,10 @@ function UpdateProgressSheet({
       fecha_limite_confirmacion: parseDate(order.fecha_limite_confirmacion),
       fecha_contra_muestra: parseDate(order.fecha_contra_muestra),
       fecha_apartada_entrega: parseDate(order.fecha_apartada_entrega),
+      // La base devuelve "HH:MM:SS"; el input type=time quiere "HH:MM".
+      hora_apartada_entrega: order.hora_apartada_entrega
+        ? String(order.hora_apartada_entrega).slice(0, 5)
+        : "",
     })
   }, [order])
 
@@ -772,7 +779,11 @@ function UpdateProgressSheet({
       (form.comentarios_generales || null) !== (order.comentarios_generales ?? null) ||
       toISODate(form.fecha_limite_confirmacion) !== norm(order.fecha_limite_confirmacion) ||
       toISODate(form.fecha_contra_muestra) !== norm(order.fecha_contra_muestra) ||
-      toISODate(form.fecha_apartada_entrega) !== norm(order.fecha_apartada_entrega)
+      toISODate(form.fecha_apartada_entrega) !== norm(order.fecha_apartada_entrega) ||
+      form.hora_apartada_entrega !==
+        (order.hora_apartada_entrega
+          ? String(order.hora_apartada_entrega).slice(0, 5)
+          : "")
     )
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, order])
@@ -821,6 +832,12 @@ function UpdateProgressSheet({
       fase_actual: detectedPhase,
       fecha_limite_confirmacion: toISODate(form.fecha_limite_confirmacion),
       fecha_apartada_entrega: toISODate(form.fecha_apartada_entrega),
+      // Sin fecha no puede haber hora: la base lo rechaza con 23514, y
+      // una hora suelta seria una entrega que el calendario no sabria
+      // donde poner.
+      hora_apartada_entrega: form.fecha_apartada_entrega
+        ? form.hora_apartada_entrega || null
+        : null,
       fecha_contra_muestra: toISODate(form.fecha_contra_muestra),
     }
 
@@ -1213,7 +1230,16 @@ function UpdateProgressSheet({
                               variant="ghost"
                               size="sm"
                               className="text-xs text-muted-foreground"
-                              onClick={() => setForm((f) => ({ ...f, fecha_apartada_entrega: null }))}
+                              onClick={() =>
+                                setForm((f) => ({
+                                  ...f,
+                                  fecha_apartada_entrega: null,
+                                  // La hora se va con la fecha: sin dia, la
+                                  // base la rechaza y seria una entrega que
+                                  // el calendario no sabria donde poner.
+                                  hora_apartada_entrega: "",
+                                }))
+                              }
                             >
                               Limpiar fecha
                             </Button>
@@ -1222,6 +1248,38 @@ function UpdateProgressSheet({
                       </PopoverContent>
                     </Popover>
                   </div>
+
+                  {/*
+                    La hora solo aparece cuando ya hay dia: una hora
+                    suelta no significa nada, y ofrecerla antes invita a
+                    capturar algo que la base va a rechazar.
+
+                    Sirve para el cronograma del dia en el calendario de
+                    recepciones, donde cada entrega ocupa una franja.
+                  */}
+                  {form.fecha_apartada_entrega && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Hora de Entrega
+                      </Label>
+                      <Input
+                        type="time"
+                        value={form.hora_apartada_entrega}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            hora_apartada_entrega: e.target.value,
+                          }))
+                        }
+                        className="h-9 text-xs"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        {form.hora_apartada_entrega
+                          ? "Ocupa una hora en el cronograma del día."
+                          : "Opcional. Sin hora, la entrega se agrupa aparte en el calendario."}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

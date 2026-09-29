@@ -39,6 +39,12 @@ export type OrdenProduccion = {
   fecha_contra_muestra?: string | null
   /** Día que el maquilero aparta para entregar. Se compara contra la entrega real. */
   fecha_apartada_entrega?: string | null
+  /**
+   * Hora de esa entrega, "HH:MM:SS". Opcional: muchos maquileros
+   * apartan el día sin comprometer hora, y entonces el calendario de
+   * recepciones la muestra aparte en vez de inventarle una franja.
+   */
+  hora_apartada_entrega?: string | null
   /** Si tiene valor, la orden está entregada: no cuenta como vencida ni alerta. */
   fecha_facturacion?: string | null
   // ── Dinero (script 027). Todos POR PIEZA, tal como vienen del Excel ──

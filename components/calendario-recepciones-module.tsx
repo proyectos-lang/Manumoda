@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { fetchAll } from "@/lib/supabase/fetch-all"
+import { CronogramaDia, type EntregaDia } from "@/components/cronograma-dia"
 
 /**
  * El calendario de recepciones de almacén.
@@ -45,6 +46,8 @@ type OrdenCalendario = {
   fase_actual: string | null
   maquilero: string | null
   fecha_apartada_entrega: string | null
+  /** "HH:MM:SS". Solo la trae el apartado, no el límite. */
+  hora_apartada_entrega: string | null
   fecha_cancelacion: string | null
 }
 
@@ -97,7 +100,7 @@ export function CalendarioRecepcionesModule({
       supabase
         .from("ordenes_produccion")
         .select(
-          "folio, cliente, modelo, piezas, fase_actual, maquilero, fecha_apartada_entrega, fecha_cancelacion",
+          "folio, cliente, modelo, piezas, fase_actual, maquilero, fecha_apartada_entrega, hora_apartada_entrega, fecha_cancelacion",
         )
         .eq("idempresa", IDEMPRESA)
         // Lo facturado ya se entregó: no es una recepción por venir.
@@ -403,9 +406,38 @@ export function CalendarioRecepcionesModule({
               Cerrar
             </Button>
           </div>
+          {/*
+            En la capa de APARTADO se muestra el cronograma: esa es la
+            que trae hora y la que sirve para repartir el dia.
+
+            La capa de LIMITE no lleva hora —es una fecha tope pactada
+            con el cliente, no una cita— asi que se queda en la tabla
+            llana: un cronograma con todo "sin hora" no diria nada.
+          */}
+          {capa === "apartado" && (
+            <div className="p-3">
+              <CronogramaDia
+                entregas={detalle.map(
+                  (o): EntregaDia => ({
+                    folio: o.folio,
+                    cliente: o.cliente,
+                    modelo: o.modelo,
+                    piezas: o.piezas,
+                    maquilero: o.maquilero,
+                    fase_actual: o.fase_actual,
+                    hora: o.hora_apartada_entrega,
+                  }),
+                )}
+              />
+            </div>
+          )}
+
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
+                {capa === "apartado" && (
+                  <th className="px-3 py-1.5 font-medium">Hora</th>
+                )}
                 <th className="px-3 py-1.5 font-medium">Folio</th>
                 <th className="px-3 py-1.5 font-medium">Cliente</th>
                 <th className="px-3 py-1.5 font-medium">Modelo</th>
@@ -417,6 +449,17 @@ export function CalendarioRecepcionesModule({
             <tbody>
               {detalle.map((o) => (
                 <tr key={o.folio} className="border-t border-border">
+                  {capa === "apartado" && (
+                    <td className="px-3 py-1.5 tabular-nums">
+                      {o.hora_apartada_entrega ? (
+                        o.hora_apartada_entrega.slice(0, 5)
+                      ) : (
+                        <span className="text-xs text-muted-foreground/60">
+                          sin hora
+                        </span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-3 py-1.5 font-medium tabular-nums">
                     {o.folio}
                   </td>
@@ -432,7 +475,10 @@ export function CalendarioRecepcionesModule({
             </tbody>
             <tfoot className="border-t-2 border-border bg-muted/50">
               <tr>
-                <td colSpan={5} className="px-3 py-1.5 text-right font-semibold">
+                <td
+                  colSpan={capa === "apartado" ? 6 : 5}
+                  className="px-3 py-1.5 text-right font-semibold"
+                >
                   Total
                 </td>
                 <td className="px-3 py-1.5 text-right font-bold tabular-nums">
