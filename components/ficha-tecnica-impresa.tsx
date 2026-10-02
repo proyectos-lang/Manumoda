@@ -142,12 +142,18 @@ export function FichaTecnicaImpresa({
             </div>
 
             <div className="flex-1">
+              {/*
+                Cliente y Modelo salen de `cliente` y `modelo`, no de
+                `marca` ni `modelo_cliente`: esas dos estan vacias en las
+                662 ordenes y el papel salia con dos recuadros en blanco
+                (02-oct-2026).
+              */}
               <Par label="Razon Social" value={ficha.razon_social}
-                   label2="Marca" value2={ficha.marca} />
+                   label2="Cliente" value2={ficha.cliente} />
               <Par label="Compradora" value={ficha.compradora}
                    label2="Num Pedido" value2={ficha.num_pedido} />
-              <Par label="Modelo Interno" value={ficha.modelo}
-                   label2="Modelo Cliente" value2={ficha.modelo_cliente} />
+              <Par label="Modelo" value={ficha.modelo}
+                   label2="Familia" value2={ficha.familia} />
               {/*
                 El EAN solo se imprime si lo hay. La mayoría de los folios
                 no lo llevan y un recuadro vacío en el papel hace pensar

@@ -437,10 +437,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       .from("ordenes_produccion")
       .update({
         razon_social: ficha.razon_social,
-        marca: ficha.marca,
         compradora: ficha.compradora,
         num_pedido: ficha.num_pedido,
-        modelo_cliente: ficha.modelo_cliente,
+        // `marca` y `modelo_cliente` ya no se escriben: la ficha dejo de
+        // editarlas. Muestra `cliente` y `modelo`, que es donde vive el
+        // dato. Mandarlas aqui reescribiria dos columnas que nadie toca.
         // El EAN general ya NO se edita aquí —ahora hay una matriz por
         // color y talla, que es como se identifica un SKU— pero se
         // reescribe tal cual para no borrar el que traigan las fichas
@@ -1027,25 +1028,29 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   <Campo label="Razón Social" value={ficha.razon_social} readOnly={readOnly}
                     onChange={(v) => campo("razon_social", v)} />
                   {/*
-                    Se rotula "Cliente" aunque la columna siga siendo
-                    `marca`: es como lo llaman en la operación. Renombrar
-                    la columna obligaría a tocar la vista y la ficha
-                    impresa sin ganar nada.
+                    EL CLIENTE Y EL MODELO SALEN DE `cliente` Y `modelo`,
+                    no de `marca` ni `modelo_cliente`.
 
-                    OJO: no es el cliente del catálogo —ese es
-                    `idcliente` y se elige al crear el pedido—; aquí se
-                    escribe la marca bajo la que se vende la prenda.
+                    La ficha leia esas dos ultimas, que estan vacias en
+                    las 662 ordenes: ni el Excel ni el RepProduccion las
+                    traen nunca. El dato real vive en `cliente` y
+                    `modelo` —son los que usan Panel General, Master
+                    Tracking y Pago Maquilas— y en la operacion son el
+                    mismo dato con otro nombre (02-oct-2026).
+
+                    Se muestran de SOLO LECTURA: el cliente se elige al
+                    crear el pedido y el modelo viene del sistema de
+                    origen. Editarlos aqui los desalinearia de
+                    `idcliente` y del resto de pantallas.
                   */}
-                  <Campo label="Cliente" value={ficha.marca} readOnly={readOnly}
-                    onChange={(v) => campo("marca", v)} />
+                  <Campo label="Cliente" value={ficha.cliente} readOnly disabled
+                    onChange={() => {}} />
                   <Campo label="Compradora" value={ficha.compradora} readOnly={readOnly}
                     onChange={(v) => campo("compradora", v)} />
                   <Campo label="Núm. Pedido" value={ficha.num_pedido} readOnly={readOnly}
                     onChange={(v) => campo("num_pedido", v)} />
-                  <Campo label="Modelo Interno" value={ficha.modelo} readOnly disabled
+                  <Campo label="Modelo" value={ficha.modelo} readOnly disabled
                     onChange={() => {}} />
-                  <Campo label="Modelo Cliente" value={ficha.modelo_cliente} readOnly={readOnly}
-                    onChange={(v) => campo("modelo_cliente", v)} />
 
                   {/*
                     Las dos fechas del pedido, juntas y arriba. Antes la de
