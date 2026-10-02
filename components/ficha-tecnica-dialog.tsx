@@ -1090,6 +1090,67 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 </div>
               </section>
 
+              {/*
+                Los precios, arriba del todo: son la condicion comercial
+                del pedido y lo primero que se consulta al abrir la
+                ficha (operacion, 02-oct-2026).
+
+                Solo la FRANJA sube. La tabla de procesos se queda
+                abajo porque calcula totales con las piezas, que se
+                definen justo debajo en Proporciones; y el resumen
+                tambien, porque necesita las telas y habilitaciones ya
+                capturadas o mostraria $0.00.
+
+                Se ESCONDE sin permiso de costos en vez de mostrarse
+                bloqueada: un campo deshabilitado sigue enseñando el
+                numero, que es precisamente lo que no debe verse.
+              */}
+              {verCostos && (
+                <section>
+                  <h3 className="mb-2 text-sm font-semibold">Costos y precios</h3>
+                  {/*
+                    Los PRECIOS ya no se capturan aqui: son condicion
+                    comercial del pedido y se teclean al crearlo
+                    (operacion, 24-sep-2026). Se siguen MOSTRANDO porque
+                    el margen y la utilidad se calculan con ellos, y un
+                    margen sin su precio a la vista no se puede
+                    comprobar.
+
+                    Para corregirlos: menu de la orden en Panel General,
+                    "Editar precios".
+                  */}
+                  <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                    <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
+                      onChange={(v) => campo("costo_fijo", v)} />
+                    <Derivado label="Costo Neto" value={costoNeto} />
+                    <Derivado label="Precio Venta" value={ficha.precio_venta} />
+                    <Derivado label="Margen %" value={margenPct} sufijo="%" />
+                    <Derivado label="Precio Público" value={ficha.precio_publico} />
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Solo el <span className="font-medium">Costo Fijo</span> se
+                    captura aquí. Los precios se registran al crear la orden y
+                    se corrigen desde el Panel General; el{" "}
+                    <span className="font-medium">Costo Neto</span> y el{" "}
+                    <span className="font-medium">Margen</span> se calculan
+                    solos.
+                  </p>
+                  {/*
+                    El Costo Neto de arriba se queda corto mientras no se
+                    capturen telas y habilitaciones, que viven mas abajo.
+                    Decirlo evita que alguien lea un neto incompleto como
+                    si fuera el definitivo.
+                  */}
+                  {costoTela === 0 && costoHabilitacion === 0 && (
+                    <p className="mt-1 text-[11px] text-amber-700">
+                      El Costo Neto todavía no incluye telas ni
+                      habilitaciones: se capturan más abajo y el desglose
+                      completo está al final de la ficha.
+                    </p>
+                  )}
+                </section>
+              )}
+
               {/* ── Tallas ── */}
               <FichaProporciones
                 valor={proporciones}
@@ -1166,9 +1227,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               />
 
               {/*
-                La franja de costeo y la tabla de procesos cuelgan del
-                permiso. Los costos de TELA y HABILITACION no: esos se
-                ven siempre, en sus cuadros de mas abajo, porque quien
+                La tabla de procesos cuelga del permiso. Los costos de
+                TELA y HABILITACION no: esos se ven siempre, en sus
+                cuadros de mas arriba, porque quien
                 captura materiales necesita saber lo que cuestan para
                 elegirlos (operacion, 24-sep-2026).
 
@@ -1178,41 +1239,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               */}
               {verCostos && (
                 <>
-                {/* ── Costos ── */}
+                {/* ── Costos del proceso ── */}
                 <section>
-                  <h3 className="mb-2 text-sm font-semibold">Costos y precios</h3>
                   {/*
-                    Los PRECIOS ya no se capturan aqui: son condicion
-                    comercial del pedido y se teclean al crearlo
-                    (operacion, 24-sep-2026). Se siguen MOSTRANDO porque
-                    el margen y la utilidad se calculan con ellos, y un
-                    margen sin su precio a la vista no se puede
-                    comprobar.
-
-                    Para corregirlos: menu de la orden en Panel General,
-                    "Editar precios".
-                  */}
-                  <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                    <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
-                      onChange={(v) => campo("costo_fijo", v)} />
-                    <Derivado label="Costo Neto" value={costoNeto} />
-                    <Derivado label="Precio Venta" value={ficha.precio_venta} />
-                    <Derivado label="Margen %" value={margenPct} sufijo="%" />
-                    <Derivado label="Precio Público" value={ficha.precio_publico} />
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Solo el <span className="font-medium">Costo Fijo</span> se
-                    captura aquí. Los precios se registran al crear la orden y
-                    se corrigen desde el Panel General; el{" "}
-                    <span className="font-medium">Costo Neto</span> y el{" "}
-                    <span className="font-medium">Margen</span> se calculan
-                    solos. El desglose completo está al final, ya con las telas
-                    y habilitaciones capturadas.
-                  </p>
-
-                  {/*
-                    Los costos del proceso, en su propia franja y despues del
-                    desglose. Maquila y lavanderia SI entran al Costo Neto
+                    Los costos del proceso, al final. La franja de precios
+                    vive arriba; esta tabla se queda aqui porque calcula
+                    totales con las piezas, que se definen en
+                    Proporciones. Maquila y lavanderia SI entran al Costo Neto
                     —decision de operacion, script 069—; los cuatro servicios
                     externos no. Por eso van juntos pero separados dentro de
                     la tabla: es la misma clase de dato, con distinto efecto
@@ -1221,7 +1254,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     Es el mismo dato que usa Pago Maquilas, no una copia:
                     lo que se capture aqui es lo que ahi se paga.
                   */}
-                  <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-3">
                     <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                       <p className="text-xs font-semibold">Costos del proceso</p>
                       <p className="text-[11px] text-muted-foreground">
