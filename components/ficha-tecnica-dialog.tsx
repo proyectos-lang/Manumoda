@@ -1207,26 +1207,6 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
               />
 
               {/*
-                Los codigos EAN, despues de los materiales.
-
-                Un EAN identifica un SKU —color y talla—, no un folio
-                entero, asi que va como matriz. Las filas y columnas
-                salen del reparto, igual que el resultado de corte, para
-                que cada codigo caiga en la posicion de su prenda.
-
-                Va aqui y no al final porque el costeo cierra la ficha:
-                lo ultimo que se mira es cuanto cuesta y cuanto deja
-                (operacion, 30-sep-2026).
-              */}
-              <FichaEanMatriz
-                colores={Object.keys(matrizPlan)}
-                columnas={columnasTalla}
-                valores={matrizEan}
-                readOnly={readOnly}
-                onCambiar={capturarEan}
-              />
-
-              {/*
                 La tabla de procesos cuelga del permiso. Los costos de
                 TELA y HABILITACION no: esos se ven siempre, en sus
                 cuadros de mas arriba, porque quien
@@ -1418,6 +1398,27 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 </section>
                 </>
               )}
+
+              {/*
+                Los codigos EAN, justo antes del resumen.
+
+                Un EAN identifica un SKU —color y talla—, no un folio
+                entero, asi que va como matriz. Las filas y columnas
+                salen del reparto, igual que el resultado de corte, para
+                que cada codigo caiga en la posicion de su prenda.
+
+                Va de ultimo entre lo que se captura: es dato del
+                cliente que se copia de un listado, no algo que se
+                decida aqui. Solo el resumen va despues, porque cierra
+                la ficha (operacion, 02-oct-2026).
+              */}
+              <FichaEanMatriz
+                colores={Object.keys(matrizPlan)}
+                columnas={columnasTalla}
+                valores={matrizEan}
+                readOnly={readOnly}
+                onCambiar={capturarEan}
+              />
 
               {/*
                 El costeo va al FINAL, no arriba con los precios: ahi el
