@@ -941,7 +941,10 @@ export const ESCALAS_TALLA: { nombre: string; tallas: string[] }[] = [
   { nombre: "Letra", tallas: ["CH", "M", "G", "XG"] },
   { nombre: "Letra extendida", tallas: ["XXS", "XS", "S", "M", "L", "XL", "XXL"] },
   { nombre: "Plus", tallas: ["0X", "1X", "2X", "3X"] },
-  { nombre: "Niña", tallas: ["0", "3", "5", "7", "9"] },
+  // La escala de niña arranca en 1, no en 0 (operación, 02-oct-2026).
+  // Ninguna ficha tenía capturada la talla "0", así que el cambio no
+  // deja datos colgando.
+  { nombre: "Niña", tallas: ["1", "3", "5", "7", "9"] },
   { nombre: "Dama", tallas: ["28", "30", "32", "34", "36", "38"] },
 ]
 
