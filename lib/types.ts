@@ -45,6 +45,13 @@ export type OrdenProduccion = {
    * recepciones la muestra aparte en vez de inventarle una franja.
    */
   hora_apartada_entrega?: string | null
+  /**
+   * El despacho al cliente (etapa 11): día y hora programados. Misma
+   * forma que el apartado, y el calendario los pinta juntos en
+   * distinto color.
+   */
+  fecha_despacho_cliente?: string | null
+  hora_despacho_cliente?: string | null
   /** Si tiene valor, la orden está entregada: no cuenta como vencida ni alerta. */
   fecha_facturacion?: string | null
   // ── Dinero (script 027). Todos POR PIEZA, tal como vienen del Excel ──
@@ -742,6 +749,17 @@ export type VwOrdenEtapa = {
   updated_at: string | null
   /** false = nadie la ha tocado; su estado es el que se deriva de la fuente. */
   tiene_registro: boolean
+  /**
+   * Agregadas en el script 079 para las etapas 10 y 11: desde cuándo
+   * está en maquila, cuándo entregó, y qué despacho hay programado.
+   * Vienen en cada fila aunque solo las usen dos etapas, porque la
+   * vista es una fila por (folio, etapa).
+   */
+  fecha_s1: string | null
+  fecha_s7: string | null
+  fecha_despacho_cliente: string | null
+  /** "HH:MM:SS", o null si el despacho es sin hora. */
+  hora_despacho_cliente: string | null
 }
 
 /** Fila de `vw_orden_avance`: cuánto lleva un folio del proceso completo. */
@@ -757,9 +775,9 @@ export type VwOrdenAvance = {
   /** Número de la primera etapa sin terminar: donde está parada la orden. */
   etapa_actual: number | null
   /**
-   * El estado de las nueve etapas, en orden. Viene en la vista de avance
+   * El estado de todas las etapas, en orden. Viene en la vista de avance
    * para que Panel General pinte el indicador con una fila por folio en
-   * vez de nueve.
+   * vez de una por etapa.
    */
   etapas_detalle: { numero: number; etapa: string; estado: EstadoEtapa }[]
 }

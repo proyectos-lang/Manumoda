@@ -634,7 +634,7 @@ export function OrdersTable({ refreshKey, configMissing, initialFilter = null }:
                         <Button
                           size="sm"
                           variant="outline"
-                          title="Registrar el avance de las nueve etapas"
+                          title="Registrar el avance de las etapas"
                           className="gap-1.5"
                           disabled={readOnly || !row.folio}
                           onClick={() => {

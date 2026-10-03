@@ -30,16 +30,16 @@ import { ESTADOS_ETAPA, type EstadoEtapa, type VwOrdenEtapa } from "@/lib/types"
 import { useFichaTecnica } from "@/components/ficha-tecnica-provider"
 
 /**
- * Las nueve etapas de un folio, con su estado y su captura.
+ * Las etapas de un folio, con su estado y su captura.
  *
  * POR QUÉ UNA HOJA Y NO BOTONES EN LA FILA:
  *   Panel General ya tiene diez columnas y dos botones de etapa. Meter
- *   nueve botones más en la misma fila la desbordaría en cualquier
+ *   once botones más en la misma fila la desbordaría en cualquier
  *   pantalla. La fila muestra el avance; el detalle vive aquí.
  *
  * LAS NUEVE SE GESTIONAN AQUÍ:
  *   Diseño y Corte se programaban con botones al costado de la tabla;
- *   se movieron a esta hoja para que las nueve etapas se gestionen en
+ *   se movieron a esta hoja para que todas las etapas se gestionen en
  *   un solo lugar. Siguen guardando en `diseno_programacion` y
  *   `corte_programacion` —su módulo es el que manda sobre esos datos—,
  *   solo cambió desde dónde se abre el programador.
@@ -133,6 +133,38 @@ export function EtapasOrdenSheet({
   useEffect(() => {
     if (open && folio) void cargar()
   }, [open, folio, cargar])
+
+  /**
+   * El despacho al cliente (etapa 11) se guarda en la ORDEN, no en
+   * `orden_etapas`: el calendario de recepciones lo lee de ahi, junto
+   * al apartado del maquilero, y asi los dos salen del mismo sitio con
+   * la misma forma. El estado de la etapa lo deriva la vista.
+   */
+  async function guardarDespacho(fecha: string | null, hora: string | null) {
+    if (!folio) return
+    const supabase = getSupabase()
+    if (!supabase) return
+    const etapa = etapas.find((e) => e.clave === "despacho_cliente")
+    setGuardando(etapa?.idetapa ?? -1)
+    const { error } = await supabase
+      .from("ordenes_produccion")
+      .update({
+        fecha_despacho_cliente: fecha,
+        // Sin dia no hay hora: la base lo rechaza (23514) y una hora
+        // suelta no se podria poner en el calendario.
+        hora_despacho_cliente: fecha ? hora : null,
+      })
+      .eq("idempresa", IDEMPRESA)
+      .eq("folio", folio)
+    setGuardando(null)
+    if (error) {
+      toast.error("No se pudo guardar el despacho", { description: error.message })
+      return
+    }
+    toast.success(fecha ? "Despacho programado" : "Despacho sin programar")
+    await cargar()
+    onSaved?.()
+  }
 
   const avance = useMemo(() => {
     const cuentan = etapas.filter((e) => e.estado !== "No aplica")
@@ -256,7 +288,7 @@ export function EtapasOrdenSheet({
                         /*
                          * Diseño y Corte se programan aquí mismo, con su propio
                          * diálogo. Antes vivían como botones al costado de la
-                         * tabla: se movieron para que las nueve etapas se
+                         * tabla: se movieron para que todas las etapas se
                          * gestionen en un solo lugar.
                          *
                          * Siguen guardando en `diseno_programacion` y
@@ -278,6 +310,61 @@ export function EtapasOrdenSheet({
                               ? `Programar ${e.etapa.toLowerCase()}`
                               : `Reprogramar ${e.etapa.toLowerCase()}`}
                           </Button>
+                        </div>
+                      ) : e.clave === "entrega_maquila" ? (
+                        /*
+                         * Es el estatus 7 de Seguimiento Maquila: se marca
+                         * sola cuando ahi se captura la fecha S7. No se
+                         * edita aqui para que las dos pantallas no se
+                         * contradigan.
+                         */
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {e.estado === "Completada"
+                            ? "El maquilero entregó: es el estatus 7 registrado en Seguimiento Maquila."
+                            : e.fecha_s1
+                              ? `En maquila desde el ${e.fecha_s1}. Se completa al registrar el estatus 7 en Seguimiento Maquila.`
+                              : "Se completa sola al registrar el estatus 7 en Seguimiento Maquila."}
+                        </p>
+                      ) : e.clave === "despacho_cliente" ? (
+                        /*
+                         * El despacho se programa aqui con dia y hora, y va
+                         * a la orden: el calendario de recepciones lo pinta
+                         * junto a las entregas de los maquileros, en otro
+                         * color. Se completa con la factura, no con la
+                         * fecha: programar no es despachar.
+                         */
+                        <div className="mt-2">
+                          {e.fecha_despacho_cliente && !expandida && e.estado !== "Completada" && (
+                            <p className="mb-1 text-xs text-muted-foreground">
+                              Programado para el {e.fecha_despacho_cliente}
+                              {e.hora_despacho_cliente
+                                ? ` a las ${e.hora_despacho_cliente.slice(0, 5)}`
+                                : " · sin hora"}
+                            </p>
+                          )}
+                          {!expandida ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={readOnly}
+                              onClick={() => setAbierta(e.idetapa)}
+                            >
+                              {e.fecha_despacho_cliente
+                                ? "Reprogramar despacho"
+                                : "Programar despacho"}
+                            </Button>
+                          ) : (
+                            <EditorDespacho
+                              fecha={e.fecha_despacho_cliente}
+                              hora={e.hora_despacho_cliente}
+                              guardando={guardando === e.idetapa}
+                              onCancelar={() => setAbierta(null)}
+                              onGuardar={async (f, h) => {
+                                await guardarDespacho(f, h)
+                                setAbierta(null)
+                              }}
+                            />
+                          )}
                         </div>
                       ) : e.gestion_externa ? (
                         <p className="mt-2 text-xs text-muted-foreground">
@@ -420,9 +507,87 @@ function EditorEtapa({
 }
 
 /**
+ * Programar el despacho al cliente: dia y hora.
+ *
+ * La hora solo se habilita con dia —una hora suelta no significa nada y
+ * la base la rechaza— y quitar el dia quita la hora. "Quitar" deja el
+ * despacho sin programar; no borra nada mas.
+ */
+function EditorDespacho({
+  fecha,
+  hora,
+  guardando,
+  onGuardar,
+  onCancelar,
+}: {
+  fecha: string | null
+  hora: string | null
+  guardando: boolean
+  onGuardar: (fecha: string | null, hora: string | null) => void
+  onCancelar: () => void
+}) {
+  const [f, setF] = useState(fecha ?? "")
+  // La base devuelve "HH:MM:SS"; el input type=time quiere "HH:MM".
+  const [h, setH] = useState(hora ? hora.slice(0, 5) : "")
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">Día</label>
+          <Input
+            type="date"
+            value={f}
+            onChange={(ev) => {
+              setF(ev.target.value)
+              if (!ev.target.value) setH("")
+            }}
+            className="mt-1 h-8 text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">Hora</label>
+          <Input
+            type="time"
+            value={h}
+            disabled={!f}
+            onChange={(ev) => setH(ev.target.value)}
+            className="mt-1 h-8 text-sm"
+          />
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Se verá en el Calendario de recepciones junto a las entregas de los
+        maquileros
+        {h ? ", en su franja de una hora." : "; sin hora, aparte de las franjas."}
+      </p>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={guardando || !f} onClick={() => onGuardar(f, h || null)}>
+          {guardando && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+          Guardar
+        </Button>
+        {fecha && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={guardando}
+            onClick={() => onGuardar(null, null)}
+          >
+            Quitar
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" disabled={guardando} onClick={onCancelar}>
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
  * El avance de un folio, para la fila de la tabla.
  *
- * Nueve puntos, uno por etapa, en el orden del proceso. Es un resumen
+ * Un punto por etapa, en el orden del proceso. Es un resumen
  * denso: se lee de un vistazo en qué punto está parada la orden sin
  * abrir nada, y cabe en una celda.
  */

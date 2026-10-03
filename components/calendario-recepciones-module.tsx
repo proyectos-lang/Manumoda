@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ChevronLeft, ChevronRight, Loader2, PackageCheck } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2, PackageCheck, Truck } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -19,19 +19,22 @@ import { CronogramaDia, type EntregaDia } from "@/components/cronograma-dia"
  *   cada folio y había que sacarlo a mano.
  *
  * DOS CAPAS, NO UNA SUMA:
- *   · Apartado — el día que el maquilero se comprometió a entregar.
- *     Es un acuerdo firme y es lo que de verdad llega ese día.
+ *   · Programación — lo que de verdad pasa ese día en almacén: las
+ *     ENTREGAS de los maquileros (día apartado) y los DESPACHOS al
+ *     cliente (etapa 11). Van en la misma rejilla con distinto color,
+ *     porque compiten por la misma gente y el mismo andén.
  *   · Límite   — la fecha tope pactada con el cliente. No es una
  *     entrega programada: es cuándo, a más tardar, debería estar.
  *
- *   Se muestran por separado y NO se suman. Un folio puede tener las
- *   dos fechas, y sumarlas lo contaría dos veces; además significan
- *   cosas distintas —una es promesa del maquilero, la otra obligación
- *   con el cliente— y juntarlas daría un número que no responde a
- *   ninguna pregunta.
+ *   Las capas se muestran por separado y NO se suman. Un folio puede
+ *   tener las dos fechas, y sumarlas lo contaría dos veces; además
+ *   significan cosas distintas —una es promesa del maquilero, la otra
+ *   obligación con el cliente— y juntarlas daría un número que no
+ *   responde a ninguna pregunta.
  *
- *   Hoy solo 13 órdenes tienen apartado capturado. La capa de límites
- *   es lo que hace útil el calendario mientras esa captura crece.
+ *   Dentro de la programación, entrega y despacho SÍ se cuentan por
+ *   separado: un folio que entra por la mañana y sale por la tarde son
+ *   dos movimientos de almacén, no uno.
  *
  * LO FACTURADO NO CUENTA:
  *   Ya se entregó y se cobró: mostrarlo como recepción pendiente haría
@@ -48,7 +51,21 @@ type OrdenCalendario = {
   fecha_apartada_entrega: string | null
   /** "HH:MM:SS". Solo la trae el apartado, no el límite. */
   hora_apartada_entrega: string | null
+  /** El despacho al cliente, etapa 11. Misma forma que el apartado. */
+  fecha_despacho_cliente: string | null
+  hora_despacho_cliente: string | null
   fecha_cancelacion: string | null
+}
+
+/**
+ * Un movimiento del día. La misma orden puede aparecer dos veces el
+ * mismo día —entra del maquilero y sale al cliente— y por eso el
+ * movimiento, no la orden, es la unidad que se cuenta.
+ */
+type Movimiento = {
+  orden: OrdenCalendario
+  tipo: "entrega" | "despacho"
+  hora: string | null
 }
 
 const MESES = [
@@ -89,7 +106,7 @@ export function CalendarioRecepcionesModule({
   })
   const [diaAbierto, setDiaAbierto] = useState<string | null>(null)
   /** Qué capa se está viendo. Las dos a la vez saturan el cuadro. */
-  const [capa, setCapa] = useState<"apartado" | "limite">("apartado")
+  const [capa, setCapa] = useState<"programacion" | "limite">("programacion")
 
   const cargar = useCallback(async () => {
     if (configMissing) return
@@ -100,7 +117,7 @@ export function CalendarioRecepcionesModule({
       supabase
         .from("ordenes_produccion")
         .select(
-          "folio, cliente, modelo, piezas, fase_actual, maquilero, fecha_apartada_entrega, hora_apartada_entrega, fecha_cancelacion",
+          "folio, cliente, modelo, piezas, fase_actual, maquilero, fecha_apartada_entrega, hora_apartada_entrega, fecha_despacho_cliente, hora_despacho_cliente, fecha_cancelacion",
         )
         .eq("idempresa", IDEMPRESA)
         // Lo facturado ya se entregó: no es una recepción por venir.
@@ -120,20 +137,33 @@ export function CalendarioRecepcionesModule({
     void cargar()
   }, [cargar])
 
-  /** Las órdenes de cada día, por capa. */
+  /** Los movimientos de cada día, por capa. */
   const porDia = useMemo(() => {
-    const apartado = new Map<string, OrdenCalendario[]>()
-    const limite = new Map<string, OrdenCalendario[]>()
+    const programacion = new Map<string, Movimiento[]>()
+    const limite = new Map<string, Movimiento[]>()
+    const meter = (mapa: Map<string, Movimiento[]>, dia: string, m: Movimiento) =>
+      mapa.set(dia, [...(mapa.get(dia) ?? []), m])
+
+    let entregas = 0
+    let despachos = 0
     for (const o of ordenes) {
       const a = soloFecha(o.fecha_apartada_entrega)
-      if (a) apartado.set(a, [...(apartado.get(a) ?? []), o])
+      if (a) {
+        meter(programacion, a, { orden: o, tipo: "entrega", hora: o.hora_apartada_entrega })
+        entregas++
+      }
+      const d = soloFecha(o.fecha_despacho_cliente)
+      if (d) {
+        meter(programacion, d, { orden: o, tipo: "despacho", hora: o.hora_despacho_cliente })
+        despachos++
+      }
       const l = soloFecha(o.fecha_cancelacion)
-      if (l) limite.set(l, [...(limite.get(l) ?? []), o])
+      if (l) meter(limite, l, { orden: o, tipo: "entrega", hora: null })
     }
-    return { apartado, limite }
+    return { programacion, limite, entregas, despachos }
   }, [ordenes])
 
-  const mapaActivo = capa === "apartado" ? porDia.apartado : porDia.limite
+  const mapaActivo = capa === "programacion" ? porDia.programacion : porDia.limite
 
   /**
    * Las celdas del mes, empezando en lunes.
@@ -169,19 +199,21 @@ export function CalendarioRecepcionesModule({
 
   /** El total del mes visible, para el encabezado. */
   const totalMes = useMemo(() => {
-    let ordenesMes = 0
+    let entregas = 0
+    let despachos = 0
     let piezas = 0
     for (const c of celdas) {
       if (!c.delMes) continue
-      for (const o of mapaActivo.get(claveDia(c.fecha)) ?? []) {
-        ordenesMes++
-        piezas += Number(o.piezas ?? 0)
+      for (const m of mapaActivo.get(claveDia(c.fecha)) ?? []) {
+        if (m.tipo === "despacho") despachos++
+        else entregas++
+        piezas += Number(m.orden.piezas ?? 0)
       }
     }
-    return { ordenes: ordenesMes, piezas }
+    return { entregas, despachos, piezas }
   }, [celdas, mapaActivo])
 
-  const conApartado = porDia.apartado.size
+  const sinProgramacion = porDia.entregas === 0 && porDia.despachos === 0
   const hoy = claveDia(new Date())
   const detalle = diaAbierto ? (mapaActivo.get(diaAbierto) ?? []) : []
 
@@ -192,8 +224,8 @@ export function CalendarioRecepcionesModule({
           Calendario de recepciones
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Cuántas entregas caen cada día, para repartir el trabajo de
-          almacén. Haz clic en un día para ver qué folios son.
+          Cuántas entregas y despachos caen cada día, para repartir el
+          trabajo de almacén. Haz clic en un día para ver qué folios son.
         </p>
       </div>
 
@@ -202,14 +234,14 @@ export function CalendarioRecepcionesModule({
         <div className="inline-flex rounded-lg border border-border p-0.5">
           <Button
             size="sm"
-            variant={capa === "apartado" ? "secondary" : "ghost"}
+            variant={capa === "programacion" ? "secondary" : "ghost"}
             className="h-7 text-xs"
             onClick={() => {
-              setCapa("apartado")
+              setCapa("programacion")
               setDiaAbierto(null)
             }}
           >
-            Apartado de entrega
+            Programación del día
           </Button>
           <Button
             size="sm"
@@ -224,11 +256,27 @@ export function CalendarioRecepcionesModule({
           </Button>
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          {capa === "apartado"
-            ? "El día que el maquilero se comprometió a entregar."
-            : "La fecha tope pactada con el cliente, no una entrega programada."}
-        </p>
+        {capa === "programacion" ? (
+          /*
+            La leyenda va junto al selector y no dentro de la rejilla:
+            los dos colores aparecen en celdas distintas y sin la
+            leyenda a la vista habria que adivinar cual es cual.
+          */
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block size-2.5 rounded-sm bg-emerald-400" />
+              Entrega del maquilero
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block size-2.5 rounded-sm bg-violet-400" />
+              Despacho al cliente
+            </span>
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            La fecha tope pactada con el cliente, no una entrega programada.
+          </p>
+        )}
       </div>
 
       {/*
@@ -236,11 +284,12 @@ export function CalendarioRecepcionesModule({
         sumarlas lo contaria dos veces. Ademas significan cosas
         distintas, y el numero resultante no responderia a nada.
       */}
-      {capa === "apartado" && conApartado === 0 && !cargando && (
+      {capa === "programacion" && sinProgramacion && !cargando && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
           <p className="text-xs text-amber-900">
-            Ninguna orden pendiente tiene apartado de entrega capturado. Se
-            registra en Seguimiento Maquila; mientras tanto, el{" "}
+            Ninguna orden pendiente tiene apartado de entrega ni despacho
+            programado. El apartado se registra en Seguimiento Maquila y el
+            despacho en la etapa 11 del Panel General; mientras tanto, el{" "}
             <button
               type="button"
               className="font-medium underline underline-offset-2"
@@ -298,12 +347,18 @@ export function CalendarioRecepcionesModule({
         <p className="text-xs text-muted-foreground">
           {cargando ? (
             <Skeleton className="h-4 w-32" />
+          ) : capa === "programacion" ? (
+            <>
+              <span className="font-medium text-foreground">{totalMes.entregas}</span>{" "}
+              {totalMes.entregas === 1 ? "entrega" : "entregas"} ·{" "}
+              <span className="font-medium text-foreground">{totalMes.despachos}</span>{" "}
+              {totalMes.despachos === 1 ? "despacho" : "despachos"} este mes ·{" "}
+              {totalMes.piezas.toLocaleString("es-MX")} piezas
+            </>
           ) : (
             <>
-              <span className="font-medium text-foreground">
-                {totalMes.ordenes}
-              </span>{" "}
-              {totalMes.ordenes === 1 ? "entrega" : "entregas"} este mes ·{" "}
+              <span className="font-medium text-foreground">{totalMes.entregas}</span>{" "}
+              {totalMes.entregas === 1 ? "límite" : "límites"} este mes ·{" "}
               {totalMes.piezas.toLocaleString("es-MX")} piezas
             </>
           )}
@@ -327,9 +382,11 @@ export function CalendarioRecepcionesModule({
           {celdas.map(({ fecha, delMes }, i) => {
             const clave = claveDia(fecha)
             const delDia = mapaActivo.get(clave) ?? []
+            const entregas = delDia.filter((m) => m.tipo === "entrega").length
+            const despachos = delDia.filter((m) => m.tipo === "despacho").length
             const esHoy = clave === hoy
             const abierto = clave === diaAbierto
-            const piezas = delDia.reduce((s, o) => s + Number(o.piezas ?? 0), 0)
+            const piezas = delDia.reduce((s, m) => s + Number(m.orden.piezas ?? 0), 0)
             return (
               <button
                 key={i}
@@ -362,16 +419,39 @@ export function CalendarioRecepcionesModule({
 
                 {delDia.length > 0 && (
                   <div className="mt-1">
-                    <div
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold",
-                        capa === "apartado"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-sky-100 text-sky-800",
+                    {/*
+                      Dos insignias y no una suma: entrada y salida son
+                      trabajos distintos de almacen, y una sola cifra
+                      esconderia que un dia es todo despachos.
+                    */}
+                    <div className="flex flex-wrap gap-1">
+                      {entregas > 0 && (
+                        <div
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold",
+                            capa === "programacion"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-sky-100 text-sky-800",
+                          )}
+                          title={
+                            capa === "programacion"
+                              ? `${entregas} entrega(s) de maquilero`
+                              : `${entregas} límite(s) de entrega`
+                          }
+                        >
+                          <PackageCheck className="size-3" />
+                          {entregas}
+                        </div>
                       )}
-                    >
-                      <PackageCheck className="size-3" />
-                      {delDia.length}
+                      {despachos > 0 && (
+                        <div
+                          className="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 text-xs font-semibold text-violet-800"
+                          title={`${despachos} despacho(s) al cliente`}
+                        >
+                          <Truck className="size-3" />
+                          {despachos}
+                        </div>
+                      )}
                     </div>
                     <p className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
                       {piezas.toLocaleString("es-MX")} pzs
@@ -394,7 +474,10 @@ export function CalendarioRecepcionesModule({
                 return `${d} de ${MESES[Number(m) - 1]} de ${a}`
               })()}
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                {detalle.length} {detalle.length === 1 ? "entrega" : "entregas"}
+                {detalle.length}{" "}
+                {capa === "programacion"
+                  ? detalle.length === 1 ? "movimiento" : "movimientos"
+                  : detalle.length === 1 ? "límite" : "límites"}
               </span>
             </p>
             <Button
@@ -407,25 +490,28 @@ export function CalendarioRecepcionesModule({
             </Button>
           </div>
           {/*
-            En la capa de APARTADO se muestra el cronograma: esa es la
-            que trae hora y la que sirve para repartir el dia.
+            En la capa de PROGRAMACION se muestra el cronograma: es la
+            que trae hora y la que sirve para repartir el dia. Entregas
+            y despachos van en la misma linea de tiempo, cada uno de su
+            color, porque compiten por la misma gente.
 
             La capa de LIMITE no lleva hora —es una fecha tope pactada
             con el cliente, no una cita— asi que se queda en la tabla
             llana: un cronograma con todo "sin hora" no diria nada.
           */}
-          {capa === "apartado" && (
+          {capa === "programacion" && (
             <div className="p-3">
               <CronogramaDia
                 entregas={detalle.map(
-                  (o): EntregaDia => ({
-                    folio: o.folio,
-                    cliente: o.cliente,
-                    modelo: o.modelo,
-                    piezas: o.piezas,
-                    maquilero: o.maquilero,
-                    fase_actual: o.fase_actual,
-                    hora: o.hora_apartada_entrega,
+                  (m): EntregaDia => ({
+                    folio: m.orden.folio,
+                    cliente: m.orden.cliente,
+                    modelo: m.orden.modelo,
+                    piezas: m.orden.piezas,
+                    maquilero: m.orden.maquilero,
+                    fase_actual: m.orden.fase_actual,
+                    hora: m.hora,
+                    tipo: m.tipo,
                   }),
                 )}
               />
@@ -435,8 +521,11 @@ export function CalendarioRecepcionesModule({
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                {capa === "apartado" && (
-                  <th className="px-3 py-1.5 font-medium">Hora</th>
+                {capa === "programacion" && (
+                  <>
+                    <th className="px-3 py-1.5 font-medium">Hora</th>
+                    <th className="px-3 py-1.5 font-medium">Movimiento</th>
+                  </>
                 )}
                 <th className="px-3 py-1.5 font-medium">Folio</th>
                 <th className="px-3 py-1.5 font-medium">Cliente</th>
@@ -447,28 +536,50 @@ export function CalendarioRecepcionesModule({
               </tr>
             </thead>
             <tbody>
-              {detalle.map((o) => (
-                <tr key={o.folio} className="border-t border-border">
-                  {capa === "apartado" && (
-                    <td className="px-3 py-1.5 tabular-nums">
-                      {o.hora_apartada_entrega ? (
-                        o.hora_apartada_entrega.slice(0, 5)
-                      ) : (
-                        <span className="text-xs text-muted-foreground/60">
-                          sin hora
+              {detalle.map((m) => (
+                <tr key={`${m.tipo}-${m.orden.folio}`} className="border-t border-border">
+                  {capa === "programacion" && (
+                    <>
+                      <td className="px-3 py-1.5 tabular-nums">
+                        {m.hora ? (
+                          m.hora.slice(0, 5)
+                        ) : (
+                          <span className="text-xs text-muted-foreground/60">
+                            sin hora
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium",
+                            m.tipo === "despacho"
+                              ? "bg-violet-100 text-violet-800"
+                              : "bg-emerald-100 text-emerald-800",
+                          )}
+                        >
+                          {m.tipo === "despacho" ? (
+                            <>
+                              <Truck className="size-3" /> Despacho
+                            </>
+                          ) : (
+                            <>
+                              <PackageCheck className="size-3" /> Entrega
+                            </>
+                          )}
                         </span>
-                      )}
-                    </td>
+                      </td>
+                    </>
                   )}
                   <td className="px-3 py-1.5 font-medium tabular-nums">
-                    {o.folio}
+                    {m.orden.folio}
                   </td>
-                  <td className="px-3 py-1.5">{o.cliente ?? "—"}</td>
-                  <td className="px-3 py-1.5">{o.modelo ?? "—"}</td>
-                  <td className="px-3 py-1.5">{o.maquilero ?? "—"}</td>
-                  <td className="px-3 py-1.5">{o.fase_actual ?? "—"}</td>
+                  <td className="px-3 py-1.5">{m.orden.cliente ?? "—"}</td>
+                  <td className="px-3 py-1.5">{m.orden.modelo ?? "—"}</td>
+                  <td className="px-3 py-1.5">{m.orden.maquilero ?? "—"}</td>
+                  <td className="px-3 py-1.5">{m.orden.fase_actual ?? "—"}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">
-                    {Number(o.piezas ?? 0).toLocaleString("es-MX")}
+                    {Number(m.orden.piezas ?? 0).toLocaleString("es-MX")}
                   </td>
                 </tr>
               ))}
@@ -476,14 +587,14 @@ export function CalendarioRecepcionesModule({
             <tfoot className="border-t-2 border-border bg-muted/50">
               <tr>
                 <td
-                  colSpan={capa === "apartado" ? 6 : 5}
+                  colSpan={capa === "programacion" ? 7 : 5}
                   className="px-3 py-1.5 text-right font-semibold"
                 >
                   Total
                 </td>
                 <td className="px-3 py-1.5 text-right font-bold tabular-nums">
                   {detalle
-                    .reduce((s, o) => s + Number(o.piezas ?? 0), 0)
+                    .reduce((s, m) => s + Number(m.orden.piezas ?? 0), 0)
                     .toLocaleString("es-MX")}
                 </td>
               </tr>

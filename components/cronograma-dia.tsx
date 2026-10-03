@@ -36,6 +36,12 @@ export type EntregaDia = {
   fase_actual: string | null
   /** "HH:MM" o "HH:MM:SS". Sin ella, la entrega no tiene franja. */
   hora: string | null
+  /**
+   * Entrega del maquilero (verde) o despacho al cliente (morado).
+   * Van en la misma linea de tiempo porque compiten por la misma
+   * gente y el mismo anden. Sin tipo, se asume entrega.
+   */
+  tipo?: "entrega" | "despacho"
 }
 
 /**
@@ -58,6 +64,9 @@ function fmtHora(hora: string): string {
 export function CronogramaDia({ entregas }: { entregas: EntregaDia[] }) {
   const conHora = entregas.filter((e) => e.hora)
   const sinHora = entregas.filter((e) => !e.hora)
+  const esDespacho = (e: EntregaDia) => e.tipo === "despacho"
+  /** Clave unica: la misma orden puede entrar y salir el mismo dia. */
+  const claveDe = (e: EntregaDia) => `${e.tipo ?? "entrega"}-${e.folio}`
 
   // Si hay horas fuera de la jornada, se amplía el rango para que no
   // queden invisibles: es mejor un cronograma largo que una entrega
@@ -93,9 +102,14 @@ export function CronogramaDia({ entregas }: { entregas: EntregaDia[] }) {
           <div className="flex flex-wrap gap-1.5">
             {sinHora.map((e) => (
               <span
-                key={e.folio}
-                className="inline-flex items-center gap-1.5 rounded border border-border bg-background px-2 py-0.5 text-xs"
-                title={`${e.cliente ?? ""} · ${Number(e.piezas ?? 0).toLocaleString("es-MX")} piezas`}
+                key={claveDe(e)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs",
+                  esDespacho(e)
+                    ? "border-violet-200 bg-violet-50"
+                    : "border-border bg-background",
+                )}
+                title={`${esDespacho(e) ? "Despacho al cliente" : "Entrega del maquilero"} · ${e.cliente ?? ""} · ${Number(e.piezas ?? 0).toLocaleString("es-MX")} piezas`}
               >
                 <span className="font-medium tabular-nums">{e.folio}</span>
                 <span className="text-muted-foreground">
@@ -137,14 +151,23 @@ export function CronogramaDia({ entregas }: { entregas: EntregaDia[] }) {
                 <div className="flex min-h-[38px] flex-1 flex-wrap gap-1 p-1">
                   {enEsta.map((e) => (
                     <div
-                      key={e.folio}
+                      key={claveDe(e)}
                       className={cn(
                         "min-w-[150px] flex-1 rounded border px-2 py-1",
+                        // La saturacion manda sobre el tipo: una franja
+                        // con cuatro movimientos es un problema sea lo
+                        // que sea lo que se mueve.
                         saturada
                           ? "border-amber-300 bg-amber-100"
-                          : "border-emerald-200 bg-emerald-50",
+                          : esDespacho(e)
+                            ? "border-violet-200 bg-violet-50"
+                            : "border-emerald-200 bg-emerald-50",
                       )}
-                      title={`${e.folio} · ${e.cliente ?? "sin cliente"} · ${e.maquilero ?? "sin maquilero"}`}
+                      title={
+                        esDespacho(e)
+                          ? `${e.folio} · despacho a ${e.cliente ?? "cliente"}`
+                          : `${e.folio} · ${e.cliente ?? "sin cliente"} · ${e.maquilero ?? "sin maquilero"}`
+                      }
                     >
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="text-xs font-semibold tabular-nums">
