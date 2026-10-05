@@ -599,6 +599,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
           costo: m.costo,
           idarticulo: m.idarticulo,
           uso: m.uso,
+          tipo_habilitacion: m.tipo_habilitacion ?? null,
           orden: m.orden,
         })
         .eq("id", m.id)
@@ -789,6 +790,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         costo: 0,
         idarticulo: null,
         uso: null,
+        tipo_habilitacion: null,
         created_at: new Date().toISOString(),
       },
     ])
@@ -1756,7 +1758,9 @@ function CuadroMateriales({
    * pie y de los renglones vacios tienen que cuadrar con ellas: un
    * colSpan corto parte la tabla en dos visualmente.
    */
-  const columnas = 6 + (esTela ? 1 : 0)
+  // La columna Tipo va en las dos tablas: en telas es el uso (forro,
+  // entretela…) y en habilitaciones, si es compleja o simple.
+  const columnas = 7
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
@@ -1779,7 +1783,7 @@ function CuadroMateriales({
           <thead className="bg-muted">
             <tr>
               <th className="px-2 py-1.5 text-left font-medium">Clave</th>
-              {esTela && <th className="px-2 py-1.5 text-left font-medium">Tipo</th>}
+              <th className="px-2 py-1.5 text-left font-medium">Tipo</th>
               <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
               {/* Ancho fijo para que el encabezado caiga sobre su campo */}
               <th className="w-[110px] px-2 py-1.5 text-right font-medium">Cantidad</th>
@@ -1825,7 +1829,7 @@ function CuadroMateriales({
                         className="h-7 min-w-[130px] text-xs" />
                     )}
                   </td>
-                  {esTela && (
+                  {esTela ? (
                     <td className="px-1 py-1">
                       <Input
                         disabled={readOnly}
@@ -1837,6 +1841,38 @@ function CuadroMateriales({
                         list="usos-tela"
                         className="h-7 min-w-[110px] text-xs"
                       />
+                    </td>
+                  ) : (
+                    /*
+                     * Compleja o simple: informativo, no mueve las etapas
+                     * 4 y 8. Dos casillas que se excluyen; marcar la que
+                     * ya esta marcada la deja sin clasificar.
+                     */
+                    <td className="px-1 py-1">
+                      <div className="flex min-w-[150px] gap-2.5">
+                        {(["Compleja", "Simple"] as const).map((t) => (
+                          <label
+                            key={t}
+                            className={cn(
+                              "flex items-center gap-1 text-xs",
+                              readOnly ? "cursor-default" : "cursor-pointer",
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={readOnly}
+                              checked={f.tipo_habilitacion === t}
+                              onChange={() =>
+                                onCambiar(f, {
+                                  tipo_habilitacion: f.tipo_habilitacion === t ? null : t,
+                                })
+                              }
+                              className="size-3.5 accent-violet-600"
+                            />
+                            {t}
+                          </label>
+                        ))}
+                      </div>
                     </td>
                   )}
                   <td className="px-1 py-1">
@@ -1892,7 +1928,7 @@ function CuadroMateriales({
           {filas.length > 0 && (
             <tfoot className="border-t-2 border-border bg-muted/50">
               <tr>
-                <td colSpan={esTela ? 5 : 4} className="px-3 py-1.5 text-right font-semibold">
+                <td colSpan={5} className="px-3 py-1.5 text-right font-semibold">
                   Total
                 </td>
                 <td className="px-2 py-1.5 text-right font-semibold tabular-nums">

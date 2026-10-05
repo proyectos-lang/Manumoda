@@ -374,7 +374,8 @@ function CuadroMaterialesImpreso({
   esTela?: boolean
 }) {
   /** Las columnas que se imprimen, para que los colSpan cuadren. */
-  const columnas = 5 + (esTela ? 1 : 0)
+  // TIPO va en las dos: uso de la tela, o compleja/simple.
+  const columnas = 6
   return (
     <div className="mt-3 print:break-inside-avoid">
       <div className="text-[10px] font-bold">{titulo}</div>
@@ -382,7 +383,7 @@ function CuadroMaterialesImpreso({
         <thead>
           <tr className="bg-black/5">
             <th className="border border-black/50 px-1 py-0.5 text-left">CLAVE</th>
-            {esTela && <th className="border border-black/50 px-1 py-0.5 text-left">TIPO</th>}
+            <th className="border border-black/50 px-1 py-0.5 text-left">TIPO</th>
             <th className="border border-black/50 px-1 py-0.5 text-left">DESCRIPCION</th>
             <th className="border border-black/50 px-1 py-0.5 text-right">CANTIDAD</th>
             <th className="border border-black/50 px-1 py-0.5 text-right">COSTO</th>
@@ -401,9 +402,9 @@ function CuadroMaterialesImpreso({
             filas.map((m) => (
               <tr key={m.id}>
                 <td className="border border-black/50 px-1 py-0.5">{m.clave ?? ""}</td>
-                {esTela && (
-                  <td className="border border-black/50 px-1 py-0.5">{m.uso ?? ""}</td>
-                )}
+                <td className="border border-black/50 px-1 py-0.5">
+                  {esTela ? (m.uso ?? "") : (m.tipo_habilitacion ?? "")}
+                </td>
                 <td className="border border-black/50 px-1 py-0.5">{m.descripcion}</td>
                 <td className="border border-black/50 px-1 py-0.5 text-right tabular-nums">
                   {Number(m.cantidad || 0)}
@@ -420,7 +421,7 @@ function CuadroMaterialesImpreso({
         </tbody>
         <tfoot>
           <tr className="bg-black/5">
-            <td colSpan={esTela ? 5 : 4}
+            <td colSpan={5}
                 className="border border-black/50 px-1 py-0.5 text-right font-bold">
               Total
             </td>

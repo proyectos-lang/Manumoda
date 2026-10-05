@@ -828,6 +828,11 @@ export type FichaMaterial = {
    */
   uso: string | null
   created_at: string
+  /**
+   * Solo en habilitaciones: Compleja o Simple. Informativo, no mueve las
+   * etapas 4 y 8 (script 084). null = sin clasificar.
+   */
+  tipo_habilitacion?: "Compleja" | "Simple" | null
 }
 
 /** Fila de `vw_ficha_tecnica`: la ficha con Costo Neto y Margen ya calculados. */
