@@ -27,6 +27,7 @@ import { fetchAll } from "@/lib/supabase/fetch-all"
 import { useAuth, useReadOnly } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
 import { ESTADOS_ETAPA, type EstadoEtapa, type VwOrdenEtapa } from "@/lib/types"
+import { DespachoEditor } from "@/components/despacho-editor"
 import { useFichaTecnica } from "@/components/ficha-tecnica-provider"
 
 /**
@@ -134,38 +135,6 @@ export function EtapasOrdenSheet({
     if (open && folio) void cargar()
   }, [open, folio, cargar])
 
-  /**
-   * El despacho al cliente (etapa 11) se guarda en la ORDEN, no en
-   * `orden_etapas`: el calendario de recepciones lo lee de ahi, junto
-   * al apartado del maquilero, y asi los dos salen del mismo sitio con
-   * la misma forma. El estado de la etapa lo deriva la vista.
-   */
-  async function guardarDespacho(fecha: string | null, hora: string | null) {
-    if (!folio) return
-    const supabase = getSupabase()
-    if (!supabase) return
-    const etapa = etapas.find((e) => e.clave === "despacho_cliente")
-    setGuardando(etapa?.idetapa ?? -1)
-    const { error } = await supabase
-      .from("ordenes_produccion")
-      .update({
-        fecha_despacho_cliente: fecha,
-        // Sin dia no hay hora: la base lo rechaza (23514) y una hora
-        // suelta no se podria poner en el calendario.
-        hora_despacho_cliente: fecha ? hora : null,
-      })
-      .eq("idempresa", IDEMPRESA)
-      .eq("folio", folio)
-    setGuardando(null)
-    if (error) {
-      toast.error("No se pudo guardar el despacho", { description: error.message })
-      return
-    }
-    toast.success(fecha ? "Despacho programado" : "Despacho sin programar")
-    await cargar()
-    onSaved?.()
-  }
-
   const avance = useMemo(() => {
     const cuentan = etapas.filter((e) => e.estado !== "No aplica")
     if (cuentan.length === 0) return 0
@@ -217,7 +186,19 @@ export function EtapasOrdenSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+      {/*
+        El despacho lleva una tabla de empaques con una columna por
+        talla: en el ancho normal no cabe. Se ensancha solo mientras
+        esa etapa esta abierta.
+      */}
+      <SheetContent
+        className={cn(
+          "w-full overflow-y-auto",
+          etapas.find((x) => x.idetapa === abierta)?.clave === "despacho_cliente"
+            ? "sm:max-w-4xl"
+            : "sm:max-w-xl",
+        )}
+      >
         <SheetHeader>
           <SheetTitle>Etapas del folio {folio}</SheetTitle>
           <SheetDescription>
@@ -354,14 +335,16 @@ export function EtapasOrdenSheet({
                                 : "Programar despacho"}
                             </Button>
                           ) : (
-                            <EditorDespacho
+                            <DespachoEditor
+                              folio={folio!}
                               fecha={e.fecha_despacho_cliente}
                               hora={e.hora_despacho_cliente}
-                              guardando={guardando === e.idetapa}
+                              readOnly={readOnly}
                               onCancelar={() => setAbierta(null)}
-                              onGuardar={async (f, h) => {
-                                await guardarDespacho(f, h)
+                              onGuardado={async () => {
                                 setAbierta(null)
+                                await cargar()
+                                onSaved?.()
                               }}
                             />
                           )}
@@ -498,84 +481,6 @@ function EditorEtapa({
           {guardando && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
           Guardar
         </Button>
-        <Button size="sm" variant="ghost" disabled={guardando} onClick={onCancelar}>
-          Cancelar
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Programar el despacho al cliente: dia y hora.
- *
- * La hora solo se habilita con dia —una hora suelta no significa nada y
- * la base la rechaza— y quitar el dia quita la hora. "Quitar" deja el
- * despacho sin programar; no borra nada mas.
- */
-function EditorDespacho({
-  fecha,
-  hora,
-  guardando,
-  onGuardar,
-  onCancelar,
-}: {
-  fecha: string | null
-  hora: string | null
-  guardando: boolean
-  onGuardar: (fecha: string | null, hora: string | null) => void
-  onCancelar: () => void
-}) {
-  const [f, setF] = useState(fecha ?? "")
-  // La base devuelve "HH:MM:SS"; el input type=time quiere "HH:MM".
-  const [h, setH] = useState(hora ? hora.slice(0, 5) : "")
-
-  return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="text-[11px] font-medium text-muted-foreground">Día</label>
-          <Input
-            type="date"
-            value={f}
-            onChange={(ev) => {
-              setF(ev.target.value)
-              if (!ev.target.value) setH("")
-            }}
-            className="mt-1 h-8 text-sm"
-          />
-        </div>
-        <div>
-          <label className="text-[11px] font-medium text-muted-foreground">Hora</label>
-          <Input
-            type="time"
-            value={h}
-            disabled={!f}
-            onChange={(ev) => setH(ev.target.value)}
-            className="mt-1 h-8 text-sm"
-          />
-        </div>
-      </div>
-      <p className="text-[11px] text-muted-foreground">
-        Se verá en el Calendario de recepciones junto a las entregas de los
-        maquileros
-        {h ? ", en su franja de una hora." : "; sin hora, aparte de las franjas."}
-      </p>
-      <div className="flex gap-2">
-        <Button size="sm" disabled={guardando || !f} onClick={() => onGuardar(f, h || null)}>
-          {guardando && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
-          Guardar
-        </Button>
-        {fecha && (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={guardando}
-            onClick={() => onGuardar(null, null)}
-          >
-            Quitar
-          </Button>
-        )}
         <Button size="sm" variant="ghost" disabled={guardando} onClick={onCancelar}>
           Cancelar
         </Button>
