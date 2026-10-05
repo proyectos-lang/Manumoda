@@ -1,58 +1,70 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Copy, FileText, Loader2, Plus, Trash2, Upload, X } from "lucide-react"
+import { FileText, Loader2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import { useAuth } from "@/lib/auth-context"
-import { ESCALAS_TALLA } from "@/lib/types"
 
 /**
  * Programar el despacho a cliente (etapa 11): día, hora y empaque.
  *
- * QUÉ SE CAPTURA:
- *   Día y hora, el CEDI de destino, cada caja o bulto con su color y
- *   piezas por talla, y un PDF de respaldo de la entrega.
+ * LA DISTRIBUCIÓN ES UNA PROPORCIÓN, NO UN DETALLE:
+ *   Se captura el total a despachar y una distribución como "1, 2, 1,
+ *   2". Cada número es una caja, y el total se reparte en esa
+ *   proporción: 600 piezas con 1,2,1,2 → 100, 200, 100, 200. Antes se
+ *   pedía color y piezas por talla en cada caja; operación lo
+ *   simplificó (05-oct-2026).
  *
- * LOS TOTALES NO SE TECLEAN:
- *   Cuántas cajas, cuántos bultos y cuántas piezas salen del detalle.
- *   Capturarlos aparte invitaría a que no cuadren con lo que de verdad
- *   va en cada empaque.
- *
- * LAS TALLAS:
- *   Se proponen las de la ficha cuando el folio tiene reparto; si no,
- *   se elige una escala o se escriben. Sin tallas, cada empaque lleva
- *   solo su total de piezas: hay despachos que no se detallan.
+ * EL REPARTO SIEMPRE SUMA EL TOTAL:
+ *   600 entre 1,1,1,1,1,1,1 no da enteros. Se usa el método del mayor
+ *   residuo: cada caja recibe su parte redondeada hacia abajo y las
+ *   piezas que sobran van, de una en una, a las cajas con mayor
+ *   fracción pendiente. Así ninguna caja queda con piezas a medias y la
+ *   suma es exactamente el total. La base lo vuelve a comprobar.
  *
  * TODO SE GUARDA JUNTO:
- *   Una sola llamada a `fn_guardar_despacho` (script 080), que escribe
- *   en una transacción. Desde aquí serían varias, y un corte a media
- *   operación dejaría las cajas borradas y sin reemplazo.
+ *   Una sola llamada a `fn_guardar_despacho` (scripts 080 y 083), que
+ *   escribe en una transacción.
  */
 
 const BUCKET = "despachos"
 /** El límite del bucket: más grande, Storage lo rechaza con un error poco claro. */
 const MAX_PDF = 10 * 1024 * 1024
 
-type Empaque = {
-  /** Clave solo de pantalla, para que React no confunda filas al borrar. */
-  k: string
-  tipo: "Caja" | "Bulto"
-  color: string
-  cantidades: Record<string, number>
-  /** Solo manda cuando no hay tallas; si las hay, es la suma. */
-  piezas: number
+type Tipo = "Caja" | "Bulto"
+
+/** "1, 2, 1,2" → [1, 2, 1, 2]. Ignora lo que no sea un entero positivo. */
+function leerDistribucion(texto: string): number[] {
+  return texto
+    .split(/[\s,;-]+/)
+    .map((x) => Number(x))
+    .filter((n) => Number.isInteger(n) && n > 0)
 }
 
-let contador = 0
-const nuevaClave = () => `e${Date.now()}-${contador++}`
-
-function totalDe(e: Empaque, tallas: string[]): number {
-  if (tallas.length === 0) return Number(e.piezas || 0)
-  return tallas.reduce((s, t) => s + Number(e.cantidades[t] || 0), 0)
+/**
+ * Reparte `total` según `pesos` con el método del mayor residuo: la
+ * suma del resultado es exactamente `total`.
+ */
+export function repartir(total: number, pesos: number[]): number[] {
+  const suma = pesos.reduce((a, b) => a + b, 0)
+  if (total <= 0 || suma <= 0) return pesos.map(() => 0)
+  const exactos = pesos.map((p) => (total * p) / suma)
+  const base = exactos.map(Math.floor)
+  let sobran = total - base.reduce((a, b) => a + b, 0)
+  // A igual residuo, gana la caja de menor número: el reparto es estable.
+  const orden = exactos
+    .map((x, i) => ({ i, residuo: x - Math.floor(x) }))
+    .sort((a, b) => b.residuo - a.residuo || a.i - b.i)
+  for (const { i } of orden) {
+    if (sobran <= 0) break
+    base[i]++
+    sobran--
+  }
+  return base
 }
 
 export function DespachoEditor({
@@ -79,13 +91,13 @@ export function DespachoEditor({
   const [hr, setHr] = useState(hora ? hora.slice(0, 5) : "")
   const [cedi, setCedi] = useState("")
   const [notas, setNotas] = useState("")
-  const [tallas, setTallas] = useState<string[]>([])
-  const [nuevaTalla, setNuevaTalla] = useState("")
-  const [empaques, setEmpaques] = useState<Empaque[]>([])
 
-  /** Cuántos empaques agregar de golpe, y de qué tipo. */
-  const [lote, setLote] = useState("1")
-  const [loteTipo, setLoteTipo] = useState<"Caja" | "Bulto">("Caja")
+  const [total, setTotal] = useState("")
+  const [distTexto, setDistTexto] = useState("")
+  /** El tipo de cada caja, por posición. Se conserva al editar la distribución. */
+  const [tipos, setTipos] = useState<Tipo[]>([])
+  /** Para el atajo "repartir parejo en N cajas". */
+  const [parejo, setParejo] = useState("")
 
   const [pdfPath, setPdfPath] = useState<string | null>(null)
   const [pdfNombre, setPdfNombre] = useState<string | null>(null)
@@ -93,13 +105,10 @@ export function DespachoEditor({
   const [pdfNuevo, setPdfNuevo] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  /** Referencias para comparar: lo cortado y lo pedido. */
   const [piezasRef, setPiezasRef] = useState<{ cortadas: number | null; pedidas: number | null }>({
     cortadas: null,
     pedidas: null,
   })
-  /** Tallas de la ficha, si el folio tiene reparto. */
-  const [tallasFicha, setTallasFicha] = useState<string[]>([])
   /** Los CEDI ya usados, como sugerencia: el mismo cliente repite destino. */
   const [cedisPrevios, setCedisPrevios] = useState<string[]>([])
 
@@ -109,16 +118,16 @@ export function DespachoEditor({
     let vivo = true
     ;(async () => {
       setCargando(true)
-      const [cab, emp, ord, ft, ced] = await Promise.all([
+      const [cab, emp, ord, ced] = await Promise.all([
         supabase
           .from("despachos")
-          .select("cedi_destino, tallas, pdf_path, pdf_nombre, notas")
+          .select("cedi_destino, pdf_path, pdf_nombre, notas, total_piezas, distribucion")
           .eq("idempresa", IDEMPRESA)
           .eq("folio", folio)
           .maybeSingle(),
         supabase
           .from("despacho_empaques")
-          .select("numero, tipo, color, cantidades, piezas")
+          .select("numero, tipo, piezas")
           .eq("idempresa", IDEMPRESA)
           .eq("folio", folio)
           .order("numero"),
@@ -129,11 +138,6 @@ export function DespachoEditor({
           .eq("folio", folio)
           .maybeSingle(),
         supabase
-          .from("ficha_tallas")
-          .select("bloque, cantidades")
-          .eq("idempresa", IDEMPRESA)
-          .eq("folio", folio),
-        supabase
           .from("despachos")
           .select("cedi_destino")
           .eq("idempresa", IDEMPRESA)
@@ -143,47 +147,41 @@ export function DespachoEditor({
 
       const err = cab.error ?? emp.error
       if (err) {
-        // El caso típico: el script 080 aún no se corrió.
-        toast.error("No se pudo cargar el detalle de empaque", {
-          description: err.message,
-        })
+        // El caso típico: el script 083 aún no se corrió.
+        toast.error("No se pudo cargar el despacho", { description: err.message })
       }
 
-      // Las tallas de la ficha: primero lo cortado, que es lo que se
-      // despacha; si no hay, lo planeado.
-      const filas = (ft.data ?? []) as { bloque: string; cantidades: Record<string, number> }[]
-      const delBloque = (b: string) => [
-        ...new Set(filas.filter((f) => f.bloque === b).flatMap((f) => Object.keys(f.cantidades ?? {}))),
-      ]
-      const deFicha = delBloque("Cortadas").length ? delBloque("Cortadas") : delBloque("Especificacion")
-      setTallasFicha(deFicha)
+      const cortadas = ord.data?.piezas_cortadas ?? null
+      const pedidas = ord.data?.piezas ?? null
+      setPiezasRef({ cortadas, pedidas })
+
+      const empaques = (emp.data ?? []) as { tipo: string; piezas: number }[]
+      const dist = (cab.data?.distribucion ?? []) as number[]
 
       if (cab.data) {
         setCedi(cab.data.cedi_destino ?? "")
         setNotas(cab.data.notas ?? "")
-        setTallas(cab.data.tallas ?? [])
         setPdfPath(cab.data.pdf_path)
         setPdfNombre(cab.data.pdf_nombre)
-      } else {
-        // Despacho nuevo: se proponen las tallas de la ficha.
-        setTallas(deFicha)
       }
-      setEmpaques(
-        ((emp.data ?? []) as Omit<Empaque, "k">[]).map((e) => ({
-          k: nuevaClave(),
-          tipo: e.tipo === "Bulto" ? "Bulto" : "Caja",
-          color: e.color ?? "",
-          cantidades: (e.cantidades ?? {}) as Record<string, number>,
-          piezas: Number(e.piezas ?? 0),
-        })),
+
+      if (dist.length > 0) {
+        setDistTexto(dist.join(", "))
+        setTotal(String(cab.data?.total_piezas ?? ""))
+      } else if (empaques.length > 0) {
+        // Un despacho guardado con el detalle anterior (script 080): la
+        // distribución son sus piezas, que reproducen el mismo reparto.
+        setDistTexto(empaques.map((e) => e.piezas).join(", "))
+        setTotal(String(empaques.reduce((s, e) => s + Number(e.piezas || 0), 0)))
+      } else {
+        // Nuevo: se propone despachar lo cortado, o lo pedido.
+        setTotal(String(cortadas ?? pedidas ?? ""))
+      }
+      setTipos(empaques.map((e) => (e.tipo === "Bulto" ? "Bulto" : "Caja")))
+
+      setCedisPrevios(
+        [...new Set(((ced.data ?? []) as { cedi_destino: string }[]).map((c) => c.cedi_destino))].sort(),
       )
-      setPiezasRef({
-        cortadas: ord.data?.piezas_cortadas ?? null,
-        pedidas: ord.data?.piezas ?? null,
-      })
-      setCedisPrevios([
-        ...new Set(((ced.data ?? []) as { cedi_destino: string }[]).map((c) => c.cedi_destino)),
-      ].sort())
       setCargando(false)
     })()
     return () => {
@@ -191,69 +189,31 @@ export function DespachoEditor({
     }
   }, [folio])
 
-  // ── Totales, derivados del detalle ──
-  const resumen = useMemo(() => {
-    const cajas = empaques.filter((e) => e.tipo === "Caja").length
-    const bultos = empaques.filter((e) => e.tipo === "Bulto").length
-    const piezas = empaques.reduce((s, e) => s + totalDe(e, tallas), 0)
-    const porTalla: Record<string, number> = {}
-    for (const t of tallas) {
-      porTalla[t] = empaques.reduce((s, e) => s + Number(e.cantidades[t] || 0), 0)
-    }
-    return { cajas, bultos, piezas, porTalla }
-  }, [empaques, tallas])
+  // ── El reparto, derivado ──
+  const pesos = useMemo(() => leerDistribucion(distTexto), [distTexto])
+  const totalNum = Math.max(0, Math.floor(Number(total) || 0))
+  const piezasPorCaja = useMemo(() => repartir(totalNum, pesos), [totalNum, pesos])
+  /** El tipo de la caja i; las nuevas nacen como caja. */
+  const tipoDe = (i: number): Tipo => tipos[i] ?? "Caja"
+  const cajas = pesos.filter((_, i) => tipoDe(i) === "Caja").length
+  const bultos = pesos.length - cajas
 
-  /** Contra qué se compara: lo cortado si existe, si no lo pedido. */
   const referencia = piezasRef.cortadas ?? piezasRef.pedidas
+  const descuadre = referencia != null && totalNum > 0 ? totalNum - referencia : null
 
-  // ── Edición ──
-  function cambiar(k: string, cambios: Partial<Empaque>) {
-    setEmpaques((prev) => prev.map((e) => (e.k === k ? { ...e, ...cambios } : e)))
-  }
-
-  function agregarLote() {
-    const n = Math.max(1, Math.min(200, Math.floor(Number(lote) || 1)))
-    // Las nuevas copian color y distribución de la última: lo normal
-    // es empacar varias cajas iguales y ajustar la de cierre.
-    const ultima = empaques[empaques.length - 1]
-    setEmpaques((prev) => [
-      ...prev,
-      ...Array.from({ length: n }, () => ({
-        k: nuevaClave(),
-        tipo: loteTipo,
-        color: ultima?.color ?? "",
-        cantidades: { ...(ultima?.cantidades ?? {}) },
-        piezas: ultima?.piezas ?? 0,
-      })),
-    ])
-  }
-
-  function duplicar(e: Empaque) {
-    setEmpaques((prev) => {
-      const i = prev.findIndex((x) => x.k === e.k)
-      const copia = { ...e, k: nuevaClave(), cantidades: { ...e.cantidades } }
-      return [...prev.slice(0, i + 1), copia, ...prev.slice(i + 1)]
+  function cambiarTipo(i: number, t: Tipo) {
+    setTipos((prev) => {
+      const out = [...prev]
+      for (let k = out.length; k < i; k++) out[k] = "Caja"
+      out[i] = t
+      return out
     })
   }
 
-  function agregarTalla(t: string) {
-    const v = t.trim().toUpperCase()
-    if (!v || tallas.includes(v)) return
-    setTallas((prev) => [...prev, v])
-    setNuevaTalla("")
-  }
-
-  function quitarTalla(t: string) {
-    // Quitar la columna borra lo capturado en ella: se avisa con el total.
-    const enUso = resumen.porTalla[t] ?? 0
-    if (enUso > 0 && !confirm(`La talla ${t} tiene ${enUso} piezas capturadas. ¿Quitarla?`)) return
-    setTallas((prev) => prev.filter((x) => x !== t))
-    setEmpaques((prev) =>
-      prev.map((e) => {
-        const { [t]: _, ...resto } = e.cantidades
-        return { ...e, cantidades: resto }
-      }),
-    )
+  function repartirParejo() {
+    const n = Math.max(1, Math.min(500, Math.floor(Number(parejo) || 0)))
+    if (!Number(parejo)) return
+    setDistTexto(Array.from({ length: n }, () => "1").join(", "))
   }
 
   function elegirPdf(f: File | undefined) {
@@ -289,6 +249,10 @@ export function DespachoEditor({
       toast.error("Falta el día del despacho")
       return
     }
+    if (pesos.length > 0 && totalNum <= 0) {
+      toast.error("Falta el total de piezas a repartir")
+      return
+    }
     setGuardando(true)
 
     // 1. El PDF primero: si falla la subida, no se guarda un despacho
@@ -296,8 +260,8 @@ export function DespachoEditor({
     let ruta = pdfPath
     let nombre = pdfNombre
     if (pdfNuevo) {
-      // El nombre del archivo se limpia: Storage rechaza acentos y
-      // espacios raros con un error que no dice cuál carácter fue.
+      // Storage rechaza acentos y espacios raros con un error que no
+      // dice cuál carácter fue: el nombre se limpia.
       const limpio = pdfNuevo.name
         .normalize("NFD")
         .replace(/[̀-ͯ]/g, "")
@@ -311,8 +275,6 @@ export function DespachoEditor({
         toast.error("No se pudo subir el PDF", { description: error.message })
         return
       }
-      // El anterior se borra para no dejar archivos huérfanos. Si falla
-      // no importa: el despacho ya apunta al nuevo.
       if (pdfPath) await supabase.storage.from(BUCKET).remove([pdfPath])
       ruta = destino
       nombre = pdfNuevo.name
@@ -325,23 +287,14 @@ export function DespachoEditor({
       p_fecha: dia,
       p_hora: hr || null,
       p_cedi: cedi,
-      p_tallas: tallas,
-      p_empaques: empaques.map((e) => ({
-        tipo: e.tipo,
-        color: e.color,
-        // Solo las tallas vigentes y con piezas: una columna quitada no
-        // debe dejar cantidades fantasma en el jsonb.
-        cantidades: Object.fromEntries(
-          tallas
-            .filter((t) => Number(e.cantidades[t] || 0) > 0)
-            .map((t) => [t, Number(e.cantidades[t])]),
-        ),
-        piezas: totalDe(e, tallas),
-      })),
+      p_tallas: [],
+      p_empaques: pesos.map((_, i) => ({ tipo: tipoDe(i), piezas: piezasPorCaja[i] })),
       p_pdf_path: ruta,
       p_pdf_nombre: nombre,
       p_notas: notas,
       p_usuario: user?.nombre ?? null,
+      p_total: pesos.length > 0 ? totalNum : null,
+      p_distribucion: pesos,
     })
     setGuardando(false)
     if (error) {
@@ -349,7 +302,7 @@ export function DespachoEditor({
       return
     }
     toast.success("Despacho guardado", {
-      description: `${resumen.cajas} caja(s), ${resumen.bultos} bulto(s), ${Number(data ?? 0).toLocaleString("es-MX")} piezas`,
+      description: `${cajas} caja(s), ${bultos} bulto(s), ${Number(data ?? 0).toLocaleString("es-MX")} piezas`,
     })
     onGuardado()
   }
@@ -357,8 +310,8 @@ export function DespachoEditor({
   async function quitarProgramacion() {
     const supabase = getSupabase()
     if (!supabase) return
-    // Quitar solo des-programa el día: el empaque capturado se conserva
-    // por si se reprograma.
+    // Solo des-programa el día: el empaque capturado se conserva por si
+    // se reprograma.
     setGuardando(true)
     const { error } = await supabase
       .from("ordenes_produccion")
@@ -381,8 +334,6 @@ export function DespachoEditor({
       </p>
     )
   }
-
-  const descuadre = referencia != null && resumen.piezas > 0 ? resumen.piezas - referencia : null
 
   return (
     <div className="space-y-4">
@@ -429,223 +380,109 @@ export function DespachoEditor({
         </div>
       </div>
 
-      {/* ── Tallas de la distribución ── */}
-      <div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-medium text-muted-foreground">Tallas:</span>
-          {tallas.map((t) => (
-            <span
-              key={t}
-              className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-xs"
-            >
-              {t}
-              {!readOnly && (
-                <button type="button" onClick={() => quitarTalla(t)} title={`Quitar ${t}`}>
-                  <X className="size-3 text-muted-foreground" />
-                </button>
-              )}
-            </span>
-          ))}
-          {!readOnly && (
-            <Input
-              value={nuevaTalla}
-              onChange={(ev) => setNuevaTalla(ev.target.value)}
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter") {
-                  ev.preventDefault()
-                  agregarTalla(nuevaTalla)
-                }
-              }}
-              placeholder="+ talla"
-              className="h-6 w-20 text-xs"
-            />
-          )}
+      {/* ── Total y distribución ── */}
+      <div className="grid gap-2 sm:grid-cols-[140px_1fr]">
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">Total de piezas</label>
+          <Input
+            type="number"
+            min="0"
+            value={total}
+            disabled={readOnly}
+            onChange={(ev) => setTotal(ev.target.value)}
+            className="sin-flechas mt-1 h-8 text-right text-sm tabular-nums"
+          />
         </div>
-        {!readOnly && tallas.length === 0 && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            <span className="text-[11px] text-muted-foreground">Usar escala:</span>
-            {tallasFicha.length > 0 && (
-              <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={() => setTallas(tallasFicha)}>
-                De la ficha ({tallasFicha.join(" ")})
-              </Button>
-            )}
-            {ESCALAS_TALLA.map((e) => (
-              <Button
-                key={e.nombre}
-                size="sm"
-                variant="outline"
-                className="h-6 text-[11px]"
-                onClick={() => setTallas(e.tallas)}
-              >
-                {e.nombre}
-              </Button>
-            ))}
-            <span className="text-[11px] text-muted-foreground">
-              · sin tallas, cada empaque lleva solo su total
-            </span>
-          </div>
-        )}
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">
+            Distribución por caja
+          </label>
+          <Input
+            value={distTexto}
+            disabled={readOnly}
+            onChange={(ev) => setDistTexto(ev.target.value)}
+            placeholder="1, 2, 1, 2"
+            className="mt-1 h-8 font-mono text-sm"
+          />
+        </div>
       </div>
-
-      {/* ── Los empaques ── */}
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            <tr>
-              <th className="px-2 py-1.5 font-medium">#</th>
-              <th className="px-1 py-1.5 font-medium">Tipo</th>
-              <th className="px-1 py-1.5 font-medium">Color</th>
-              {tallas.map((t) => (
-                <th key={t} className="px-1 py-1.5 text-center font-medium">
-                  {t}
-                </th>
-              ))}
-              <th className="px-2 py-1.5 text-right font-medium">Piezas</th>
-              <th className="w-14" />
-            </tr>
-          </thead>
-          <tbody>
-            {empaques.length === 0 && (
-              <tr>
-                <td colSpan={5 + tallas.length} className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  Sin empaques. Agrega las cajas o bultos abajo.
-                </td>
-              </tr>
-            )}
-            {empaques.map((e, i) => (
-              <tr key={e.k} className="border-t border-border">
-                <td className="px-2 py-1 text-xs font-semibold tabular-nums">{i + 1}</td>
-                <td className="px-1 py-1">
-                  <select
-                    value={e.tipo}
-                    disabled={readOnly}
-                    onChange={(ev) => cambiar(e.k, { tipo: ev.target.value as Empaque["tipo"] })}
-                    className="h-7 rounded-md border border-input bg-transparent px-1 text-xs"
-                  >
-                    <option>Caja</option>
-                    <option>Bulto</option>
-                  </select>
-                </td>
-                <td className="px-1 py-1">
-                  <Input
-                    value={e.color}
-                    disabled={readOnly}
-                    onChange={(ev) => cambiar(e.k, { color: ev.target.value.toUpperCase() })}
-                    className="h-7 min-w-[80px] text-xs"
-                  />
-                </td>
-                {tallas.map((t) => (
-                  <td key={t} className="px-1 py-1">
-                    <Input
-                      type="number"
-                      min="0"
-                      disabled={readOnly}
-                      value={e.cantidades[t] ?? ""}
-                      onChange={(ev) =>
-                        cambiar(e.k, {
-                          cantidades: {
-                            ...e.cantidades,
-                            [t]: Math.max(0, Math.floor(Number(ev.target.value) || 0)),
-                          },
-                        })
-                      }
-                      className="sin-flechas h-7 w-14 text-center text-xs tabular-nums"
-                    />
-                  </td>
-                ))}
-                <td className="px-2 py-1 text-right">
-                  {tallas.length > 0 ? (
-                    <span className="text-xs font-semibold tabular-nums">{totalDe(e, tallas)}</span>
-                  ) : (
-                    <Input
-                      type="number"
-                      min="0"
-                      disabled={readOnly}
-                      value={e.piezas || ""}
-                      onChange={(ev) =>
-                        cambiar(e.k, { piezas: Math.max(0, Math.floor(Number(ev.target.value) || 0)) })
-                      }
-                      className="sin-flechas ml-auto h-7 w-20 text-right text-xs tabular-nums"
-                    />
-                  )}
-                </td>
-                <td className="px-1 py-1">
-                  {!readOnly && (
-                    <div className="flex">
-                      <Button size="icon" variant="ghost" className="size-6" title="Duplicar" onClick={() => duplicar(e)}>
-                        <Copy className="size-3" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="size-6"
-                        title="Quitar"
-                        onClick={() => setEmpaques((prev) => prev.filter((x) => x.k !== e.k))}
-                      >
-                        <Trash2 className="size-3 text-muted-foreground" />
-                      </Button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-          {empaques.length > 0 && (
-            <tfoot className="border-t-2 border-border bg-muted/50">
-              <tr>
-                <td colSpan={3} className="px-2 py-1.5 text-xs font-semibold">
-                  {resumen.cajas} caja{resumen.cajas === 1 ? "" : "s"} · {resumen.bultos} bulto
-                  {resumen.bultos === 1 ? "" : "s"}
-                </td>
-                {tallas.map((t) => (
-                  <td key={t} className="px-1 py-1.5 text-center text-xs font-semibold tabular-nums">
-                    {resumen.porTalla[t] || ""}
-                  </td>
-                ))}
-                <td className="px-2 py-1.5 text-right text-xs font-bold tabular-nums">
-                  {resumen.piezas.toLocaleString("es-MX")}
-                </td>
-                <td />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
+      <p className="-mt-2 text-[11px] text-muted-foreground">
+        Cada número es una caja y el total se reparte en esa proporción: 600
+        piezas con 1, 2, 1, 2 dan 100, 200, 100 y 200.
+      </p>
 
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">Agregar</span>
+          <span className="text-[11px] text-muted-foreground">O repartir parejo en</span>
           <Input
             type="number"
             min="1"
-            value={lote}
-            onChange={(ev) => setLote(ev.target.value)}
-            className="sin-flechas h-7 w-14 text-center text-xs"
+            value={parejo}
+            onChange={(ev) => setParejo(ev.target.value)}
+            className="sin-flechas h-7 w-16 text-center text-xs"
           />
-          <select
-            value={loteTipo}
-            onChange={(ev) => setLoteTipo(ev.target.value as "Caja" | "Bulto")}
-            className="h-7 rounded-md border border-input bg-transparent px-1 text-xs"
-          >
-            <option value="Caja">cajas</option>
-            <option value="Bulto">bultos</option>
-          </select>
-          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={agregarLote}>
-            <Plus className="size-3" /> Agregar
+          <span className="text-[11px] text-muted-foreground">cajas</span>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={repartirParejo}>
+            Aplicar
           </Button>
-          <span className="text-[11px] text-muted-foreground">
-            · copian el color y la distribución del último empaque
-          </span>
+        </div>
+      )}
+
+      {/* ── El reparto ── */}
+      {pesos.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 font-medium">#</th>
+                <th className="px-1 py-1.5 font-medium">Tipo</th>
+                <th className="px-2 py-1.5 text-right font-medium">Proporción</th>
+                <th className="px-2 py-1.5 text-right font-medium">Piezas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pesos.map((p, i) => (
+                <tr key={i} className="border-t border-border">
+                  <td className="px-2 py-1 text-xs font-semibold tabular-nums">{i + 1}</td>
+                  <td className="px-1 py-1">
+                    <select
+                      value={tipoDe(i)}
+                      disabled={readOnly}
+                      onChange={(ev) => cambiarTipo(i, ev.target.value as Tipo)}
+                      className="h-7 rounded-md border border-input bg-transparent px-1 text-xs"
+                    >
+                      <option>Caja</option>
+                      <option>Bulto</option>
+                    </select>
+                  </td>
+                  <td className="px-2 py-1 text-right text-xs tabular-nums text-muted-foreground">{p}</td>
+                  <td className="px-2 py-1 text-right text-sm font-semibold tabular-nums">
+                    {piezasPorCaja[i].toLocaleString("es-MX")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="border-t-2 border-border bg-muted/50">
+              <tr>
+                <td colSpan={3} className="px-2 py-1.5 text-xs font-semibold">
+                  {cajas} caja{cajas === 1 ? "" : "s"} · {bultos} bulto{bultos === 1 ? "" : "s"}
+                </td>
+                <td className="px-2 py-1.5 text-right text-xs font-bold tabular-nums">
+                  {piezasPorCaja.reduce((a, b) => a + b, 0).toLocaleString("es-MX")}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       )}
 
       {/*
         El cuadre contra lo cortado. Avisa, no bloquea: un despacho
-        parcial o con segundas es normal, y quien captura lo sabe.
+        parcial es normal, y quien captura lo sabe.
       */}
       {descuadre != null && descuadre !== 0 && (
         <p className={cn("text-xs", descuadre > 0 ? "text-sky-700" : "text-amber-700")}>
-          El empaque suma {resumen.piezas.toLocaleString("es-MX")} piezas;{" "}
+          El total a despachar es {totalNum.toLocaleString("es-MX")} piezas;{" "}
           {piezasRef.cortadas != null ? "se cortaron" : "se pidieron"} {referencia!.toLocaleString("es-MX")} (
           {descuadre > 0 ? `${descuadre} de más` : `faltan ${-descuadre}`}). Se puede guardar igual.
         </p>
@@ -673,12 +510,7 @@ export function DespachoEditor({
             )}
             {!readOnly && (
               <>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 gap-1 text-xs"
-                  onClick={() => fileRef.current?.click()}
-                >
+                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => fileRef.current?.click()}>
                   <Upload className="size-3" /> {pdfPath || pdfNuevo ? "Reemplazar" : "Adjuntar PDF"}
                 </Button>
                 <input

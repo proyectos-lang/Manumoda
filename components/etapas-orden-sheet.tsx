@@ -187,15 +187,15 @@ export function EtapasOrdenSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       {/*
-        El despacho lleva una tabla de empaques con una columna por
-        talla: en el ancho normal no cabe. Se ensancha solo mientras
-        esa etapa esta abierta.
+        El despacho lleva su tabla de reparto por caja y el bloque del
+        PDF: en el ancho normal queda apretado. Se ensancha solo
+        mientras esa etapa esta abierta.
       */}
       <SheetContent
         className={cn(
           "w-full overflow-y-auto",
           etapas.find((x) => x.idetapa === abierta)?.clave === "despacho_cliente"
-            ? "sm:max-w-4xl"
+            ? "sm:max-w-2xl"
             : "sm:max-w-xl",
         )}
       >
