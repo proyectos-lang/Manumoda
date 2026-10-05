@@ -25,6 +25,7 @@ import { esProximoAVencer } from "@/lib/risk"
 import { useReadOnly } from "@/lib/auth-context"
 import type { ModuleFilter } from "@/lib/module-filter"
 import { cn } from "@/lib/utils"
+import { ProductividadMensual } from "@/components/productividad-mensual"
 import { fmtCurrency } from "@/lib/format"
 
 import { Badge } from "@/components/ui/badge"
@@ -974,6 +975,15 @@ function BonosCorteTab({ configMissing }: { configMissing: boolean }) {
 
   return (
     <div className="space-y-4">
+      {/*
+        La linea de tiempo mensual va arriba de la liquidacion semanal:
+        responde otra pregunta —como va cada quien a lo largo del
+        tiempo— y lee las mismas filas, sin otra consulta.
+      */}
+      <ProductividadMensual
+        etiquetaPersona="cortador"
+        filas={bonos.map((r) => ({ anio: r.anio, semana: r.semana, nombre: r.nombre ?? "—", horas_semana: r.horas_semana, horas_cumplidas: r.horas_cumplidas, horas_fuera_area: r.horas_fuera_area, ausentismos: r.ausentismos, monto: r.monto, excluir: r.estatus_colaborador === "Baja" }))}
+      />
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <Select value={selectedWeekKey} onValueChange={setSelectedWeekKey}>

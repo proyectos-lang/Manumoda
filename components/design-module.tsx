@@ -88,6 +88,7 @@ import {
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+import { ProductividadMensual } from "@/components/productividad-mensual"
 import { esProximoAVencer } from "@/lib/risk"
 import { useReadOnly } from "@/lib/auth-context"
 import { fmtCurrencyRedondo as fmtCurrency } from "@/lib/format"
@@ -1241,6 +1242,15 @@ function BonosTab({ configMissing }: { configMissing: boolean }) {
 
   return (
     <div className="space-y-4">
+      {/*
+        La linea de tiempo mensual va arriba de la liquidacion semanal:
+        responde otra pregunta —como va cada quien a lo largo del
+        tiempo— y lee las mismas filas, sin otra consulta.
+      */}
+      <ProductividadMensual
+        etiquetaPersona="diseñadora"
+        filas={bonos.map((r) => ({ anio: r.anio, semana: r.semana, nombre: r.nombre ?? "—", horas_semana: null, horas_cumplidas: r.horas_cumplidas, horas_fuera_area: r.horas_fuera_area, ausentismos: r.ausentismos, monto: r.bono_total ?? r.monto }))}
+      />
       {/* Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
