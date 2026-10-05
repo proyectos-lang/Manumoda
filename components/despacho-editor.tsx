@@ -26,6 +26,12 @@ import { useAuth } from "@/lib/auth-context"
  *   fracción pendiente. Así ninguna caja queda con piezas a medias y la
  *   suma es exactamente el total. La base lo vuelve a comprobar.
  *
+ * UN SOLO TIPO DE EMPAQUE POR DESPACHO:
+ *   Caja o bulto se elige una vez y lo toman todas las líneas que genera
+ *   la distribución (operación, 05-oct-2026). Antes se elegía en cada
+ *   línea, y en la práctica un despacho va todo en cajas o todo en
+ *   bultos.
+ *
  * TODO SE GUARDA JUNTO:
  *   Una sola llamada a `fn_guardar_despacho` (scripts 080 y 083), que
  *   escribe en una transacción.
@@ -94,8 +100,8 @@ export function DespachoEditor({
 
   const [total, setTotal] = useState("")
   const [distTexto, setDistTexto] = useState("")
-  /** El tipo de cada caja, por posición. Se conserva al editar la distribución. */
-  const [tipos, setTipos] = useState<Tipo[]>([])
+  /** El tipo de empaque de todo el despacho. */
+  const [tipo, setTipo] = useState<Tipo>("Caja")
   /** Para el atajo "repartir parejo en N cajas". */
   const [parejo, setParejo] = useState("")
 
@@ -177,7 +183,9 @@ export function DespachoEditor({
         // Nuevo: se propone despachar lo cortado, o lo pedido.
         setTotal(String(cortadas ?? pedidas ?? ""))
       }
-      setTipos(empaques.map((e) => (e.tipo === "Bulto" ? "Bulto" : "Caja")))
+      // Un despacho guardado cuando el tipo era por línea toma el de su
+      // primer empaque: es el que se ve primero y el más probable.
+      setTipo(empaques[0]?.tipo === "Bulto" ? "Bulto" : "Caja")
 
       setCedisPrevios(
         [...new Set(((ced.data ?? []) as { cedi_destino: string }[]).map((c) => c.cedi_destino))].sort(),
@@ -193,22 +201,12 @@ export function DespachoEditor({
   const pesos = useMemo(() => leerDistribucion(distTexto), [distTexto])
   const totalNum = Math.max(0, Math.floor(Number(total) || 0))
   const piezasPorCaja = useMemo(() => repartir(totalNum, pesos), [totalNum, pesos])
-  /** El tipo de la caja i; las nuevas nacen como caja. */
-  const tipoDe = (i: number): Tipo => tipos[i] ?? "Caja"
-  const cajas = pesos.filter((_, i) => tipoDe(i) === "Caja").length
-  const bultos = pesos.length - cajas
+  /** "3 cajas", "1 bulto"… */
+  const nombreEmpaque = (n: number) =>
+    `${n} ${tipo === "Bulto" ? (n === 1 ? "bulto" : "bultos") : n === 1 ? "caja" : "cajas"}`
 
   const referencia = piezasRef.cortadas ?? piezasRef.pedidas
   const descuadre = referencia != null && totalNum > 0 ? totalNum - referencia : null
-
-  function cambiarTipo(i: number, t: Tipo) {
-    setTipos((prev) => {
-      const out = [...prev]
-      for (let k = out.length; k < i; k++) out[k] = "Caja"
-      out[i] = t
-      return out
-    })
-  }
 
   function repartirParejo() {
     const n = Math.max(1, Math.min(500, Math.floor(Number(parejo) || 0)))
@@ -288,7 +286,7 @@ export function DespachoEditor({
       p_hora: hr || null,
       p_cedi: cedi,
       p_tallas: [],
-      p_empaques: pesos.map((_, i) => ({ tipo: tipoDe(i), piezas: piezasPorCaja[i] })),
+      p_empaques: pesos.map((_, i) => ({ tipo, piezas: piezasPorCaja[i] })),
       p_pdf_path: ruta,
       p_pdf_nombre: nombre,
       p_notas: notas,
@@ -302,7 +300,7 @@ export function DespachoEditor({
       return
     }
     toast.success("Despacho guardado", {
-      description: `${cajas} caja(s), ${bultos} bulto(s), ${Number(data ?? 0).toLocaleString("es-MX")} piezas`,
+      description: `${nombreEmpaque(pesos.length)}, ${Number(data ?? 0).toLocaleString("es-MX")} piezas`,
     })
     onGuardado()
   }
@@ -381,7 +379,19 @@ export function DespachoEditor({
       </div>
 
       {/* ── Total y distribución ── */}
-      <div className="grid gap-2 sm:grid-cols-[140px_1fr]">
+      <div className="grid gap-2 sm:grid-cols-[120px_140px_1fr]">
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">Empaque</label>
+          <select
+            value={tipo}
+            disabled={readOnly}
+            onChange={(ev) => setTipo(ev.target.value as Tipo)}
+            className="mt-1 h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="Caja">Caja</option>
+            <option value="Bulto">Bulto</option>
+          </select>
+        </div>
         <div>
           <label className="text-[11px] font-medium text-muted-foreground">Total de piezas</label>
           <Input
@@ -407,8 +417,9 @@ export function DespachoEditor({
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-muted-foreground">
-        Cada número es una caja y el total se reparte en esa proporción: 600
-        piezas con 1, 2, 1, 2 dan 100, 200, 100 y 200.
+        Cada número es {tipo === "Bulto" ? "un bulto" : "una caja"} y el total
+        se reparte en esa proporción: 600 piezas con 1, 2, 1, 2 dan 100, 200,
+        100 y 200.
       </p>
 
       {!readOnly && (
@@ -421,7 +432,9 @@ export function DespachoEditor({
             onChange={(ev) => setParejo(ev.target.value)}
             className="sin-flechas h-7 w-16 text-center text-xs"
           />
-          <span className="text-[11px] text-muted-foreground">cajas</span>
+          <span className="text-[11px] text-muted-foreground">
+            {tipo === "Bulto" ? "bultos" : "cajas"}
+          </span>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={repartirParejo}>
             Aplicar
           </Button>
@@ -444,17 +457,7 @@ export function DespachoEditor({
               {pesos.map((p, i) => (
                 <tr key={i} className="border-t border-border">
                   <td className="px-2 py-1 text-xs font-semibold tabular-nums">{i + 1}</td>
-                  <td className="px-1 py-1">
-                    <select
-                      value={tipoDe(i)}
-                      disabled={readOnly}
-                      onChange={(ev) => cambiarTipo(i, ev.target.value as Tipo)}
-                      className="h-7 rounded-md border border-input bg-transparent px-1 text-xs"
-                    >
-                      <option>Caja</option>
-                      <option>Bulto</option>
-                    </select>
-                  </td>
+                  <td className="px-1 py-1 text-xs">{tipo}</td>
                   <td className="px-2 py-1 text-right text-xs tabular-nums text-muted-foreground">{p}</td>
                   <td className="px-2 py-1 text-right text-sm font-semibold tabular-nums">
                     {piezasPorCaja[i].toLocaleString("es-MX")}
@@ -465,7 +468,7 @@ export function DespachoEditor({
             <tfoot className="border-t-2 border-border bg-muted/50">
               <tr>
                 <td colSpan={3} className="px-2 py-1.5 text-xs font-semibold">
-                  {cajas} caja{cajas === 1 ? "" : "s"} · {bultos} bulto{bultos === 1 ? "" : "s"}
+                  {nombreEmpaque(pesos.length)}
                 </td>
                 <td className="px-2 py-1.5 text-right text-xs font-bold tabular-nums">
                   {piezasPorCaja.reduce((a, b) => a + b, 0).toLocaleString("es-MX")}
