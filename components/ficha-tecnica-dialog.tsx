@@ -1000,7 +1000,10 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   <input
                     ref={fileRef}
                     type="file"
-                    accept="image/*"
+                    // Los mismos formatos que acepta el bucket (script 081): con
+                    // image/* se podia elegir un HEIC de iPhone y Storage lo
+                    // rechazaba con un error que no decia por que.
+                    accept="image/jpeg,image/png,image/webp"
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0]
