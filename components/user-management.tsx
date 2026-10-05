@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { Eye, Loader2, Pencil, Plus, ShieldCheck, UserX, UserCheck, KeyRound } from "lucide-react"
+import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, ShieldCheck, UserX, UserCheck, KeyRound, Wand2, X } from "lucide-react"
 import { toast } from "sonner"
 import { getSupabase, IDEMPRESA } from "@/lib/supabase/client"
 import type { SessionUser } from "@/lib/types"
@@ -45,6 +45,22 @@ const MODULE_LABELS: Record<string, string> = Object.fromEntries(
   NAV.filter((n) => n.key !== "inicio").map((n) => [n.key, n.label])
 )
 
+/**
+ * Una contraseña aleatoria para compartir.
+ *
+ * Sin caracteres que se confunden al dictarla o leerla en un mensaje
+ * (0/O, 1/l/I). 10 caracteres de este alfabeto dan ~57 bits: de sobra
+ * para un login interno con bloqueo humano.
+ *
+ * crypto.getRandomValues y no Math.random: este ultimo es predecible.
+ */
+function generarContrasena(largo = 10): string {
+  const abc = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+  const r = new Uint32Array(largo)
+  crypto.getRandomValues(r)
+  return Array.from(r, (n) => abc[n % abc.length]).join("")
+}
+
 interface UserManagementProps {
   currentUser: SessionUser
 }
@@ -60,6 +76,20 @@ export function UserManagement({ currentUser }: UserManagementProps) {
   const [nombre, setNombre] = useState("")
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [verPassword, setVerPassword] = useState(false)
+  /**
+   * La credencial recién guardada, para copiarla y compartirla.
+   *
+   * POR QUÉ SOLO AHORA Y NO DESPUÉS:
+   *   La contraseña se guarda cifrada con bcrypt, que no se puede
+   *   revertir: el sistema no la conoce. Este es el único momento en
+   *   que existe en claro. Guardarla legible para verla luego no es
+   *   opción: la tabla `usuarios` se lee con la llave pública de la
+   *   app, y quedaría al alcance de cualquiera que abra el login.
+   */
+  const [credencial, setCredencial] = useState<
+    { nombre: string; username: string; password: string } | null
+  >(null)
   const [esAdmin, setEsAdmin] = useState(false)
   const [soloLectura, setSoloLectura] = useState(false)
   const [permisos, setPermisos] = useState<Set<string>>(new Set())
@@ -97,6 +127,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
     setNombre("")
     setUsername("")
     setPassword("")
+    setVerPassword(false)
     setEsAdmin(false)
     setSoloLectura(false)
     setPermisos(new Set())
@@ -108,6 +139,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
     setNombre(user.nombre)
     setUsername(user.username)
     setPassword("")
+    setVerPassword(false)
     setEsAdmin(user.es_admin)
     setSoloLectura(user.solo_lectura)
     const p = await fetchPermisos(user.id)
@@ -203,6 +235,11 @@ export function UserManagement({ currentUser }: UserManagementProps) {
       }
 
       setSheetOpen(false)
+      if (password) {
+        setCredencial({ nombre: trimNombre, username: trimUsername, password })
+      }
+      setPassword("")
+      setVerPassword(false)
       fetchUsers()
     } catch {
       toast.error("Error inesperado al guardar.")
@@ -372,13 +409,43 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                 <KeyRound className="size-3.5 text-muted-foreground" />
                 {editing ? "Nueva contraseña (dejar vacío para no cambiar)" : <span>Contraseña <span className="text-red-500">*</span></span>}
               </Label>
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                autoComplete="new-password"
-              />
+              <div className="flex gap-1.5">
+                <div className="relative flex-1">
+                  <Input
+                    type={verPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    className="pr-9 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setVerPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    title={verPassword ? "Ocultar" : "Ver"}
+                  >
+                    {verPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setPassword(generarContrasena())
+                    setVerPassword(true)
+                  }}
+                >
+                  <Wand2 className="size-3.5" />
+                  Generar
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Al guardar podrás copiarla para compartirla. Después no se
+                puede volver a ver: se guarda cifrada. Si se olvida, se
+                asigna una nueva aquí.
+              </p>
             </div>
 
             <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
@@ -497,6 +564,57 @@ export function UserManagement({ currentUser }: UserManagementProps) {
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      {/*
+        La credencial recién guardada. Es el unico momento en que la
+        contraseña existe en claro: despues solo queda su cifrado. Se
+        muestra fuera del panel lateral, que ya se cerro, para no apilar
+        dos modales.
+      */}
+      {credencial && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-card shadow-xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+              <h2 className="text-base font-semibold">Credencial de {credencial.nombre}</h2>
+              <Button size="sm" variant="ghost" onClick={() => setCredencial(null)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+            <div className="space-y-3 p-5">
+              <div className="rounded-lg border border-border bg-muted/30 p-3 font-mono text-sm">
+                <p>
+                  <span className="text-muted-foreground">Usuario: </span>
+                  {credencial.username}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Contraseña: </span>
+                  {credencial.password}
+                </p>
+              </div>
+              <Button
+                className="w-full gap-1.5"
+                onClick={async () => {
+                  const texto = `Usuario: ${credencial.username}
+Contraseña: ${credencial.password}`
+                  try {
+                    await navigator.clipboard.writeText(texto)
+                    toast.success("Copiado. Ya puedes pegarlo en un mensaje.")
+                  } catch {
+                    toast.error("No se pudo copiar; selecciónalo a mano.")
+                  }
+                }}
+              >
+                <Copy className="size-4" />
+                Copiar usuario y contraseña
+              </Button>
+              <p className="text-xs text-amber-700">
+                Cópiala ahora: al cerrar esta ventana no se puede volver a
+                ver. Si se pierde, asigna una nueva desde Editar.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
