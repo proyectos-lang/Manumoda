@@ -107,6 +107,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
   const [catalogoHab, setCatalogoHab] = useState<VwInventarioArticulo[]>([])
   /** Los maquileros del catálogo, para asignar quién produce la orden. */
   const [maquileros, setMaquileros] = useState<{ id: number; nombre: string }[]>([])
+  /** Clientes y familias, para corregir el encabezado del pedido. */
+  const [clientes, setClientes] = useState<{ id: number; nombre: string; activo: boolean }[]>([])
+  const [familias, setFamilias] = useState<string[]>([])
+  /** El cliente del catálogo al que apunta el folio. La vista no lo trae. */
+  const [idcliente, setIdcliente] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
@@ -326,6 +331,14 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         ? { ...datos, costo_fijo: datos.costo_fijo ?? COSTO_FIJO_DEFAULT }
         : null,
     )
+    // El id del cliente vive en la orden y la vista no lo expone.
+    const { data: ord } = await supabase
+      .from("ordenes_produccion")
+      .select("idcliente")
+      .eq("idempresa", IDEMPRESA)
+      .eq("folio", folio)
+      .maybeSingle()
+    setIdcliente(ord?.idcliente ?? null)
     setTallas(filasTalla)
     setMateriales((m.data as FichaMaterial[]) ?? [])
     setEanes((e.data as FichaEan[]) ?? [])
@@ -419,6 +432,21 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         .eq("idempresa", IDEMPRESA)
         .order("nombre")
       setMaquileros(maq ?? [])
+
+      const [cli, fam] = await Promise.all([
+        supabase
+          .from("clientes")
+          .select("id, nombre, activo")
+          .eq("idempresa", IDEMPRESA)
+          .order("nombre"),
+        supabase
+          .from("cat_familias_corte")
+          .select("nombre")
+          .eq("idempresa", IDEMPRESA)
+          .order("nombre"),
+      ])
+      setClientes(cli.data ?? [])
+      setFamilias([...new Set((fam.data ?? []).map((f: { nombre: string }) => f.nombre))])
     })()
   }, [open, catalogoTelas.length])
 
@@ -437,6 +465,14 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       .from("ordenes_produccion")
       .update({
         razon_social: ficha.razon_social,
+        // Los datos del encabezado del pedido: editables en la ficha.
+        // El cliente va con su id, para que texto y catalogo no se
+        // contradigan.
+        cliente: ficha.cliente,
+        idcliente,
+        modelo: ficha.modelo?.trim() || null,
+        familia: ficha.familia,
+        fecha_cancelacion: ficha.fecha_cancelacion,
         compradora: ficha.compradora,
         num_pedido: ficha.num_pedido,
         // `marca` y `modelo_cliente` ya no se escriben: la ficha dejo de
@@ -644,12 +680,9 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
       toast.error("El archivo debe ser una imagen")
       return
     }
-    // 5 MB: una foto de prenda no necesita más, y un archivo enorme
-    // hace lentas todas las cargas de la ficha después.
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("La imagen no debe pasar de 5 MB")
-      return
-    }
+    // Sin limite de tamaño propio (operacion, 05-oct-2026): las fotos
+    // del celular pasan de 5 MB y se rechazaban. Queda el limite global
+    // de Storage del proyecto.
 
     setSubiendo(true)
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg"
@@ -1031,29 +1064,74 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   <Campo label="Razón Social" value={ficha.razon_social} readOnly={readOnly}
                     onChange={(v) => campo("razon_social", v)} />
                   {/*
-                    EL CLIENTE Y EL MODELO SALEN DE `cliente` Y `modelo`,
-                    no de `marca` ni `modelo_cliente`.
+                    EL CLIENTE, EL MODELO Y LA FAMILIA SE EDITAN AQUI.
 
-                    La ficha leia esas dos ultimas, que estan vacias en
-                    las 662 ordenes: ni el Excel ni el RepProduccion las
-                    traen nunca. El dato real vive en `cliente` y
-                    `modelo` —son los que usan Panel General, Master
-                    Tracking y Pago Maquilas— y en la operacion son el
-                    mismo dato con otro nombre (02-oct-2026).
+                    Salen de `cliente`, `modelo` y `familia`, que son los
+                    que usan Panel General, Master Tracking y Pago
+                    Maquilas. Se capturan al crear el pedido, pero un
+                    folio creado con un dato equivocado tenia que
+                    quedarse asi: ahora se corrigen en la ficha
+                    (operacion, 05-oct-2026).
 
-                    Se muestran de SOLO LECTURA: el cliente se elige al
-                    crear el pedido y el modelo viene del sistema de
-                    origen. Editarlos aqui los desalinearia de
-                    `idcliente` y del resto de pantallas.
+                    El cliente se ELIGE del catalogo y no se teclea: se
+                    guarda el id y el nombre juntos, para que el folio no
+                    quede escrito de una forma y enlazado a otra. La
+                    familia, del catalogo de Corte, que es con el que se
+                    calculan las horas de corte.
                   */}
-                  <Campo label="Cliente" value={ficha.cliente} readOnly disabled
-                    onChange={() => {}} />
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Cliente</label>
+                    <select
+                      disabled={readOnly}
+                      value={idcliente ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value === "" ? null : Number(e.target.value)
+                        setIdcliente(id)
+                        campo("cliente", clientes.find((c) => c.id === id)?.nombre ?? null)
+                      }}
+                      className="mt-1 h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="">Sin cliente</option>
+                      {clientes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.nombre}
+                          {c.activo ? "" : " (inactivo)"}
+                        </option>
+                      ))}
+                    </select>
+                    {/* Un nombre que no esta en el catalogo se avisa, no se esconde. */}
+                    {idcliente == null && ficha.cliente && (
+                      <p className="mt-1 text-[11px] text-amber-700">
+                        "{ficha.cliente}" no está en el catálogo de clientes.
+                      </p>
+                    )}
+                  </div>
                   <Campo label="Compradora" value={ficha.compradora} readOnly={readOnly}
                     onChange={(v) => campo("compradora", v)} />
                   <Campo label="Núm. Pedido" value={ficha.num_pedido} readOnly={readOnly}
                     onChange={(v) => campo("num_pedido", v)} />
-                  <Campo label="Modelo" value={ficha.modelo} readOnly disabled
-                    onChange={() => {}} />
+                  <Campo label="Modelo" value={ficha.modelo} readOnly={readOnly}
+                    onChange={(v) => campo("modelo", v.toUpperCase())} />
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Familia</label>
+                    <select
+                      disabled={readOnly}
+                      value={ficha.familia ?? ""}
+                      onChange={(e) => campo("familia", e.target.value || null)}
+                      className="mt-1 h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="">Sin familia</option>
+                      {/* La actual, aunque no este en el catalogo: si no, el select la borraria al guardar. */}
+                      {ficha.familia && !familias.includes(ficha.familia) && (
+                        <option value={ficha.familia}>{ficha.familia}</option>
+                      )}
+                      {familias.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   {/*
                     Las dos fechas del pedido, juntas y arriba. Antes la de
@@ -1077,11 +1155,18 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     <label className="text-xs font-medium text-muted-foreground">
                       Fecha cancelación
                     </label>
-                    <div className="mt-1 flex h-8 items-center rounded-md border border-border bg-muted/50 px-3 text-sm">
-                      {ficha.fecha_cancelacion
-                        ? fmtFechaCorta(ficha.fecha_cancelacion)
-                        : "—"}
-                    </div>
+                    {/*
+                      Editable. Cambiarla reprograma la entrega: la primera
+                      fecha queda guardada en `fecha_cancelacion_original`
+                      (script 018) y Master Tracking marca el cambio.
+                    */}
+                    <Input
+                      type="date"
+                      disabled={readOnly}
+                      value={ficha.fecha_cancelacion ?? ""}
+                      onChange={(e) => campo("fecha_cancelacion", e.target.value || null)}
+                      className="mt-1 h-8 text-sm"
+                    />
                   </div>
                   <div className="sm:col-span-2">
                     <label className="text-xs font-medium text-muted-foreground">
