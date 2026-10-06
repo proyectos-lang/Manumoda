@@ -309,3 +309,22 @@
     appearance: textfield;
   }
 }
+
+/*
+ * La barra de desplazamiento del menú lateral: fina y translúcida, para
+ * que no rompa el degradado oscuro con el gris claro del navegador.
+ */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.25) transparent;
+}
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.25);
+  border-radius: 9999px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

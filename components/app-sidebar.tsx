@@ -113,7 +113,7 @@ export function AppSidebar({
 
   return (
     <aside className="sidebar-cmyk-gradient fixed inset-y-0 left-0 z-40 hidden w-[280px] flex-col border-r border-sidebar-border lg:flex">
-      <div className="flex flex-col items-center gap-3 px-6 pb-6 pt-8">
+      <div className="flex shrink-0 flex-col items-center gap-3 px-6 pb-6 pt-8">
         <div className="overflow-hidden rounded-2xl ring-1 ring-white/20 shadow-lg shadow-black/30">
           <Image
             src="/logo-manufacturas.jpeg"
@@ -126,9 +126,16 @@ export function AppSidebar({
         </div>
       </div>
 
-      <div className="mx-4 mb-2 h-px bg-white/10" />
+      <div className="mx-4 mb-2 h-px shrink-0 bg-white/10" />
 
-      <nav className="flex-1 space-y-1 px-3 py-2">
+      {/*
+        Solo la lista se desplaza: el logo y la tarjeta del usuario quedan
+        fijos. Con 14 modulos, en pantallas bajas los ultimos —como
+        Configuracion— quedaban cortados y no habia forma de llegar.
+        `min-h-0` es lo que deja encoger al hijo de un flex en columna;
+        sin el, el nav crece con su contenido y nunca aparece la barra.
+      */}
+      <nav className="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2">
         <p className="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/50">
           Navegación
         </p>
@@ -160,7 +167,7 @@ export function AppSidebar({
         })}
       </nav>
 
-      <div className="m-4 rounded-xl border border-white/10 bg-white/5 p-3 backdrop-blur-sm">
+      <div className="m-4 shrink-0 rounded-xl border border-white/10 bg-white/5 p-3 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/10 ring-1 ring-white/20">
             <User className="size-4 text-sidebar-foreground" />
