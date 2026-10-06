@@ -492,10 +492,12 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         ...("costo_neto_manual" in ficha
           ? { costo_neto_manual: ficha.costo_neto_manual ?? null }
           : {}),
-        // Los precios NO se escriben desde aqui: se capturan al crear
-        // la orden y se corrigen en el Panel General. Mandarlos seria
-        // arriesgarse a pisar con un valor viejo lo que se acabe de
-        // corregir en la otra pantalla.
+        // Los precios se editan tambien aqui (operacion, 06-oct-2026),
+        // ademas de al crear la orden y en "Editar precios" del Panel
+        // General. Ojo: el precio de venta lo usa Pago Maquilas para
+        // descontar piezas no entregadas.
+        precio_venta: ficha.precio_venta,
+        precio_publico: ficha.precio_publico,
         fecha_confirmacion: ficha.fecha_confirmacion,
         piezas_ficha: proporciones.total,
         // Los costos del proceso y el maquilero: son el MISMO dato que usa
@@ -1223,15 +1225,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                 <section>
                   <h3 className="mb-2 text-sm font-semibold">Costos y precios</h3>
                   {/*
-                    Los PRECIOS ya no se capturan aqui: son condicion
-                    comercial del pedido y se teclean al crearlo
-                    (operacion, 24-sep-2026). Se siguen MOSTRANDO porque
-                    el margen y la utilidad se calculan con ellos, y un
-                    margen sin su precio a la vista no se puede
-                    comprobar.
-
-                    Para corregirlos: menu de la orden en Panel General,
-                    "Editar precios".
+                    Costo fijo, costo neto (manual, script 085) y los dos
+                    precios se editan aqui. Los precios tambien se
+                    capturan al crear la orden y se corrigen en "Editar
+                    precios" del Panel General: es el mismo dato, el
+                    ultimo que se guarde es el que queda.
                   */}
                   <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                     <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
@@ -1288,17 +1286,16 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                         </p>
                       )}
                     </div>
-                    <Derivado label="Precio Venta" value={ficha.precio_venta} />
+                    <CampoNum label="Precio Venta" value={ficha.precio_venta} readOnly={readOnly}
+                      onChange={(v) => campo("precio_venta", v)} />
                     <Derivado label="Margen %" value={margenPct} sufijo="%" />
-                    <Derivado label="Precio Público" value={ficha.precio_publico} />
+                    <CampoNum label="Precio Público" value={ficha.precio_publico} readOnly={readOnly}
+                      onChange={(v) => campo("precio_publico", v)} />
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Solo el <span className="font-medium">Costo Fijo</span> se
-                    captura aquí. Los precios se registran al crear la orden y
-                    se corrigen desde el Panel General; el{" "}
-                    <span className="font-medium">Costo Neto</span> y el{" "}
-                    <span className="font-medium">Margen</span> se calculan
-                    solos.
+                    El <span className="font-medium">Margen</span> se calcula solo.
+                    El precio de venta también lo usa Pago Maquilas para
+                    descontar las piezas no entregadas.
                   </p>
                   {/*
                     El Costo Neto de arriba se queda corto mientras no se
