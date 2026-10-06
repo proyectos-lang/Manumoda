@@ -485,6 +485,13 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
         codigo_ean: ficha.codigo_ean?.trim() || null,
         descripcion_completa: ficha.descripcion_completa,
         costo_fijo: ficha.costo_fijo,
+        // El neto manual: NULL vuelve a mandar el calculado. Solo se
+        // manda si la vista ya trae la columna (script 085): antes de
+        // correrlo, enviarla haria fallar el guardado entero, como paso
+        // con `uso` y el script 065.
+        ...("costo_neto_manual" in ficha
+          ? { costo_neto_manual: ficha.costo_neto_manual ?? null }
+          : {}),
         // Los precios NO se escriben desde aqui: se capturan al crear
         // la orden y se corrigen en el Panel General. Mandarlos seria
         // arriesgarse a pisar con un valor viejo lo que se acabe de
@@ -832,7 +839,11 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
    * fuera: se contratan por fuera y no todos los folios los llevan.
    * Ellos suman al costo TOTAL, que es otra cuenta.
    */
-  const costoNeto =
+  /**
+   * El neto que da la fórmula, con lo que hay en pantalla. Se muestra
+   * siempre, aunque haya uno manual, para que se vea cuánto difieren.
+   */
+  const costoNetoCalculado =
     Math.round(
       (Number(ficha?.costo_fijo ?? 0) +
         costoTela +
@@ -843,6 +854,14 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
     ) / 100
 
   /** Margen sobre el precio de venta, con el neto de la pantalla. */
+  /**
+   * El neto que manda: el escrito a mano si existe (script 085), si no
+   * el calculado. Margen, costo total y utilidad salen de este.
+   */
+  const netoManual =
+    ficha?.costo_neto_manual != null ? Number(ficha.costo_neto_manual) : null
+  const costoNeto = netoManual ?? costoNetoCalculado
+
   const margenPct =
     ficha?.precio_venta != null && Number(ficha.precio_venta) > 0
       ? Math.round(
@@ -1217,7 +1236,58 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                   <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                     <CampoNum label="Costo Fijo" value={ficha.costo_fijo} readOnly={readOnly}
                       onChange={(v) => campo("costo_fijo", v)} />
-                    <Derivado label="Costo Neto" value={costoNeto} />
+                    {/*
+                      Editable (operacion, 06-oct-2026): lo que se escribe
+                      reemplaza al calculado, que queda a la vista como
+                      referencia. Vaciarlo vuelve al calculo.
+                    */}
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Costo Neto
+                      </label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        // Sin el script 085 la columna no existe y lo escrito
+                        // no se guardaria: mejor no dejar escribir.
+                        disabled={readOnly || !("costo_neto_manual" in ficha)}
+                        title={
+                          "costo_neto_manual" in ficha
+                            ? "Vacío = se usa el calculado"
+                            : "Falta correr el script 085 para editarlo"
+                        }
+                        value={ficha.costo_neto_manual ?? ""}
+                        placeholder={costoNetoCalculado.toFixed(2)}
+                        onChange={(e) =>
+                          campo(
+                            "costo_neto_manual",
+                            e.target.value === "" ? null : Number(e.target.value),
+                          )
+                        }
+                        className={cn(
+                          "mt-1 h-8 text-sm sin-flechas",
+                          netoManual != null && "border-amber-300 bg-amber-50",
+                        )}
+                      />
+                      {netoManual != null && (
+                        <p className="mt-1 text-[11px] text-amber-700">
+                          Manual. Calculado: ${costoNetoCalculado.toFixed(2)}
+                          {!readOnly && (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="font-medium underline underline-offset-2"
+                                onClick={() => campo("costo_neto_manual", null)}
+                              >
+                                usar cálculo
+                              </button>
+                            </>
+                          )}
+                        </p>
+                      )}
+                    </div>
                     <Derivado label="Precio Venta" value={ficha.precio_venta} />
                     <Derivado label="Margen %" value={margenPct} sufijo="%" />
                     <Derivado label="Precio Público" value={ficha.precio_publico} />
@@ -1236,7 +1306,7 @@ export function FichaTecnicaDialog({ folio, open, onOpenChange, onSaved }: Props
                     Decirlo evita que alguien lea un neto incompleto como
                     si fuera el definitivo.
                   */}
-                  {costoTela === 0 && costoHabilitacion === 0 && (
+                  {netoManual == null && costoTela === 0 && costoHabilitacion === 0 && (
                     <p className="mt-1 text-[11px] text-amber-700">
                       El Costo Neto todavía no incluye telas ni
                       habilitaciones: se capturan más abajo y el desglose

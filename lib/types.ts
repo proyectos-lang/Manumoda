@@ -901,7 +901,12 @@ export type VwFichaTecnica = {
   /** Neto + todo el proceso: lo que cuesta producir una pieza de verdad. */
   costo_total_pieza: number
   /** Derivado: fijo + maquila + lavandería + tela + habilitación. */
+  /** El neto efectivo: el manual si se capturó, si no el calculado. */
   costo_neto: number
+  /** Fijo + materiales + maquila + lavandería, aunque haya manual (085). */
+  costo_neto_calculado?: number | null
+  /** Escrito a mano en la ficha; reemplaza al calculado (085). */
+  costo_neto_manual?: number | null
   precio_venta: number | null
   precio_publico: number | null
   /** Derivado sobre precio de venta. Null si no hay precio. */
