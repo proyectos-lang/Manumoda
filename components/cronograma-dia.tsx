@@ -61,12 +61,37 @@ function fmtHora(hora: string): string {
   return hora.slice(0, 5)
 }
 
-export function CronogramaDia({ entregas }: { entregas: EntregaDia[] }) {
+export function CronogramaDia({
+  entregas,
+  onSeleccionar,
+  seleccionado,
+}: {
+  entregas: EntregaDia[]
+  /** Al hacer clic en un movimiento: el calendario abre su empaque. */
+  onSeleccionar?: (e: EntregaDia) => void
+  /** Clave del movimiento abierto, para marcarlo. */
+  seleccionado?: string | null
+}) {
   const conHora = entregas.filter((e) => e.hora)
   const sinHora = entregas.filter((e) => !e.hora)
   const esDespacho = (e: EntregaDia) => e.tipo === "despacho"
   /** Clave unica: la misma orden puede entrar y salir el mismo dia. */
   const claveDe = (e: EntregaDia) => `${e.tipo ?? "entrega"}-${e.folio}`
+  /** Lo que hace pulsable una tarjeta, si el calendario lo pide. */
+  const pulsable = (e: EntregaDia) =>
+    onSeleccionar
+      ? {
+          role: "button" as const,
+          tabIndex: 0,
+          onClick: () => onSeleccionar(e),
+          onKeyDown: (ev: React.KeyboardEvent) => {
+            if (ev.key === "Enter" || ev.key === " ") {
+              ev.preventDefault()
+              onSeleccionar(e)
+            }
+          },
+        }
+      : {}
 
   // Si hay horas fuera de la jornada, se amplía el rango para que no
   // queden invisibles: es mejor un cronograma largo que una entrega
@@ -103,8 +128,11 @@ export function CronogramaDia({ entregas }: { entregas: EntregaDia[] }) {
             {sinHora.map((e) => (
               <span
                 key={claveDe(e)}
+                {...pulsable(e)}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs",
+                  onSeleccionar && "cursor-pointer hover:ring-1 hover:ring-foreground/20",
+                  seleccionado === claveDe(e) && "ring-2 ring-violet-400",
                   esDespacho(e)
                     ? "border-violet-200 bg-violet-50"
                     : "border-border bg-background",
@@ -152,8 +180,11 @@ export function CronogramaDia({ entregas }: { entregas: EntregaDia[] }) {
                   {enEsta.map((e) => (
                     <div
                       key={claveDe(e)}
+                      {...pulsable(e)}
                       className={cn(
                         "min-w-[150px] flex-1 rounded border px-2 py-1",
+                        onSeleccionar && "cursor-pointer hover:ring-1 hover:ring-foreground/20",
+                        seleccionado === claveDe(e) && "ring-2 ring-violet-400",
                         // La saturacion manda sobre el tipo: una franja
                         // con cuatro movimientos es un problema sea lo
                         // que sea lo que se mueve.
